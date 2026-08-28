@@ -1,0 +1,113 @@
+Diseña una pantalla de login EXACTAMENTE igual a un sistema ERP logístico moderno llamado "Grupo Logístico 365".
+
+🎯 OBJETIVO:
+Replicar un login corporativo profesional con diseño limpio, dividido en dos columnas, con una tarjeta de inicio de sesión alineada a la izquierda.
+
+---
+
+📐 LAYOUT GENERAL:
+- Frame: 1440x900
+- Header superior blanco (altura 70px)
+- Logo de empresa en la esquina superior izquierda
+- Debajo del header, dividir en 2 columnas iguales
+
+---
+
+🟦 COLUMNA IZQUIERDA:
+- Fondo azul oscuro (#1E3A8A)
+- Contenido alineado hacia la izquierda (NO centrado)
+
+Elementos:
+1. Título grande:
+   "Grupo Logístico 365"
+   - Color naranja (#F97316)
+   - Tamaño grande
+
+2. Subtítulo:
+   "Sistema de Gestión Operativa"
+   - Color blanco
+
+3. Tarjeta de login (debajo del texto):
+   - Fondo blanco
+   - Border radius: 16px
+   - Sombra suave
+   - Línea superior naranja delgada
+
+---
+
+🧊 TARJETA LOGIN:
+
+Auto layout vertical
+Padding: 24px
+Spacing: 16px
+Width: ~400px
+
+Contenido:
+
+1. Título centrado:
+   "Iniciar Sesión"
+
+2. Selector tipo tabs:
+   - "Administrador" (activo, fondo azul oscuro, texto blanco)
+   - "Colaborador" (inactivo, fondo gris claro)
+   - Bordes redondeados
+   - Diseño tipo switch
+
+3. Caja informativa:
+   - Fondo azul claro
+   - Texto:
+     "Credenciales de prueba:
+      Admin: admin@gl365.com / admin123"
+
+4. Campo:
+   "Correo Electrónico"
+   - Input con icono a la izquierda
+
+5. Campo:
+   "Contraseña"
+   - Input con icono de candado
+
+6. Botón:
+   "Ingresar"
+   - Fondo azul oscuro
+   - Texto blanco
+   - Hover color naranja (#F97316)
+   - Full width
+
+7. Link inferior centrado:
+   "¿Olvidaste tu contraseña?"
+
+---
+
+🖼️ COLUMNA DERECHA:
+- Imagen de camión/logística
+- Overlay azul oscuro (opacity 60-70%)
+
+Contenido centrado:
+- Icono de camión en naranja
+- Texto:
+   "Soluciones Logísticas Globales"
+- Subtexto:
+   "Optimiza tus operaciones con tecnología de vanguardia"
+
+---
+
+🎨 ESTILO:
+- Corporativo, moderno, limpio
+- Espaciado consistente (8px grid)
+- Uso de Auto Layout en todos los elementos
+- Bordes redondeados
+- Sombras suaves
+
+---
+
+⚡ DETALLES IMPORTANTES:
+- La tarjeta NO debe estar centrada en la pantalla, sino alineada hacia la izquierda dentro del panel azul
+- El texto principal está arriba de la tarjeta
+- El header blanco siempre visible arriba
+- Mantener jerarquía visual clara
+
+---
+
+🎯 RESULTADO:
+Un login profesional EXACTO al diseño mostrado, con el cambio de "Empleado" a "Colaborador", listo para un sistema ERP logístico real.
