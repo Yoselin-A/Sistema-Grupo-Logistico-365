@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
-const API_BASE_URL = "http://localhost:3001/api";
+const API_BASE_URL = "/api";
 
 type DashboardResumen = {
   envios: any[];

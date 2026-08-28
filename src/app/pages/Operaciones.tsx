@@ -20,7 +20,7 @@ import {
 import jsPDF from "jspdf";
 import * as XLSX from "xlsx";
 
-const API_BASE_URL = "http://localhost:3001/api";
+const API_BASE_URL = "/api";
 
 type Tab = "asignaciones" | "proveedores";
 type Mode = "create" | "edit" | "view";

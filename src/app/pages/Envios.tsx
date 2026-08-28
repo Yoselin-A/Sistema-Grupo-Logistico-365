@@ -9,6 +9,8 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 
+const API_BASE_URL = "/api";
+
 interface Envio {
   id: number;
   codigo: string;

@@ -36,21 +36,6 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useAuth } from "../context/AuthContext";
 
-/* ============================================================
-   GL365 · MANTENIMIENTO DEL SISTEMA
-   ------------------------------------------------------------
-   Versión conectada a MySQL
-   - Carga todas las tablas reales de la base de datos.
-   - Muestra los registros insertados en MySQL.
-   - Permite Nuevo, Ver, Editar y Eliminar.
-   - FK como desplegables.
-   - Validaciones: letras, números, teléfonos, correos y requeridos.
-   - Enter avanza al siguiente campo.
-   - Diseño tipo Figma GL365.
-   - Filtros por campo, ordenación y PDF.
-   - Auditoría automática por usuario en crear, editar y eliminar.
-   ============================================================ */
-
 type AnyRow = Record<string, any>;
 type Mode = "create" | "edit" | "view";
 type SortDirection = "asc" | "desc";
@@ -117,7 +102,7 @@ type BootstrapData = {
 };
 
 const API_BASE_URL =
-  (import.meta as any).env?.VITE_API_URL || "http://localhost:3001/api";
+  (import.meta as any).env?.VITE_API_URL || "/api";
 
 const getAuditHeaders = () => {
   let stored: AnyRow = {};

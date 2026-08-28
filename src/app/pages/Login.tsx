@@ -20,7 +20,7 @@ import logoImage from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png
 import fondoOficina from "../../assets/fondo-oficina-gl365.jpg";
 
 const API_BASE_URL =
-  (import.meta as any).env?.VITE_API_URL || "http://localhost:3001/api";
+  (import.meta as any).env?.VITE_API_URL || "/api";
 
 type AlertType = "error" | "success" | "";
 

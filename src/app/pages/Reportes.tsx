@@ -40,7 +40,7 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 
 // Versión ajustada: evita cortes y scroll horizontal dentro del layout con sidebar.
-const API_BASE_URL = "http://localhost:3001/api";
+const API_BASE_URL = "/api";
 
 type ReportType =
   | "ejecutivo"

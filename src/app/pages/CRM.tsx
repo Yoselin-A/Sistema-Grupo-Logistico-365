@@ -271,7 +271,7 @@ const K = {
 };
 
 const API_BASE_URL =
-  (import.meta as any).env?.VITE_API_URL || "http://localhost:3001/api";
+  (import.meta as any).env?.VITE_API_URL || "/api";
 
 async function apiRequestCRM(path: string, options: RequestInit = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
