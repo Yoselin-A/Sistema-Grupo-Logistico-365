@@ -1,5 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const pool = require("../config/db");
 const { insertAudit } = require("../middleware/auditoriaGlobal.middleware");
 
@@ -28,6 +29,11 @@ const cargoPorRol = {
   ventas: "Asesor de Ventas",
   operaciones: "Operaciones",
 };
+
+const {
+  autenticarToken,
+  autorizarRoles,
+} = require("../middleware/auth.middleware");
 
 /* ===============================
    UTILIDADES
@@ -383,19 +389,62 @@ router.post("/login", async (req, res) => {
       return enviarError(res, 401, "Usuario, correo o contraseña incorrectos.");
     }
 
-    const user = crearPayloadUsuario(usuario);
+   const user = crearPayloadUsuario(usuario);
 
-    await registrarInicioSesion(req, user);
+const secret = process.env.JWT_SECRET;
 
-    return res.json({
-      ok: true,
-      message: "Inicio de sesión correcto.",
-      user,
-    });
+if (!secret) {
+  return enviarError(
+    res,
+    500,
+    "JWT_SECRET no está configurado en el servidor."
+  );
+}
+
+const token = jwt.sign(
+  {
+    sub: user.id,
+  },
+  secret,
+  {
+    expiresIn: "8h",
+  }
+);
+
+res.cookie("gl365_token", token, {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: false,
+  path: "/",
+  maxAge: 8 * 60 * 60 * 1000,
+});
+
+await registrarInicioSesion(req, user);
+
+return res.json({
+  ok: true,
+  message: "Inicio de sesión correcto.",
+  user,
+});
+
   } catch (error) {
     console.error("Error en login:", error);
     return enviarError(res, 500, "Error al iniciar sesión.", error);
   }
+});
+
+router.post("/logout", (req, res) => {
+  res.clearCookie("gl365_token", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: false,
+    path: "/",
+  });
+
+  return res.json({
+    ok: true,
+    message: "Sesión cerrada correctamente.",
+  });
 });
 
 /* ===============================
@@ -497,7 +546,11 @@ router.post("/solicitar-cambio-password", async (req, res) => {
 /* ===============================
    VER SOLICITUDES PENDIENTES
 ================================ */
-router.get("/solicitudes-credenciales", async (req, res) => {
+router.get(
+  "/solicitudes-credenciales",
+  autenticarToken,
+  autorizarRoles("gerencia"),
+  async (req, res) => {
   try {
     const tablas = await obtenerTablasAuth();
     const tablaSolicitud = await asegurarTablaSolicitudes();
@@ -543,7 +596,11 @@ router.get("/solicitudes-credenciales", async (req, res) => {
 /* ===============================
    APROBAR SOLICITUD
 ================================ */
-router.put("/solicitudes-credenciales/:id/aprobar", async (req, res) => {
+router.put(
+  "/solicitudes-credenciales/:id/aprobar",
+  autenticarToken,
+  autorizarRoles("gerencia"),
+  async (req, res) => {
   const connection = await pool.getConnection();
 
   try {
@@ -614,7 +671,11 @@ router.put("/solicitudes-credenciales/:id/aprobar", async (req, res) => {
 /* ===============================
    DENEGAR SOLICITUD
 ================================ */
-router.put("/solicitudes-credenciales/:id/denegar", async (req, res) => {
+router.put(
+  "/solicitudes-credenciales/:id/denegar",
+  autenticarToken,
+  autorizarRoles("gerencia"),
+  async (req, res) => {
   const connection = await pool.getConnection();
 
   try {

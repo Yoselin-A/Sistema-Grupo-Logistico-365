@@ -2,6 +2,11 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 
+const {
+  autenticarToken,
+  autorizarRoles,
+} = require("./middleware/auth.middleware");
+
 const authRoutes = require("./routes/auth.routes");
 const crmRoutes = require("./routes/crm.routes");
 const operacionesRoutes = require("./routes/operaciones.routes");
@@ -45,6 +50,26 @@ app.use(auditoriaGlobal);
 */
 app.use("/api/auth", authRoutes);
 app.use("/api", authRoutes);
+
+/*
+  Desde este punto, toda la API requiere una
+  sesión válida.
+*/
+app.use("/api", autenticarToken);
+
+/*
+  Seguridad especial:
+  mantenimiento y auditoría únicamente Gerencia.
+*/
+app.use(
+  "/api/mantenimiento",
+  autorizarRoles("gerencia")
+);
+
+app.use(
+  "/api/auditoria",
+  autorizarRoles("gerencia")
+);
 
 app.use("/api/auditoria", auditoriaRoutes);
 

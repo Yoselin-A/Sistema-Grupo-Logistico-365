@@ -161,6 +161,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    fetch("/api/auth/logout", {
+      method: "POST",
+      keepalive: true,
+    }).catch(() => {
+      // Aunque falle la llamada, se limpia la sesión local.
+    });
     localStorage.removeItem("user");
     localStorage.removeItem("gl365_user");
     localStorage.removeItem("usuario");
