@@ -8,7 +8,8 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME || "gl365_final",
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  timezone: "-06:00",
 });
 
 module.exports = pool;

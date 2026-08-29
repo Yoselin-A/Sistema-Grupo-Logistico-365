@@ -1668,7 +1668,7 @@ router.post("/mantenimiento/tablas/:tabla/registros", async (req, res) => {
   }
 });
 
-router.put("/mantenimiento/tablas/:tabla/registros/:id", async (req, res) => {
+const updateMaintenanceRecord = async (req, res) => {
   const connection = await pool.getConnection();
 
   try {
@@ -1694,20 +1694,39 @@ router.put("/mantenimiento/tablas/:tabla/registros/:id", async (req, res) => {
 
     await connection.commit();
 
-    return ok(res, { id }, "Registro actualizado correctamente.");
+    return ok(
+      res,
+      { id },
+      "Registro actualizado correctamente."
+    );
   } catch (error) {
     await connection.rollback();
-    console.error("Error actualizar mantenimiento:", error);
-    return fail(res, 500, "No se pudo actualizar el registro.", error);
+
+    console.error(
+      "Error actualizar mantenimiento:",
+      error
+    );
+
+    return fail(
+      res,
+      500,
+      "No se pudo actualizar el registro.",
+      error
+    );
   } finally {
     connection.release();
   }
-});
+};
 
-router.patch("/mantenimiento/tablas/:tabla/registros/:id", async (req, res) => {
-  req.method = "PUT";
-  return router.handle(req, res);
-});
+router.put(
+  "/mantenimiento/tablas/:tabla/registros/:id",
+  updateMaintenanceRecord
+);
+
+router.patch(
+  "/mantenimiento/tablas/:tabla/registros/:id",
+  updateMaintenanceRecord
+);
 
 router.delete("/mantenimiento/tablas/:tabla/registros/:id", async (req, res) => {
   const connection = await pool.getConnection();

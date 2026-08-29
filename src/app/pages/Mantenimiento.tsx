@@ -277,6 +277,7 @@ const LABELS: Record<string, string> = {
   password_hash: "Contraseña",
   nueva_password_hash: "Nueva contraseña",
   activo: "Estado",
+  rol_id: "Rol",
   __estado_usuario: "Estado",
   __rol_usuario: "Rol",
   telefono: "Teléfono",
@@ -615,7 +616,12 @@ export function Mantenimiento() {
   const isAuditTable = selectedTable?.name === "auditoria";
   const isUserTable = selectedTable?.name === "usuario" || selectedTable?.name === "usuarios";
   const formColumns = (schema?.columns || []).filter((column) => !column.auto && column.columnKey !== "PRI" && !column.readonly);
-  const viewColumns = schema?.columns || [];
+  const viewColumns = isUserTable
+  ? (schema?.columns || []).filter(
+      (column) =>
+        !["password_hash", "nueva_password_hash"].includes(column.name)
+    )
+  : schema?.columns || [];
   const columnsToShow = displayColumns(schema);
   const filterableColumns = (schema?.columns || []).filter((column) => !isPasswordField(column.name) && !["created_at", "updated_at", "nueva_password_hash"].includes(column.name));
 
@@ -1095,22 +1101,71 @@ export function Mantenimiento() {
   };
 
   const confirmDelete = async () => {
-    if (!selectedTable || !deleteRow) return;
-    if (isAuditTable) {
-      setDeleteError("Auditoría se genera automáticamente y no debe eliminarse desde mantenimiento.");
-      return;
-    }
-    setDeleteError("");
-    try {
-      await apiRequest(`/mantenimiento/tablas/${selectedTable.name}/registros/${deleteRow[primaryKey]}`, { method: "DELETE" });
-      setNotice({ type: "success", text: "Registro eliminado correctamente." });
+  if (!selectedTable || !deleteRow) return;
+
+  if (isAuditTable) {
+    setDeleteError(
+      "Auditoría se genera automáticamente y no debe eliminarse desde mantenimiento."
+    );
+    return;
+  }
+
+  setDeleteError("");
+
+  try {
+    // Usuarios: no se eliminan, se dan de baja o se reactivan.
+    if (isUserTable) {
+      const estaActivo = isUserActive(deleteRow);
+      const nuevoEstado = estaActivo ? 0 : 1;
+
+      await apiRequest(
+        `/mantenimiento/tablas/${selectedTable.name}/registros/${deleteRow[primaryKey]}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            activo: nuevoEstado,
+          }),
+        }
+      );
+
+      setNotice({
+        type: "success",
+        text: estaActivo
+          ? "Usuario dado de baja correctamente."
+          : "Usuario reactivado correctamente.",
+      });
+
       setDeleteRow(null);
       await loadRecords(selectedTable.name, tableSearch);
       await loadBootstrap();
-    } catch (error: any) {
-      setDeleteError(error.message || "No se pudo eliminar el registro.");
+      return;
     }
-  };
+
+    // Las demás tablas conservan la eliminación normal.
+    await apiRequest(
+      `/mantenimiento/tablas/${selectedTable.name}/registros/${deleteRow[primaryKey]}`,
+      {
+        method: "DELETE",
+      }
+    );
+
+    setNotice({
+      type: "success",
+      text: "Registro eliminado correctamente.",
+    });
+
+    setDeleteRow(null);
+    await loadRecords(selectedTable.name, tableSearch);
+    await loadBootstrap();
+  } catch (error: any) {
+    setDeleteError(
+      error.message ||
+        (isUserTable
+          ? "No se pudo cambiar el estado del usuario."
+          : "No se pudo eliminar el registro.")
+    );
+  }
+};
 
   const handleEnter = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     if (event.key !== "Enter" || event.shiftKey) return;
@@ -1170,7 +1225,18 @@ export function Mantenimiento() {
       autoTable(doc, {
         startY: 28,
         head: [pdfColumns.map((column) => label(column.name))],
-        body: displayedRecords.map((row) => pdfColumns.map((column) => cleanPdfText(formatCellText(row, column, bootstrap.options), 70))),
+        body: displayedRecords.map((row) =>
+  pdfColumns.map((column) => {
+    if (isUserTable && column.name === "activo") {
+      return isUserActive(row) ? "Activo" : "De baja";
+    }
+
+    return cleanPdfText(
+      formatCellText(row, column, bootstrap.options),
+      70
+    );
+  })
+),
         styles: { fontSize: 6, cellPadding: 1.6, overflow: "linebreak" },
         headStyles: { fillColor: [12, 45, 107], textColor: 255, fontStyle: "bold" },
         alternateRowStyles: { fillColor: [247, 249, 252] },
@@ -1291,12 +1357,26 @@ export function Mantenimiento() {
         </select>
       );
     } else if (isTinyBoolean(column)) {
-      control = (
-        <select data-mant-field="true" value={String(value ?? 0)} onKeyDown={handleEnter} onChange={(e) => updateField(column, e.target.value)} disabled={disabled} className={base}>
-          <option value="1">Sí</option>
-          <option value="0">No</option>
-        </select>
-      );
+  const esEstadoUsuario = isUserTable && column.name === "activo";
+
+  control = (
+    <select
+      data-mant-field="true"
+      value={String(value ?? 0)}
+      onKeyDown={handleEnter}
+      onChange={(e) => updateField(column, e.target.value)}
+      disabled={disabled}
+      className={base}
+    >
+      <option value="1">
+        {esEstadoUsuario ? "Activo" : "Sí"}
+      </option>
+
+      <option value="0">
+        {esEstadoUsuario ? "De baja" : "No"}
+      </option>
+    </select>
+  );
     } else if (isLongText(column)) {
       control = (
         <textarea data-mant-field="true" rows={3} value={String(value ?? "")} onKeyDown={handleEnter} onChange={(e) => updateField(column, e.target.value)} disabled={disabled} className={`${base} resize-none`} maxLength={column.maxLength || undefined} />
@@ -1675,7 +1755,27 @@ export function Mantenimiento() {
                         {!isAuditTable && (
                           <>
                             <IconButton title="Editar" icon={Pencil} tone="orange" onClick={() => openEdit(row)} />
-                            <IconButton title="Eliminar" icon={Trash2} tone="red" onClick={() => { setDeleteRow(row); setDeleteError(""); }} />
+                            {isUserTable ? (
+  <IconButton
+    title={isUserActive(row) ? "Dar de baja" : "Reactivar"}
+    icon={isUserActive(row) ? UserX : UserCheck}
+    tone={isUserActive(row) ? "red" : "green"}
+    onClick={() => {
+      setDeleteRow(row);
+      setDeleteError("");
+    }}
+  />
+) : (
+  <IconButton
+    title="Eliminar"
+    icon={Trash2}
+    tone="red"
+    onClick={() => {
+      setDeleteRow(row);
+      setDeleteError("");
+    }}
+  />
+)}
                           </>
                         )}
                       </div>
@@ -1817,19 +1917,61 @@ export function Mantenimiento() {
               <div className="flex items-center gap-3">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-red-600"><AlertTriangle className="h-7 w-7" /></div>
                 <div>
-                  <h3 className="text-xl font-black">Eliminar registro</h3>
-                  <p className="text-sm text-red-500">Esta acción eliminará el registro de MySQL si no tiene relaciones.</p>
+                  <h3 className="text-xl font-black">
+                    {isUserTable
+                      ? isUserActive(deleteRow)
+                        ? "Dar de baja usuario"
+                        : "Reactivar usuario"
+                      : "Eliminar registro"}
+                  </h3>
+                  <p className="text-sm text-red-500">
+                    {isUserTable
+                      ? isUserActive(deleteRow)
+                        ? "El usuario perderá el acceso al sistema, pero su información e historial serán conservados."
+                        : "El usuario recuperará el acceso al sistema."
+                      : "Esta acción eliminará el registro de MySQL si no tiene relaciones."}
+                  </p>
                 </div>
               </div>
             </div>
             <div className="p-6">
-              <p className="text-gray-600">¿Eliminar este registro?</p>
+              <p className="text-gray-600">
+                {isUserTable
+                  ? isUserActive(deleteRow)
+                    ? "¿Desea dar de baja a este usuario?"
+                    : "¿Desea reactivar a este usuario?"
+                  : "¿Eliminar este registro?"}
+              </p>
               <p className="mt-2 rounded-2xl bg-gray-50 p-4 font-black text-[#0C2D6B]">{getRowTitle(selectedTable.name, deleteRow)}</p>
               {deleteError && <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{deleteError}</div>}
             </div>
             <div className="flex justify-end gap-3 border-t border-gray-100 bg-gray-50 p-5">
               <button type="button" onClick={() => setDeleteRow(null)} className="rounded-2xl border border-gray-200 bg-white px-6 py-3 font-black text-gray-600 shadow-sm transition hover:bg-gray-100">Cancelar</button>
-              <button type="button" onClick={confirmDelete} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-6 py-3 font-black text-white shadow-md transition hover:bg-red-700"><Trash2 className="h-5 w-5" />Eliminar</button>
+              <button
+  type="button"
+  onClick={confirmDelete}
+  className={`inline-flex items-center justify-center gap-2 rounded-2xl px-6 py-3 font-black text-white shadow-md transition ${
+    isUserTable && !isUserActive(deleteRow)
+      ? "bg-green-600 hover:bg-green-700"
+      : "bg-red-600 hover:bg-red-700"
+  }`}
+>
+  {isUserTable ? (
+    isUserActive(deleteRow) ? (
+      <UserX className="h-5 w-5" />
+    ) : (
+      <UserCheck className="h-5 w-5" />
+    )
+  ) : (
+    <Trash2 className="h-5 w-5" />
+  )}
+
+  {isUserTable
+    ? isUserActive(deleteRow)
+      ? "Dar de baja"
+      : "Reactivar"
+    : "Eliminar"}
+</button>
             </div>
           </div>
         </div>

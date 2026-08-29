@@ -2,19 +2,29 @@ const pool = require("../config/db");
 
 const q = (name) => `\`${String(name).replace(/`/g, "``")}\``;
 
-const MYSQL_DATETIME_FORMATTER = new Intl.DateTimeFormat("sv-SE", {
-  timeZone: "America/Guatemala",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-});
+const TZ = "America/Guatemala";
 
-function mysqlNowGuatemala() {
-  return MYSQL_DATETIME_FORMATTER.format(new Date()).replace(" ", " ");
+function fechaGuatemala() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const p = {};
+  for (const item of parts) {
+    if (item.type !== "literal") p[item.type] = item.value;
+  }
+
+  return {
+    fecha: `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`,
+    hora: `${p.hour}:${p.minute}:${p.second}`,
+  };
 }
 
 function clean(value, fallback = "") {
@@ -29,7 +39,6 @@ function getHeader(req, names) {
       return String(value).trim();
     }
   }
-
   return "";
 }
 
@@ -96,7 +105,7 @@ function fallbackRequiredValue(column) {
   }
 
   if (type.includes("date") || type.includes("time") || type.includes("timestamp")) {
-    return mysqlNowGuatemala();
+    return fechaGuatemala().fecha;
   }
 
   return "-";
@@ -147,7 +156,6 @@ function getAuditUser(req, event = {}) {
   return {
     id: id ? Number(id) || null : null,
     display: role ? `${display} (${role})` : display,
-    role: clean(role),
   };
 }
 
@@ -171,14 +179,9 @@ function shouldAuditRequest(req) {
 
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
 
-  /*
-    No se auditan estas rutas desde el middleware global:
-    - /api/auth: el inicio de sesión se registra dentro de auth.routes.js.
-    - /api/auditoria: evita que auditoría se audite a sí misma.
-    - /api/ia: chat de IA no es CRUD.
-    - /api/reportes: exportar o consultar reportes no es CRUD.
-  */
+  // Auth registra INICIO_SESION por separado. No auditar aquí para evitar duplicados.
   if (path.startsWith("/api/auth")) return false;
+  if (path.startsWith("/api/login")) return false;
   if (path.startsWith("/api/auditoria")) return false;
   if (path.startsWith("/api/ia")) return false;
   if (path.startsWith("/api/reportes")) return false;
@@ -281,12 +284,16 @@ async function insertAudit(req, result = { ok: true }, event = {}) {
     const columns = await getColumns("auditoria");
     const payload = {};
     const user = getAuditUser(req, event);
+    const guate = fechaGuatemala();
 
     const tipoEvento = clean(event.tipo_evento || event.tipo_accion || event.evento, "CAMBIO");
     const accion = clean(event.accion, tipoEvento);
     const detalle = clean(event.detalle || event.descripcion, accion);
 
-    setFirst(payload, columns, ["fecha", "fecha_hora", "fecha_accion", "created_at"], mysqlNowGuatemala());
+    // Hora Guatemala explícita. No usa CURRENT_TIMESTAMP de MySQL.
+    setFirst(payload, columns, ["fecha", "fecha_hora", "fecha_accion", "created_at"], guate.fecha);
+    setFirst(payload, columns, ["hora"], guate.hora);
+
     setFirst(payload, columns, ["usuario_id", "id_usuario", "user_id"], user.id || 1);
     setFirst(payload, columns, ["usuario", "nombre_usuario", "correo_usuario", "email_usuario", "usuario_accion"], user.display);
     setFirst(payload, columns, ["modulo", "modulo_sistema", "seccion"], clean(event.modulo, "Sistema"));
@@ -295,7 +302,9 @@ async function insertAudit(req, result = { ok: true }, event = {}) {
     setFirst(payload, columns, ["tipo_evento", "tipo_accion", "tipo", "evento"], tipoEvento);
     setFirst(payload, columns, ["tabla", "tabla_afectada", "entidad"], clean(event.tabla || event.tabla_afectada, "-"));
     setFirst(payload, columns, ["registro_id", "id_registro", "referencia_id"], event.registro_id || event.recordId || null);
-    setFirst(payload, columns, ["ip", "direccion_ip", "ip_address"], req.ip || req.socket?.remoteAddress || "");
+    setFirst(payload, columns, ["ruta_api", "ruta"], String(req.originalUrl || req.url || ""));
+    setFirst(payload, columns, ["metodo_http", "metodo"], String(req.method || "").toUpperCase());
+    setFirst(payload, columns, ["ip_usuario", "ip", "direccion_ip", "ip_address"], req.ip || req.socket?.remoteAddress || "");
     setFirst(payload, columns, ["user_agent", "navegador"], req.headers?.["user-agent"] || "");
     setFirst(payload, columns, ["resultado", "estado_resultado"], result?.ok === false ? "ERROR" : "OK");
 
@@ -315,10 +324,6 @@ async function insertAudit(req, result = { ok: true }, event = {}) {
       keys.map((key) => payload[key])
     );
 
-    /*
-      Evita registros duplicados:
-      Si una ruta registra auditoría manualmente, el middleware global ya no vuelve a registrar esa misma petición.
-    */
     req._gl365AuditAlreadyInserted = true;
   } catch (error) {
     console.error("Error insertando auditoría:", error?.sqlMessage || error?.message || error);
