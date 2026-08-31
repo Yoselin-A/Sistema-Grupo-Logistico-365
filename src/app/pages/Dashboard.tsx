@@ -286,6 +286,9 @@ export function Dashboard() {
   const navigate = useNavigate();
   const { role } = useAuth();
 
+  const puedeUsarCRM =
+  role === "gerencia" || role === "ventas";
+
   const [data, setData] = useState<DashboardResumen>({
     envios: [],
     viajes: [],
@@ -345,18 +348,38 @@ export function Dashboard() {
         asignacionesFallback,
         proveedoresFallback,
       ] = await Promise.all([
-        safeGetObject("/logistica/bootstrap"),
-        safeGetObject("/comprobantes/bootstrap"),
-        safeGetObject("/crm/bootstrap"),
-        safeGetObject("/operaciones/bootstrap"),
-        safeGet("/logistica/envios"),
-        safeGet("/logistica/viajes"),
-        safeGet("/comprobantes"),
-        safeGet("/clientes"),
-        safeGet("/oportunidades"),
-        safeGet("/operaciones/asignaciones"),
-        safeGet("/operaciones/proveedores"),
-      ]);
+  safeGetObject("/logistica/bootstrap"),
+
+  safeGetObject("/comprobantes/bootstrap"),
+
+  puedeUsarCRM
+    ? safeGetObject("/crm/bootstrap")
+    : Promise.resolve({
+        clientes: [],
+        oportunidades: [],
+        cotizaciones: [],
+      }),
+
+  safeGetObject("/operaciones/bootstrap"),
+
+  safeGet("/logistica/envios"),
+
+  safeGet("/logistica/viajes"),
+
+  safeGet("/comprobantes"),
+
+  puedeUsarCRM
+    ? safeGet("/clientes")
+    : Promise.resolve([]),
+
+  puedeUsarCRM
+    ? safeGet("/oportunidades")
+    : Promise.resolve([]),
+
+  safeGet("/operaciones/asignaciones"),
+
+  safeGet("/operaciones/proveedores"),
+]);
 
       const envios = uniqueById([
         ...pickArray(logisticaBootstrap, ["envios", "envio", "shipping"]),
@@ -585,6 +608,8 @@ export function Dashboard() {
   };
 
   useEffect(() => {
+     if (!role) return;
+
     cargarDashboard();
     cargarSolicitudesCredenciales();
   }, [role]);

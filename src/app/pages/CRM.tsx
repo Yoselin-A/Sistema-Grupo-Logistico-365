@@ -20,6 +20,8 @@ import {
   Send,
   Phone,
   UserPlus,
+  UserX,
+  UserCheck,
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
@@ -188,9 +190,12 @@ interface CotizacionDetalleRow {
   id: number;
   cotizacion_id: number;
   descripcion: string;
-  cantidad: number;
-  precio_unitario: number;
-  dias_ui: number;
+  // En el formulario estos valores también pueden ser "" temporalmente.
+  // Eso permite borrar el contenido y escribir otro número sin que React
+  // vuelva a colocar 1 o 0 en cada pulsación.
+  cantidad: number | string;
+  precio_unitario: number | string;
+  dias_ui: number | string;
 }
 
 interface LeadView {
@@ -675,13 +680,29 @@ const cleanPersonName = (value: string, max = 35) => titleCase(cleanName(value))
 const cleanRoleText = (value: string, max = 60) => titleCase(cleanName(value)).slice(0, max);
 const cleanCommercialText = (value: string, max = 120) => titleCaseCompany(cleanCompany(value)).slice(0, max);
 
-// Para escribir en formularios sin perder espacios.
-// Antes se aplicaba titleCase en cada tecla y eso hacía que,
-// al escribir un espacio al final, se borrara y la siguiente palabra quedara pegada.
-const cleanCommercialTyping = (value: string, max = 120) =>
-  cleanCompany(value).replace(/\s{2,}/g, " ").slice(0, max);
+// ============================================================
+// LIMPIEZA MIENTRAS EL USUARIO ESCRIBE
+// ============================================================
+// Importante: estos helpers NO hacen trim() ni titleCase().
+// De esa forma un espacio recién escrito se conserva y el usuario puede
+// seguir escribiendo la siguiente palabra normalmente. La normalización
+// final se hace al guardar con cleanPersonName/cleanCommercialText/etc.
+const keepSingleSpaces = (value: string) => value.replace(/\s{2,}/g, " ");
 
-const cleanAddressText = (value: string, max = 180) => titleCaseCompany(cleanAddress(value)).slice(0, max);
+const cleanPersonTyping = (value: string, max = 35) =>
+  keepSingleSpaces(cleanName(value)).slice(0, max);
+
+const cleanRoleTyping = (value: string, max = 60) =>
+  keepSingleSpaces(cleanName(value)).slice(0, max);
+
+const cleanCommercialTyping = (value: string, max = 120) =>
+  keepSingleSpaces(cleanCompany(value)).slice(0, max);
+
+const cleanAddressTyping = (value: string, max = 180) =>
+  keepSingleSpaces(cleanAddress(value)).slice(0, max);
+
+const cleanAddressText = (value: string, max = 180) =>
+  titleCaseCompany(cleanAddress(value)).slice(0, max);
 
 function fullContactName(c?: Partial<ContactoClienteRow> | null) {
   if (!c) return "";
@@ -923,6 +944,89 @@ function KpiCard({ title, value, icon: Icon, color }: { title: string; value: st
   );
 }
 
+function PaginationControls({
+  page,
+  totalPages,
+  rowsPerPage,
+  totalItems,
+  itemLabel,
+  onPageChange,
+  onRowsPerPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  rowsPerPage: number;
+  totalItems: number;
+  itemLabel: string;
+  onPageChange: (page: number) => void;
+  onRowsPerPageChange: (rows: number) => void;
+}) {
+  const start = totalItems === 0 ? 0 : (page - 1) * rowsPerPage + 1;
+  const end = Math.min(page * rowsPerPage, totalItems);
+
+  return (
+    <div className="border-t bg-white px-4 py-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <p className="text-sm font-semibold text-gray-500">
+        Página {page} de {totalPages} · Mostrando {start} a {end} de {totalItems} {itemLabel}.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={rowsPerPage}
+          onChange={(e) => {
+            onRowsPerPageChange(Number(e.target.value));
+            onPageChange(1);
+          }}
+          className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm outline-none focus:border-[#0C2D6B]"
+          aria-label="Registros por página"
+        >
+          {[5, 10, 15, 25, 50].map((size) => (
+            <option key={size} value={size}>
+              {size} por página
+            </option>
+          ))}
+        </select>
+
+        <button
+          type="button"
+          onClick={() => onPageChange(1)}
+          disabled={page <= 1}
+          className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none"
+        >
+          Primera
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page <= 1}
+          className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none"
+        >
+          Anterior
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          disabled={page >= totalPages}
+          className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none"
+        >
+          Siguiente
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onPageChange(totalPages)}
+          disabled={page >= totalPages}
+          className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none"
+        >
+          Última
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function generarPDFCliente(
   client: ClienteRow,
   contacts: ContactoClienteRow[],
@@ -1006,6 +1110,11 @@ export function CRM() {
   const [leadStageFilter, setLeadStageFilter] = useState("Todos");
   const [sortField, setSortField] = useState("date");
   const [crmSortDirection, setCrmSortDirection] = useState<CrmSortDirection>("desc");
+
+  // Paginación independiente para Clientes y Cotizaciones.
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [clientPage, setClientPage] = useState(1);
+  const [quotePage, setQuotePage] = useState(1);
 
   const [clientModal, setClientModal] = useState<{ open: boolean; mode: ModalMode; value: Partial<ClienteRow> }>({ open: false, mode: "create", value: {} });
   const [clientErrors, setClientErrors] = useState<FieldErrors>({});
@@ -1256,10 +1365,10 @@ export function CRM() {
         const services: QuoteServiceView[] = ds.map((d) => ({
           id: d.id,
           description: d.descripcion,
-          quantity: d.cantidad,
-          unitPrice: d.precio_unitario,
-          subtotal: d.cantidad * d.precio_unitario,
-          days: d.dias_ui || 1,
+          quantity: Number(d.cantidad || 0),
+          unitPrice: Number(d.precio_unitario || 0),
+          subtotal: Number(d.cantidad || 0) * Number(d.precio_unitario || 0),
+          days: Number(d.dias_ui || 0),
         }));
         const subtotal = services.reduce((s, d) => s + d.subtotal, 0);
         const iva = subtotal * 0.12;
@@ -1467,6 +1576,43 @@ export function CRM() {
     });
     return rows;
   }, [filteredQuotes, sortField, crmSortDirection]);
+
+  // La paginación se aplica DESPUÉS de buscar, filtrar y ordenar.
+  // Así cada página conserva exactamente el resultado visible del usuario.
+  const clientTotalPages = Math.max(1, Math.ceil(sortedClients.length / rowsPerPage));
+  const quoteTotalPages = Math.max(1, Math.ceil(sortedQuotes.length / rowsPerPage));
+
+  const paginatedClients = useMemo(() => {
+    const start = (clientPage - 1) * rowsPerPage;
+    return sortedClients.slice(start, start + rowsPerPage);
+  }, [sortedClients, clientPage, rowsPerPage]);
+
+  const paginatedQuotes = useMemo(() => {
+    const start = (quotePage - 1) * rowsPerPage;
+    return sortedQuotes.slice(start, start + rowsPerPage);
+  }, [sortedQuotes, quotePage, rowsPerPage]);
+
+  // Cuando cambia una búsqueda, filtro, ordenamiento o cantidad por página,
+  // regresamos a la primera página del listado activo.
+  useEffect(() => {
+    if (activeTab === "clientes") {
+      setClientPage(1);
+    }
+
+    if (activeTab === "cotizaciones") {
+      setQuotePage(1);
+    }
+  }, [activeTab, searchQuery, statusFilter, sortField, crmSortDirection, rowsPerPage]);
+
+  // Protección adicional por si después de actualizar MySQL disminuye
+  // la cantidad de registros y la página actual deja de existir.
+  useEffect(() => {
+    setClientPage((page) => Math.min(page, clientTotalPages));
+  }, [clientTotalPages]);
+
+  useEffect(() => {
+    setQuotePage((page) => Math.min(page, quoteTotalPages));
+  }, [quoteTotalPages]);
 
   // ----------------------------------------------------------
   // CLIENT CRUD
@@ -1867,8 +2013,34 @@ export function CRM() {
     if (v.origen_id && v.destino_id && Number(v.origen_id) === Number(v.destino_id)) e.destino_id = "El destino debe ser diferente al origen.";
     if (!quoteModal.details.length) e.details = "Agrega al menos una línea de servicio.";
 
-    const bad = quoteModal.details.find((d) => !d.descripcion.trim() || d.descripcion.trim().length > 50 || Number(d.cantidad) <= 0 || Number(d.precio_unitario) < 0 || Number(d.dias_ui) <= 0);
-    if (bad) e.details = "Cada línea debe tener descripción (máx. 50), cantidad mayor a 0, precio válido y días mayor a 0.";
+    const bad = quoteModal.details.find((d) => {
+      const descripcion = String(d.descripcion || "").trim();
+      const cantidadTexto = String(d.cantidad ?? "").trim();
+      const precioTexto = String(d.precio_unitario ?? "").trim();
+      const diasTexto = String(d.dias_ui ?? "").trim();
+
+      const cantidad = Number(cantidadTexto);
+      const precio = Number(precioTexto || 0);
+      const dias = Number(diasTexto);
+
+      return (
+        !descripcion ||
+        descripcion.length > 50 ||
+        !cantidadTexto ||
+        !Number.isFinite(cantidad) ||
+        cantidad <= 0 ||
+        !Number.isFinite(precio) ||
+        precio < 0 ||
+        !diasTexto ||
+        !Number.isFinite(dias) ||
+        dias <= 0
+      );
+    });
+
+    if (bad) {
+      e.details =
+        "Cada línea debe tener descripción (máx. 50), cantidad mayor a 0, precio válido y días mayor a 0.";
+    }
 
     setQuoteErrors(e);
     return Object.keys(e).length === 0;
@@ -1879,14 +2051,14 @@ export function CRM() {
 
     const services = quoteModal.details.map((d) => ({
       id: d.id,
-      description: d.descripcion.trim().slice(0, 50),
-      descripcion: d.descripcion.trim().slice(0, 50),
-      quantity: Number(d.cantidad || 1),
-      cantidad: Number(d.cantidad || 1),
+      description: cleanCommercialText(String(d.descripcion || ""), 50),
+      descripcion: cleanCommercialText(String(d.descripcion || ""), 50),
+      quantity: Number(d.cantidad),
+      cantidad: Number(d.cantidad),
       unitPrice: Number(d.precio_unitario || 0),
       precio_unitario: Number(d.precio_unitario || 0),
-      days: Number(d.dias_ui || 1),
-      dias_ui: Number(d.dias_ui || 1),
+      days: Number(d.dias_ui),
+      dias_ui: Number(d.dias_ui),
     }));
 
     const payload = {
@@ -1901,7 +2073,7 @@ export function CRM() {
       fecha_ui: quoteModal.value.fecha_ui,
       estado_ui: quoteModal.value.estado_ui,
       moneda_ui: quoteModal.value.moneda_ui,
-      tipo_carga_ui: quoteModal.value.tipo_carga_ui,
+      tipo_carga_ui: cleanCommercialText(String(quoteModal.value.tipo_carga_ui || ""), 80),
       peso_ui: quoteModal.value.peso_ui,
       volumen_ui: quoteModal.value.volumen_ui,
       observaciones_ui: quoteModal.value.observaciones_ui,
@@ -1950,7 +2122,10 @@ export function CRM() {
       const c = clients.find((x) => x.id === q.cliente_id);
       const ct = contacts.find((x) => x.id === q.contacto_id);
       const det = ds.filter((d) => d.cotizacion_id === q.id);
-      const subtotal = det.reduce((s, d) => s + d.cantidad * d.precio_unitario, 0);
+      const subtotal = det.reduce(
+        (s, d) => s + Number(d.cantidad || 0) * Number(d.precio_unitario || 0),
+        0
+      );
       return {
         id: String(q.id),
         quoteNumber: q.codigo_cotizacion,
@@ -1961,7 +2136,16 @@ export function CRM() {
         email: ct?.correo || "",
         date: q.fecha_ui,
         status: q.estado_ui,
-        services: det.map((d) => ({ id: String(d.id), description: d.descripcion, modality: "", route: "", quantity: d.cantidad, unitPrice: d.precio_unitario, subtotal: d.cantidad * d.precio_unitario, days: d.dias_ui })),
+        services: det.map((d) => ({
+          id: String(d.id),
+          description: d.descripcion,
+          modality: "",
+          route: "",
+          quantity: Number(d.cantidad || 0),
+          unitPrice: Number(d.precio_unitario || 0),
+          subtotal: Number(d.cantidad || 0) * Number(d.precio_unitario || 0),
+          days: Number(d.dias_ui || 0),
+        })),
         subtotal,
         iva: subtotal * 0.12,
         total: subtotal * 1.12,
@@ -1985,34 +2169,86 @@ export function CRM() {
   };
 
   // ----------------------------------------------------------
-  // DELETE
+  // BAJAS / REACTIVACIÓN DE CLIENTES Y ELIMINACIÓN DE OTROS REGISTROS
   // ----------------------------------------------------------
 
   const executeDelete = async () => {
     if (!deleteModal.type || !deleteModal.id) return;
-    const id = deleteModal.id;
-
-    const endpointByType: Record<string, string> = {
-      client: `/clientes/${id}`,
-      contact: `/contactos-cliente/${id}`,
-      phone: `/telefonos-contacto/${id}`,
-      lead: `/oportunidades/${id}`,
-      quote: `/cotizaciones/${id}`,
-    };
+    const id = Number(deleteModal.id);
 
     try {
-      await apiSendCRM(endpointByType[deleteModal.type], "DELETE");
+      // Los clientes NO se eliminan físicamente.
+      // Se cambia estado_cliente_id:
+      // 1 = Activo
+      // 2 = Inactivo / De baja
+      if (deleteModal.type === "client") {
+        const client = clients.find((c) => Number(c.id) === id);
+
+        if (!client) {
+          throw new Error("No se encontró el cliente seleccionado.");
+        }
+
+        const estaActivo = Number(client.estado_cliente_id) === 1;
+        const nuevoEstado = estaActivo ? 2 : 1;
+
+        await apiSendCRM(`/clientes/${id}`, "PUT", {
+          codigo_cliente: client.codigo_cliente,
+          nombre_empresa: client.nombre_empresa,
+          nit: client.nit,
+          direccion: client.direccion,
+          estado_cliente_id: nuevoEstado,
+        });
+
+        await reload();
+
+        setClientModal({ open: false, mode: "create", value: {} });
+        setDeleteModal({ open: false, type: null, id: null });
+
+        showNotice(
+          "success",
+          estaActivo
+            ? "Cliente dado de baja correctamente."
+            : "Cliente reactivado correctamente."
+        );
+
+        return;
+      }
+
+      // Los demás tipos conservan su comportamiento actual.
+      const endpointByType: Record<string, string> = {
+        contact: `/contactos-cliente/${id}`,
+        phone: `/telefonos-contacto/${id}`,
+        lead: `/oportunidades/${id}`,
+        quote: `/cotizaciones/${id}`,
+      };
+
+      const endpoint = endpointByType[deleteModal.type];
+
+      if (!endpoint) {
+        throw new Error("No se encontró la operación solicitada.");
+      }
+
+      await apiSendCRM(endpoint, "DELETE");
       await reload();
+
       setClientModal({ open: false, mode: "create", value: {} });
       setContactModal({ open: false, mode: "create", value: {}, clientId: null });
       setPhoneModal({ open: false, mode: "create", value: {}, contactId: null });
       setLeadModal({ open: false, mode: "create", value: {} });
       setQuoteModal({ open: false, mode: "create", value: {}, details: [] });
       setDeleteModal({ open: false, type: null, id: null });
-      showNotice("success", "Registro eliminado o inactivado correctamente en MySQL.");
+
+      showNotice("success", "Registro eliminado correctamente en MySQL.");
     } catch (error: any) {
       setDeleteModal({ open: false, type: null, id: null });
-      showNotice("error", error.message || "No se pudo eliminar el registro en MySQL.");
+
+      showNotice(
+        "error",
+        error.message ||
+          (deleteModal.type === "client"
+            ? "No se pudo cambiar el estado del cliente."
+            : "No se pudo eliminar el registro en MySQL.")
+      );
     }
   };
 
@@ -2067,12 +2303,15 @@ export function CRM() {
   // ----------------------------------------------------------
 
   const totalWon = leads.filter((l) => l.stage === "ganado").reduce((s, l) => s + l.amount, 0);
+  const activeLeads = leads.filter(
+  (l) => l.stage !== "ganado" && l.stage !== "perdido"
+);
   const totalQuoteGTQ = quoteViews.reduce((s, q) => s + (q.currency === "USD" ? q.total * 7.8 : q.total), 0);
 
   const kpis =
     activeTab === "seguimiento"
       ? [
-          { title: "Oportunidades activas", value: leads.length, icon: Target, color: "blue" as const },
+          { title: "Oportunidades activas", value: activeLeads.length, icon: Target, color: "blue" as const },
           { title: "Tasa de cierre", value: leads.length ? `${Math.round((leads.filter((l) => l.stage === "ganado").length / leads.length) * 100)}%` : "0%", icon: TrendingUp, color: "green" as const },
           { title: "Oportunidades registradas", value: leads.length, icon: FileText, color: "orange" as const },
           { title: "Valor ganado", value: moneyGTQ(totalWon), icon: DollarSign, color: "blue" as const },
@@ -2097,6 +2336,14 @@ export function CRM() {
 
   const currentClient = clientModal.value.id ? clients.find((c) => c.id === Number(clientModal.value.id)) : undefined;
   const currentClientContacts = currentClient ? contacts.filter((c) => c.cliente_id === currentClient.id) : [];
+
+  const clientForStatusAction =
+    deleteModal.type === "client" && deleteModal.id
+      ? clients.find((c) => Number(c.id) === Number(deleteModal.id))
+      : undefined;
+
+  const clientStatusActionIsReactivate =
+    Number(clientForStatusAction?.estado_cliente_id) === 2;
 
   const currentLeadView = leadModal.value.id ? leads.find((l) => l.id === Number(leadModal.value.id)) : undefined;
 
@@ -2411,7 +2658,7 @@ export function CRM() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sortedClients.map((c) => {
+                {paginatedClients.map((c) => {
                   const pc = principalContact(c.id);
                   return (
                     <tr key={c.id} className="hover:bg-gray-50">
@@ -2433,7 +2680,22 @@ export function CRM() {
                           <button onClick={() => generarPDFCliente(c, contacts, phones)} className="w-8 h-8 rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 flex items-center justify-center" title="Descargar PDF" aria-label="Descargar PDF"><Download className="w-4 h-4" /></button>
                           <button onClick={() => openClient("view", c)} className="w-8 h-8 rounded-lg text-gray-500 hover:text-[#0C2D6B] hover:bg-blue-50 flex items-center justify-center" title="Ver cliente" aria-label="Ver cliente"><Eye className="w-4 h-4" /></button>
                           <button onClick={() => openClient("edit", c)} className="w-8 h-8 rounded-lg text-gray-500 hover:text-[#FF6A00] hover:bg-orange-50 flex items-center justify-center" title="Editar cliente" aria-label="Editar cliente"><Edit2 className="w-4 h-4" /></button>
-                          <button onClick={() => setDeleteModal({ open: true, type: "client", id: c.id })} className="w-8 h-8 rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 flex items-center justify-center" title="Eliminar cliente" aria-label="Eliminar cliente"><Trash2 className="w-4 h-4" /></button>
+                          <button
+                            onClick={() => setDeleteModal({ open: true, type: "client", id: c.id })}
+                            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                              c.estado_cliente_id === 2
+                                ? "text-green-600 hover:text-green-700 hover:bg-green-50"
+                                : "text-gray-500 hover:text-red-600 hover:bg-red-50"
+                            }`}
+                            title={c.estado_cliente_id === 2 ? "Reactivar cliente" : "Dar de baja cliente"}
+                            aria-label={c.estado_cliente_id === 2 ? "Reactivar cliente" : "Dar de baja cliente"}
+                          >
+                            {c.estado_cliente_id === 2 ? (
+                              <UserCheck className="w-4 h-4" />
+                            ) : (
+                              <UserX className="w-4 h-4" />
+                            )}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -2443,6 +2705,16 @@ export function CRM() {
               </tbody>
             </table>
           </div>
+
+          <PaginationControls
+            page={clientPage}
+            totalPages={clientTotalPages}
+            rowsPerPage={rowsPerPage}
+            totalItems={sortedClients.length}
+            itemLabel="registros filtrados"
+            onPageChange={setClientPage}
+            onRowsPerPageChange={setRowsPerPage}
+          />
         </div>
       )}
 
@@ -2497,7 +2769,7 @@ export function CRM() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sortedQuotes.map((q) => (
+                {paginatedQuotes.map((q) => (
                   <tr key={q.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 font-bold text-[#0C2D6B]">{q.quoteNumber}</td>
                     <td className="px-4 py-3 max-w-[220px]"><p className="truncate font-medium" title={q.clientName}>{q.clientName}</p></td>
@@ -2537,6 +2809,16 @@ export function CRM() {
               </tbody>
             </table>
           </div>
+
+          <PaginationControls
+            page={quotePage}
+            totalPages={quoteTotalPages}
+            rowsPerPage={rowsPerPage}
+            totalItems={sortedQuotes.length}
+            itemLabel="cotizaciones filtradas"
+            onPageChange={setQuotePage}
+            onRowsPerPageChange={setRowsPerPage}
+          />
         </div>
       )}
 
@@ -2571,7 +2853,7 @@ export function CRM() {
                     </div>
                     <div className="md:col-span-2">
                       <label className="block text-xs font-bold text-gray-700 mb-1">Nombre de empresa / razón social *</label>
-                      <input autoFocus data-enter-item="true" onKeyDown={moveWithEnter} maxLength={120} value={clientModal.value.nombre_empresa || ""} onChange={(e) => { setClientErrors((x) => ({ ...x, nombre_empresa: "" })); setClientModal((p) => ({ ...p, value: { ...p.value, nombre_empresa: cleanCommercialText(e.target.value, 120) } })); }} className={inputClass(clientErrors.nombre_empresa)} placeholder="Distribuidora Maya del Norte, S.A." />
+                      <input autoFocus data-enter-item="true" onKeyDown={moveWithEnter} maxLength={120} value={clientModal.value.nombre_empresa || ""} onChange={(e) => { setClientErrors((x) => ({ ...x, nombre_empresa: "" })); setClientModal((p) => ({ ...p, value: { ...p.value, nombre_empresa: cleanCommercialTyping(e.target.value, 120) } })); }} className={inputClass(clientErrors.nombre_empresa)} placeholder="Distribuidora Maya del Norte, S.A." />
                       <ErrorText value={clientErrors.nombre_empresa} />
                     </div>
                     <div>
@@ -2581,7 +2863,7 @@ export function CRM() {
                     </div>
                     <div className="md:col-span-2">
                       <label className="block text-xs font-bold text-gray-700 mb-1">Dirección</label>
-                      <input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={180} value={clientModal.value.direccion || ""} onChange={(e) => setClientModal((p) => ({ ...p, value: { ...p.value, direccion: cleanAddressText(e.target.value, 180) } }))} className={inputClass()} placeholder="5a. Avenida 3-42 Zona 1, Cobán" />
+                      <input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={180} value={clientModal.value.direccion || ""} onChange={(e) => setClientModal((p) => ({ ...p, value: { ...p.value, direccion: cleanAddressTyping(e.target.value, 180) } }))} className={inputClass()} placeholder="5a. Avenida 3-42 Zona 1, Cobán" />
                     </div>
                   </div>
                   <p className="text-xs text-gray-400 italic">Los contactos y teléfonos se agregan después de guardar el cliente, de acuerdo con las tablas contactos_cliente y telefonos_contacto.</p>
@@ -2593,7 +2875,24 @@ export function CRM() {
                       <h3 className="text-xs font-bold text-[#0C2D6B] uppercase tracking-wider">Información de la empresa</h3>
                       <div className="flex gap-2">
                         <button onClick={() => openClient("edit", currentClient)} className="h-8 px-3 bg-orange-50 text-[#FF6A00] rounded-lg text-xs font-bold flex items-center gap-1"><Edit2 className="w-3.5 h-3.5" /> Editar</button>
-                        <button onClick={() => setDeleteModal({ open: true, type: "client", id: currentClient.id })} className="h-8 px-3 bg-red-50 text-red-600 rounded-lg text-xs font-bold flex items-center gap-1"><Trash2 className="w-3.5 h-3.5" /> Eliminar</button>
+                        <button
+                          onClick={() => setDeleteModal({ open: true, type: "client", id: currentClient.id })}
+                          className={`h-8 px-3 rounded-lg text-xs font-bold flex items-center gap-1 ${
+                            currentClient.estado_cliente_id === 2
+                              ? "bg-green-50 text-green-700 hover:bg-green-100"
+                              : "bg-red-50 text-red-600 hover:bg-red-100"
+                          }`}
+                        >
+                          {currentClient.estado_cliente_id === 2 ? (
+                            <>
+                              <UserCheck className="w-3.5 h-3.5" /> Reactivar
+                            </>
+                          ) : (
+                            <>
+                              <UserX className="w-3.5 h-3.5" /> Dar de baja
+                            </>
+                          )}
+                        </button>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4 text-sm">
@@ -2671,11 +2970,11 @@ export function CRM() {
             <div className="p-6 space-y-4" data-enter-form>
               <ErrorSummary errors={contactErrors} title="Revisa los datos del contacto:" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer nombre *</label><input autoFocus data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.primer_nombre || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_nombre: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_nombre: cleanPersonName(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_nombre)} /><ErrorText value={contactErrors.primer_nombre} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo nombre</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.segundo_nombre || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_nombre: cleanPersonName(e.target.value, 35) } }))} className={inputClass()} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer apellido *</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.primer_apellido || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_apellido: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_apellido: cleanPersonName(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_apellido)} /><ErrorText value={contactErrors.primer_apellido} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo apellido</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.segundo_apellido || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_apellido: cleanPersonName(e.target.value, 35) } }))} className={inputClass()} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Cargo</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={60} value={contactModal.value.cargo || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, cargo: cleanRoleText(e.target.value, 60) } }))} className={inputClass()} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer nombre *</label><input autoFocus data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.primer_nombre || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_nombre: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_nombre: cleanPersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_nombre)} /><ErrorText value={contactErrors.primer_nombre} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo nombre</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.segundo_nombre || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_nombre: cleanPersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer apellido *</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.primer_apellido || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_apellido: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_apellido: cleanPersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_apellido)} /><ErrorText value={contactErrors.primer_apellido} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo apellido</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.segundo_apellido || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_apellido: cleanPersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Cargo</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={60} value={contactModal.value.cargo || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, cargo: cleanRoleTyping(e.target.value, 60) } }))} className={inputClass()} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Correo</label><input data-enter-item="true" onKeyDown={moveWithEnter} type="email" maxLength={150} value={contactModal.value.correo || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, correo: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, correo: cleanEmail(e.target.value) } })); }} className={inputClass(contactErrors.correo)} placeholder="maria.lopez@empresa.com.gt" /><ErrorText value={contactErrors.correo} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Contacto principal</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={contactModal.value.es_principal ? "1" : "0"} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, es_principal: e.target.value === "1" } }))} className={inputClass()}><option value="1">Sí</option><option value="0">No</option></select></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Estado</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={contactModal.value.estado === false ? "0" : "1"} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, estado: e.target.value === "1" } }))} className={inputClass()}><option value="1">Activo</option><option value="0">Inactivo</option></select></div>
@@ -2775,7 +3074,7 @@ export function CRM() {
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Cliente *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.cliente_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, cliente_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, cliente_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.cliente_id)}><option value="">Seleccione...</option>{clients.filter((c) => c.estado_cliente_id === 1).map((c) => <option key={c.id} value={c.id}>{c.codigo_cliente} · {c.nombre_empresa}</option>)}</select><ErrorText value={leadErrors.cliente_id} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Ejecutivo *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.ejecutivo_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, ejecutivo_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, ejecutivo_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.ejecutivo_id)}><option value="">Seleccione...</option>{salesUsers.map((u) => <option key={u.id} value={u.id}>{fullUserName(u)} ({u.nombre_usuario})</option>)}</select><ErrorText value={leadErrors.ejecutivo_id} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Modalidad *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.modalidad_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, modalidad_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, modalidad_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.modalidad_id)}><option value="">Seleccione...</option>{modalidades.map((m) => <option key={m.id} value={m.id}>{m.nombre_modalidad}</option>)}</select><ErrorText value={leadErrors.modalidad_id} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Probabilidad (%) *</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="text" inputMode="numeric" value={leadModal.value.probabilidad ?? 0} onChange={(e) => { const n = Math.min(100, Number(cleanInteger(e.target.value, 3) || 0)); setLeadErrors((x) => ({ ...x, probabilidad: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, probabilidad: n } })); }} className={inputClass(leadErrors.probabilidad)} /><ErrorText value={leadErrors.probabilidad} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Probabilidad (%) *</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="text" inputMode="numeric" value={leadModal.value.probabilidad ?? ""} onChange={(e) => { const limpio = cleanInteger(e.target.value, 3); const n = limpio === "" ? undefined : Math.min(100, Number(limpio)); setLeadErrors((x) => ({ ...x, probabilidad: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, probabilidad: n } })); }} className={inputClass(leadErrors.probabilidad)} /><ErrorText value={leadErrors.probabilidad} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Monto estimado (Q)</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="text" inputMode="decimal" value={Number(leadModal.value.monto_estimado || 0) === 0 ? "" : String(leadModal.value.monto_estimado)} placeholder="45000" onFocus={(e) => e.currentTarget.select()} onChange={(e) => { const limpio = cleanDecimal(e.target.value); setLeadErrors((x) => ({ ...x, monto_estimado: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, monto_estimado: limpio === "" ? undefined : Number(limpio) } })); }} className={inputClass(leadErrors.monto_estimado)} /><ErrorText value={leadErrors.monto_estimado} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Fecha creación *</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="date" value={leadModal.value.fecha_creacion || todayISO()} onChange={(e) => { setLeadErrors((x) => ({ ...x, fecha_creacion: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, fecha_creacion: e.target.value } })); }} className={inputClass(leadErrors.fecha_creacion)} /><ErrorText value={leadErrors.fecha_creacion} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Cierre estimado</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="date" value={leadModal.value.fecha_cierre_estimada || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, fecha_cierre_estimada: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, fecha_cierre_estimada: e.target.value } })); }} className={inputClass(leadErrors.fecha_cierre_estimada)} /><ErrorText value={leadErrors.fecha_cierre_estimada} /></div>
@@ -3096,7 +3395,7 @@ export function CRM() {
                           data-enter-item="true"
                           onKeyDown={moveWithEnter}
                           value={quoteModal.value.tipo_carga_ui || ""}
-                          onChange={(e) => setQuoteModal((p) => ({ ...p, value: { ...p.value, tipo_carga_ui: cleanCommercialText(e.target.value, 80) } }))}
+                          onChange={(e) => setQuoteModal((p) => ({ ...p, value: { ...p.value, tipo_carga_ui: cleanCommercialTyping(e.target.value, 80) } }))}
                           placeholder="Maquinaria industrial empacada"
                           className="h-8 flex-1 rounded border border-blue-300 bg-white px-2 font-semibold text-[#0C2D6B] outline-none focus:border-[#FF6A00]"
                         />
@@ -3150,11 +3449,12 @@ export function CRM() {
                               inputMode="numeric"
                               pattern="[0-9]*"
                               maxLength={6}
-                              value={d.cantidad}
+                              value={String(d.cantidad ?? "")}
                               onFocus={(e) => e.currentTarget.select()}
                               onChange={(e) => {
                                 const limpio = cleanInteger(e.target.value, 6);
-                                updateQuoteDetail(d.id, "cantidad", Math.max(1, Number(limpio) || 1));
+                                updateQuoteDetail(d.id, "cantidad", limpio);
+                                setQuoteErrors((x) => ({ ...x, details: "" }));
                               }}
                               className="w-full h-8 rounded border border-blue-200 bg-white text-center font-semibold outline-none focus:border-[#FF6A00]"
                             />
@@ -3166,7 +3466,10 @@ export function CRM() {
                               onKeyDown={moveWithEnter}
                               maxLength={50}
                               value={d.descripcion}
-                              onChange={(e) => updateQuoteDetail(d.id, "descripcion", cleanCommercialText(e.target.value, 50))}
+                              onChange={(e) => {
+                                updateQuoteDetail(d.id, "descripcion", cleanCommercialTyping(e.target.value, 50));
+                                setQuoteErrors((x) => ({ ...x, details: "" }));
+                              }}
                               placeholder="Transporte FTL Guatemala - Puerto Barrios"
                               className="w-full h-8 rounded border border-blue-200 bg-white px-2 font-semibold outline-none focus:border-[#FF6A00]"
                             />
@@ -3178,10 +3481,14 @@ export function CRM() {
                               onKeyDown={moveWithEnter}
                               type="text"
                               inputMode="decimal"
-                              value={Number(d.precio_unitario || 0) === 0 ? "" : String(d.precio_unitario)}
+                              value={String(d.precio_unitario ?? "")}
                               placeholder="2500"
                               onFocus={(e) => e.currentTarget.select()}
-                              onChange={(e) => { const limpio = cleanDecimal(e.target.value); updateQuoteDetail(d.id, "precio_unitario", limpio === "" ? 0 : Number(limpio)); }}
+                              onChange={(e) => {
+                                const limpio = cleanDecimal(e.target.value);
+                                updateQuoteDetail(d.id, "precio_unitario", limpio);
+                                setQuoteErrors((x) => ({ ...x, details: "" }));
+                              }}
                               className="w-full h-8 rounded border border-blue-300 bg-white px-2 text-right font-semibold text-[#0C2D6B] outline-none focus:border-[#FF6A00] focus:ring-2 focus:ring-[#FF6A00]/20"
                             />
                           </td>
@@ -3196,11 +3503,12 @@ export function CRM() {
                               inputMode="numeric"
                               pattern="[0-9]*"
                               maxLength={4}
-                              value={d.dias_ui}
+                              value={String(d.dias_ui ?? "")}
                               onFocus={(e) => e.currentTarget.select()}
                               onChange={(e) => {
                                 const limpio = cleanInteger(e.target.value, 4);
-                                updateQuoteDetail(d.id, "dias_ui", Math.max(1, Number(limpio) || 1));
+                                updateQuoteDetail(d.id, "dias_ui", limpio);
+                                setQuoteErrors((x) => ({ ...x, details: "" }));
                               }}
                               className="w-full h-8 rounded border border-blue-200 bg-white text-center font-semibold outline-none focus:border-[#FF6A00]"
                             />
@@ -3303,15 +3611,94 @@ export function CRM() {
       )}
 
       {/* ==================================================== */}
-      {/* DELETE CONFIRMATION */}
+      {/* CONFIRMACIÓN DE BAJA / REACTIVACIÓN / ELIMINACIÓN */}
       {/* ==================================================== */}
       {deleteModal.open && (
         <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl p-6 text-center">
-            <div className="w-14 h-14 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4"><Trash2 className="w-7 h-7" /></div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">¿Eliminar registro?</h3>
-            <p className="text-gray-500 text-sm mb-6">La eliminación respetará las relaciones del prototipo. Si existen registros relacionados, se solicitará inactivar el registro en lugar de eliminarlo.</p>
-            <div className="flex gap-3"><button onClick={() => setDeleteModal({ open: false, type: null, id: null })} className="flex-1 h-10 rounded-lg font-bold text-gray-600 hover:bg-gray-100">Cancelar</button><button onClick={executeDelete} className="flex-1 h-10 rounded-lg font-bold bg-red-600 text-white hover:bg-red-700">Sí, eliminar</button></div>
+            {deleteModal.type === "client" ? (
+              <>
+                <div
+                  className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${
+                    clientStatusActionIsReactivate
+                      ? "bg-green-100 text-green-600"
+                      : "bg-red-100 text-red-600"
+                  }`}
+                >
+                  {clientStatusActionIsReactivate ? (
+                    <UserCheck className="w-7 h-7" />
+                  ) : (
+                    <UserX className="w-7 h-7" />
+                  )}
+                </div>
+
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  {clientStatusActionIsReactivate
+                    ? "¿Reactivar cliente?"
+                    : "¿Dar de baja al cliente?"}
+                </h3>
+
+                <p className="font-bold text-[#0C2D6B] mb-2">
+                  {clientForStatusAction?.nombre_empresa || "Cliente seleccionado"}
+                </p>
+
+                <p className="text-gray-500 text-sm mb-6">
+                  {clientStatusActionIsReactivate
+                    ? "El cliente volverá a estar disponible para nuevos procesos comerciales."
+                    : "El cliente quedará inactivo, pero se conservarán su información, contactos, oportunidades, cotizaciones e historial relacionados."}
+                </p>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setDeleteModal({ open: false, type: null, id: null })}
+                    className="flex-1 h-10 rounded-lg font-bold text-gray-600 hover:bg-gray-100"
+                  >
+                    Cancelar
+                  </button>
+
+                  <button
+                    onClick={executeDelete}
+                    className={`flex-1 h-10 rounded-lg font-bold text-white ${
+                      clientStatusActionIsReactivate
+                        ? "bg-green-600 hover:bg-green-700"
+                        : "bg-red-600 hover:bg-red-700"
+                    }`}
+                  >
+                    {clientStatusActionIsReactivate ? "Reactivar" : "Dar de baja"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="w-14 h-14 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Trash2 className="w-7 h-7" />
+                </div>
+
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  ¿Eliminar registro?
+                </h3>
+
+                <p className="text-gray-500 text-sm mb-6">
+                  La eliminación respetará las relaciones del sistema. Si el registro posee dependencias, el backend impedirá su eliminación.
+                </p>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setDeleteModal({ open: false, type: null, id: null })}
+                    className="flex-1 h-10 rounded-lg font-bold text-gray-600 hover:bg-gray-100"
+                  >
+                    Cancelar
+                  </button>
+
+                  <button
+                    onClick={executeDelete}
+                    className="flex-1 h-10 rounded-lg font-bold bg-red-600 text-white hover:bg-red-700"
+                  >
+                    Sí, eliminar
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

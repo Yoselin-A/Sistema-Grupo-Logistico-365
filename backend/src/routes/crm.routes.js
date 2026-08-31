@@ -1,7 +1,31 @@
 const express = require("express");
 const pool = require("../config/db");
 
+const {
+  autorizarRoles,
+} = require("../middleware/auth.middleware");
+
 const router = express.Router();
+
+/*
+  =====================================================
+  SEGURIDAD DEL MÓDULO CRM Y VENTAS
+  =====================================================
+
+  Este router está montado en /api, por lo que NO se debe
+  aplicar autorizarRoles() de forma global al router completo.
+
+  Se protegen únicamente las rutas que pertenecen al CRM.
+*/
+const soloCRM = autorizarRoles("gerencia", "ventas");
+
+router.use("/crm", soloCRM);
+router.use("/clientes", soloCRM);
+router.use("/contactos-cliente", soloCRM);
+router.use("/telefonos-contacto", soloCRM);
+router.use("/oportunidades", soloCRM);
+router.use("/cotizaciones", soloCRM);
+router.use("/prefijos-telefonicos", soloCRM);
 
 const T = {
   cliente: "cliente",

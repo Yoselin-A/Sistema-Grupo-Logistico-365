@@ -404,12 +404,79 @@ const toInputDate = (value: any) => {
   return raw.slice(0, 10);
 };
 
+const GUATEMALA_TIME_ZONE = "America/Guatemala";
+
+const hasExplicitTimeZone = (value: string) =>
+  /(?:Z|[+-]\d{2}:?\d{2})$/i.test(String(value || "").trim());
+
+/**
+ * Normaliza cualquier DATETIME/TIMESTAMP para mostrarlo en hora de Guatemala.
+ *
+ * Casos soportados:
+ * 1. "2026-08-30 18:52:00"
+ *    Ya es una fecha local sin zona horaria -> se conserva tal cual.
+ *
+ * 2. "2026-08-31T00:52:00.000Z"
+ *    Es UTC -> se convierte a America/Guatemala -> 2026-08-30 18:52.
+ *
+ * Así evitamos el error de mostrar 6 horas de más en Auditoría.
+ */
+const formatDateTimeGuatemala = (value: any, includeSeconds = false) => {
+  if (value === null || value === undefined || value === "") return "-";
+
+  const raw = String(value).trim();
+
+  // MySQL DATETIME sin zona horaria: se considera que ya viene en hora local.
+  const localMatch = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/
+  );
+
+  if (localMatch && !hasExplicitTimeZone(raw)) {
+    const [, year, month, day, hour, minute, second = "00"] = localMatch;
+    return includeSeconds
+      ? `${year}-${month}-${day} ${hour}:${minute}:${second}`
+      : `${year}-${month}-${day} ${hour}:${minute}`;
+  }
+
+  // Fechas ISO/UTC o con offset explícito.
+  if (hasExplicitTimeZone(raw)) {
+    const date = new Date(raw);
+
+    if (!Number.isNaN(date.getTime())) {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: GUATEMALA_TIME_ZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        hourCycle: "h23",
+      }).formatToParts(date);
+
+      const values: Record<string, string> = {};
+      parts.forEach((part) => {
+        if (part.type !== "literal") values[part.type] = part.value;
+      });
+
+      const result = `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}`;
+      return includeSeconds ? `${result}:${values.second}` : result;
+    }
+  }
+
+  // Fallback seguro: no inventa zona horaria ni suma/resta horas.
+  const normalized = raw.replace("T", " ").replace(/Z$/i, "");
+  return normalized.slice(0, includeSeconds ? 19 : 16);
+};
+
 const toInputDateTime = (value: any) => {
   if (!value) return "";
-  const raw = String(value);
-  if (raw.includes("T")) return raw.slice(0, 16);
-  if (raw.includes(" ")) return raw.replace(" ", "T").slice(0, 16);
-  return raw.slice(0, 16);
+
+  const formatted = formatDateTimeGuatemala(value, false);
+  if (formatted === "-") return "";
+
+  return formatted.replace(" ", "T").slice(0, 16);
 };
 
 const fromInputDateTime = (value: any) => {
@@ -446,7 +513,7 @@ const formatCell = (row: AnyRow, column: ColumnDef, options: Record<string, Opti
     return <Badge tone={active ? "green" : "gray"}>{active ? "Sí" : "No"}</Badge>;
   }
   if (isDateType(column)) return <span>{formatDate(value)}</span>;
-  if (isDateTimeType(column)) return <span>{String(value).replace("T", " ").slice(0, 16)}</span>;
+  if (isDateTimeType(column)) return <span>{formatDateTimeGuatemala(value)}</span>;
   if (["total", "subtotal", "iva", "costo", "flete", "cuadrilla", "estadia", "valor", "monto", "precio_unitario", "impuesto", "descuento"].includes(column.name)) return <span className="font-bold text-[#0C2D6B]">{formatMoney(value)}</span>;
   if (String(value).length > 80) return <span title={String(value)}>{String(value).slice(0, 80)}...</span>;
   return <span>{String(value)}</span>;
@@ -465,7 +532,7 @@ const formatCellText = (row: AnyRow, column: ColumnDef, options: Record<string, 
 
   if (isTinyBoolean(column)) return Number(value) === 1 ? "Sí" : "No";
   if (isDateType(column)) return formatDate(value);
-  if (isDateTimeType(column)) return String(value).replace("T", " ").slice(0, 16);
+  if (isDateTimeType(column)) return formatDateTimeGuatemala(value);
 
   if (["total", "subtotal", "iva", "costo", "flete", "cuadrilla", "estadia", "valor", "monto", "precio_unitario", "impuesto", "descuento"].includes(column.name)) {
     return formatMoney(value);
