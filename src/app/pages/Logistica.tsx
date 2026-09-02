@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowUp,
   Building2,
   CheckCircle,
   Clock,
@@ -24,6 +25,7 @@ import {
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
+import logoEmpresa from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
 
 const API_BASE_URL = "/api";
 
@@ -529,6 +531,121 @@ function ActionButton({
   );
 }
 
+
+async function imageUrlToDataUrl(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function addCorporatePdfHeader(doc: jsPDF, title: string, subtitle: string) {
+  doc.setFillColor(12, 45, 107);
+  doc.rect(0, 0, 210, 36, "F");
+
+  // Tarjeta blanca para que el logo azul/naranja conserve contraste.
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(0.6);
+  doc.roundedRect(8, 4.5, 50, 27, 2.5, 2.5, "FD");
+
+  const logo = await imageUrlToDataUrl(logoEmpresa);
+  if (logo) {
+    try {
+      doc.addImage(logo, "PNG", 11, 7, 44, 22, undefined, "FAST");
+    } catch {
+      // El reporte continúa aunque el navegador no pueda convertir el logo.
+    }
+  }
+
+  doc.setTextColor(255, 106, 0);
+  doc.setFont(undefined, "bold");
+  doc.setFontSize(9);
+  doc.text("GRUPO LOGÍSTICO 365", 132, 9.5, { align: "center" });
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(17);
+  doc.text(title.toUpperCase(), 132, 20, { align: "center" });
+
+  doc.setFont(undefined, "normal");
+  doc.setFontSize(8.5);
+  doc.text(subtitle, 132, 26.5, { align: "center" });
+
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(0.8);
+  doc.line(68, 31.5, 196, 31.5);
+
+  doc.setTextColor(0, 0, 0);
+  doc.setFont(undefined, "normal");
+}
+
+function PaginationControls({
+  page,
+  totalPages,
+  rowsPerPage,
+  totalItems,
+  itemLabel,
+  onPageChange,
+  onRowsPerPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  rowsPerPage: number;
+  totalItems: number;
+  itemLabel: string;
+  onPageChange: (page: number) => void;
+  onRowsPerPageChange: (rows: number) => void;
+}) {
+  const start = totalItems === 0 ? 0 : (page - 1) * rowsPerPage + 1;
+  const end = Math.min(page * rowsPerPage, totalItems);
+
+  return (
+    <div className="mt-4 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <p className="text-sm font-semibold text-gray-500">
+        Página {page} de {totalPages} · Mostrando {start} a {end} de {totalItems} {itemLabel}.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={rowsPerPage}
+          onChange={(event) => {
+            onRowsPerPageChange(Number(event.target.value));
+            onPageChange(1);
+          }}
+          className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm outline-none focus:border-[#0C2D6B]"
+          aria-label="Registros por página"
+        >
+          {[4, 8, 12, 20, 40].map((size) => (
+            <option key={size} value={size}>{size} por página</option>
+          ))}
+        </select>
+
+        <button type="button" onClick={() => onPageChange(1)} disabled={page <= 1} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none">
+          Primera
+        </button>
+        <button type="button" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none">
+          Anterior
+        </button>
+        <button type="button" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none">
+          Siguiente
+        </button>
+        <button type="button" onClick={() => onPageChange(totalPages)} disabled={page >= totalPages} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none">
+          Última
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Logistica() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
@@ -563,6 +680,14 @@ export function Logistica() {
   const [filterTipoDeposito, setFilterTipoDeposito] = useState("Todos");
   const [sortDepositoField, setSortDepositoField] = useState("");
   const [sortDepositoDirection, setSortDepositoDirection] = useState<SortDirection>("asc");
+
+  // Paginación independiente para cada submódulo de Logística.
+  const [viajePage, setViajePage] = useState(1);
+  const [viajeRowsPerPage, setViajeRowsPerPage] = useState(8);
+  const [envioPage, setEnvioPage] = useState(1);
+  const [envioRowsPerPage, setEnvioRowsPerPage] = useState(8);
+  const [depositoPage, setDepositoPage] = useState(1);
+  const [depositoRowsPerPage, setDepositoRowsPerPage] = useState(8);
 
   const [viajeModal, setViajeModal] = useState<{ open: boolean; mode: "create" | "edit" | "view" }>({
     open: false,
@@ -891,6 +1016,50 @@ export function Logistica() {
 
     return rows;
   }, [filteredDepositos, sortDepositoField, sortDepositoDirection]);
+
+  const viajeTotalPages = Math.max(1, Math.ceil(sortedViajes.length / viajeRowsPerPage));
+  const envioTotalPages = Math.max(1, Math.ceil(sortedEnvios.length / envioRowsPerPage));
+  const depositoTotalPages = Math.max(1, Math.ceil(sortedDepositos.length / depositoRowsPerPage));
+
+  const paginatedViajes = useMemo(() => {
+    const start = (viajePage - 1) * viajeRowsPerPage;
+    return sortedViajes.slice(start, start + viajeRowsPerPage);
+  }, [sortedViajes, viajePage, viajeRowsPerPage]);
+
+  const paginatedEnvios = useMemo(() => {
+    const start = (envioPage - 1) * envioRowsPerPage;
+    return sortedEnvios.slice(start, start + envioRowsPerPage);
+  }, [sortedEnvios, envioPage, envioRowsPerPage]);
+
+  const paginatedDepositos = useMemo(() => {
+    const start = (depositoPage - 1) * depositoRowsPerPage;
+    return sortedDepositos.slice(start, start + depositoRowsPerPage);
+  }, [sortedDepositos, depositoPage, depositoRowsPerPage]);
+
+  // Al buscar, filtrar, ordenar o cambiar el tamaño de página regresamos a la primera página.
+  useEffect(() => {
+    setViajePage(1);
+  }, [searchViajes, filterEstadoViaje, sortViajeField, sortViajeDirection, viajeRowsPerPage]);
+
+  useEffect(() => {
+    setEnvioPage(1);
+  }, [searchEnvios, filterEstadoEnvio, filterClienteEnvio, sortEnvioField, sortEnvioDirection, envioRowsPerPage]);
+
+  useEffect(() => {
+    setDepositoPage(1);
+  }, [searchDepositos, filterEstadoDeposito, filterTipoDeposito, sortDepositoField, sortDepositoDirection, depositoRowsPerPage]);
+
+  useEffect(() => {
+    setViajePage((page) => Math.min(page, viajeTotalPages));
+  }, [viajeTotalPages]);
+
+  useEffect(() => {
+    setEnvioPage((page) => Math.min(page, envioTotalPages));
+  }, [envioTotalPages]);
+
+  useEffect(() => {
+    setDepositoPage((page) => Math.min(page, depositoTotalPages));
+  }, [depositoTotalPages]);
 
   const alerts = useMemo(() => {
     return viajes
@@ -1293,54 +1462,46 @@ export function Logistica() {
     }
   };
 
-  const exportEnviosPDF = () => {
+  const exportEnviosPDF = async () => {
     const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.setTextColor(12, 45, 107);
-    doc.text("Grupo Logístico 365", 105, 18, { align: "center" });
-    doc.setFontSize(13);
-    doc.text("Reporte de Envíos", 105, 28, { align: "center" });
+    await addCorporatePdfHeader(doc, "Reporte de Envíos", "Logística · Registro y seguimiento de envíos");
 
     autoTable(doc, {
-      startY: 40,
+      startY: 44,
       head: [["Código", "Cliente", "Origen → Destino", "Fecha", "Estado"]],
       body: sortedEnvios.map((e) => [e.codigo, e.cliente, `${e.origen} → ${e.destino}`, formatDate(e.fecha), e.estado]),
       headStyles: { fillColor: [12, 45, 107], textColor: [255, 255, 255] },
-      styles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      styles: { fontSize: 8, cellPadding: 2.5 },
+      margin: { left: 12, right: 12 },
     });
 
     doc.save(`Reporte_Envios_${Date.now()}.pdf`);
   };
 
-  const exportViajesPDF = () => {
+  const exportViajesPDF = async () => {
     const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.setTextColor(12, 45, 107);
-    doc.text("Grupo Logístico 365", 105, 18, { align: "center" });
-    doc.setFontSize(13);
-    doc.text("Reporte de Viajes", 105, 28, { align: "center" });
+    await addCorporatePdfHeader(doc, "Reporte de Viajes", "Logística · Monitoreo y seguimiento operativo");
 
     autoTable(doc, {
-      startY: 40,
+      startY: 44,
       head: [["Código", "Cliente", "Ruta", "Unidad", "Piloto", "Estado", "Progreso"]],
       body: sortedViajes.map((v) => [v.codigo, v.cliente, v.ruta, v.unidad, v.piloto, v.estado, `${v.progreso}%`]),
       headStyles: { fillColor: [12, 45, 107], textColor: [255, 255, 255] },
-      styles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      styles: { fontSize: 7.5, cellPadding: 2.2 },
+      margin: { left: 10, right: 10 },
     });
 
     doc.save(`Reporte_Viajes_${Date.now()}.pdf`);
   };
 
-  const exportDepositosPDF = () => {
+  const exportDepositosPDF = async () => {
     const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.setTextColor(12, 45, 107);
-    doc.text("Grupo Logístico 365", 105, 18, { align: "center" });
-    doc.setFontSize(13);
-    doc.text("Reporte de Depósitos", 105, 28, { align: "center" });
+    await addCorporatePdfHeader(doc, "Reporte de Depósitos", "Logística · Gestión de depósitos y capacidad");
 
     autoTable(doc, {
-      startY: 40,
+      startY: 44,
       head: [["Código", "Nombre", "Ubicación", "Capacidad", "Tipo", "Estado"]],
       body: sortedDepositos.map((d) => [
         d.codigo,
@@ -1351,7 +1512,9 @@ export function Logistica() {
         d.estado,
       ]),
       headStyles: { fillColor: [12, 45, 107], textColor: [255, 255, 255] },
-      styles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      styles: { fontSize: 8, cellPadding: 2.5 },
+      margin: { left: 12, right: 12 },
     });
 
     doc.save(`Reporte_Depositos_${Date.now()}.pdf`);
@@ -1364,8 +1527,30 @@ export function Logistica() {
     XLSX.writeFile(wb, `${fileName}_${Date.now()}.xlsx`);
   };
 
+  // Navegación interna del módulo de Logística.
+  // No cambia de ruta ni recarga la aplicación: únicamente desplaza la vista
+  // hacia la sección seleccionada y conserva los filtros/datos actuales.
+  const scrollToLogisticaSection = (id: string) => {
+    const element = document.getElementById(id);
+    element?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const goToViajes = () => scrollToLogisticaSection("logistica-viajes");
+
+  const goToEnvios = () => {
+    setActiveTab("envios");
+    window.setTimeout(() => scrollToLogisticaSection("logistica-registros"), 60);
+  };
+
+  const goToDepositos = () => {
+    setActiveTab("depositos");
+    window.setTimeout(() => scrollToLogisticaSection("logistica-registros"), 60);
+  };
+
+  const goToTop = () => scrollToLogisticaSection("logistica-top");
+
   return (
-    <div className="space-y-5 pb-12 w-full max-w-full overflow-hidden px-3 sm:px-4">
+    <div id="logistica-top" className="space-y-5 pb-12 w-full max-w-full overflow-hidden px-3 sm:px-4 scroll-mt-24">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-[#0C2D6B]">Logística</h1>
@@ -1385,9 +1570,9 @@ export function Logistica() {
           <button
             type="button"
             onClick={openCreateViaje}
-            className="h-11 px-5 rounded-xl bg-[#0C2D6B] text-white font-bold text-sm inline-flex items-center gap-2 shadow-sm"
+            className="h-12 px-7 rounded-xl bg-[#0C2D6B] text-white font-bold text-base inline-flex items-center gap-2.5 shadow-md hover:bg-[#143C8C] transition-colors"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-5 h-5" />
             Nuevo Viaje
           </button>
         </div>
@@ -1411,10 +1596,53 @@ export function Logistica() {
         ))}
       </div>
 
+      {/* Accesos rápidos dentro del mismo módulo */}
+      <div className="sticky top-16 z-30 rounded-2xl border border-gray-200 bg-white/95 backdrop-blur px-3 py-2.5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-gray-400">Ir a:</span>
+          <button
+            type="button"
+            onClick={goToViajes}
+            className="h-9 px-3 rounded-xl border border-blue-100 bg-blue-50 text-[#0C2D6B] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-100 transition-colors"
+          >
+            <Truck className="w-4 h-4" /> Viajes
+          </button>
+          <button
+            type="button"
+            onClick={goToEnvios}
+            className={`h-9 px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
+              activeTab === "envios"
+                ? "border-orange-200 bg-orange-50 text-[#C85100]"
+                : "border-gray-200 bg-white text-[#0C2D6B] hover:bg-blue-50"
+            }`}
+          >
+            <Package className="w-4 h-4" /> Envíos
+          </button>
+          <button
+            type="button"
+            onClick={goToDepositos}
+            className={`h-9 px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
+              activeTab === "depositos"
+                ? "border-orange-200 bg-orange-50 text-[#C85100]"
+                : "border-gray-200 bg-white text-[#0C2D6B] hover:bg-blue-50"
+            }`}
+          >
+            <Warehouse className="w-4 h-4" /> Depósitos / Bodega
+          </button>
+          <button
+            type="button"
+            onClick={goToTop}
+            className="h-9 px-3 rounded-xl border border-gray-200 bg-white text-gray-600 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-gray-50 transition-colors ml-0 sm:ml-auto"
+          >
+            <ArrowUp className="w-4 h-4" /> Arriba
+          </button>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <section className="xl:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-bold text-[#0C2D6B] flex items-center gap-2">
+            <h2 className="text-xl sm:text-2xl font-bold text-[#0C2D6B] flex items-center gap-2">
               <MapPin className="w-5 h-5 text-[#FF6A00]" />
               Rastreo en Tiempo Real
             </h2>
@@ -1475,7 +1703,7 @@ export function Logistica() {
         </section>
 
         <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-          <h2 className="text-lg font-bold text-[#0C2D6B] flex items-center gap-2 mb-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-[#0C2D6B] flex items-center gap-2 mb-4">
             <AlertTriangle className="w-5 h-5 text-red-500" />
             Centro de Alertas ({alerts.length})
           </h2>
@@ -1515,15 +1743,22 @@ export function Logistica() {
         </section>
       </div>
 
-      <section>
+      <section id="logistica-viajes" className="scroll-mt-28">
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
           <div className="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-3 mb-3">
-            <h2 className="text-xl font-bold text-[#0C2D6B] flex items-center gap-2">
+            <h2 className="text-2xl font-bold text-[#0C2D6B] flex items-center gap-2">
               <Truck className="w-5 h-5 text-[#FF6A00]" />
               Viajes Activos
             </h2>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={openCreateViaje}
+                className="h-12 px-6 rounded-xl bg-[#0C2D6B] text-white text-base font-bold inline-flex items-center gap-2 shadow-md hover:bg-[#143C8C] transition-colors"
+              >
+                <Plus className="w-5 h-5" /> Nuevo Viaje
+              </button>
               <button onClick={exportViajesPDF} className="h-11 px-4 rounded-xl bg-red-500 text-white text-sm font-bold inline-flex items-center gap-2">
                 <Download className="w-4 h-4" /> PDF
               </button>
@@ -1592,10 +1827,23 @@ export function Logistica() {
               {sortedViajes.length} de {viajes.length} registros visibles
             </span>
           </div>
+
+          <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Accesos:</span>
+            <button type="button" onClick={goToEnvios} className="h-8 px-3 rounded-lg bg-blue-50 text-[#0C2D6B] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-100">
+              <Package className="w-3.5 h-3.5" /> Ir a Envíos
+            </button>
+            <button type="button" onClick={goToDepositos} className="h-8 px-3 rounded-lg bg-orange-50 text-[#C85100] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-orange-100">
+              <Warehouse className="w-3.5 h-3.5" /> Ir a Depósitos / Bodega
+            </button>
+            <button type="button" onClick={goToTop} className="h-8 px-3 rounded-lg bg-gray-50 text-gray-600 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-gray-100">
+              <ArrowUp className="w-3.5 h-3.5" /> Volver arriba
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {sortedViajes.map((viaje) => (
+          {paginatedViajes.map((viaje) => (
             <article key={viaje.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
               <div className="p-4">
                 <div className="flex items-start justify-between gap-3 mb-3">
@@ -1653,14 +1901,25 @@ export function Logistica() {
             No se encontraron viajes con los filtros seleccionados.
           </div>
         )}
+
+        <PaginationControls
+          page={viajePage}
+          totalPages={viajeTotalPages}
+          rowsPerPage={viajeRowsPerPage}
+          totalItems={sortedViajes.length}
+          itemLabel="viajes filtrados"
+          onPageChange={setViajePage}
+          onRowsPerPageChange={setViajeRowsPerPage}
+        />
       </section>
 
-      <section>
-        <div className="flex gap-4 border-b border-gray-200 mb-4">
+      <section id="logistica-registros" className="scroll-mt-28">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-gray-200 mb-4">
+          <div className="flex flex-wrap gap-6">
           <button
             type="button"
             onClick={() => setActiveTab("envios")}
-            className={`px-1 pb-3 font-bold text-sm border-b-4 ${
+            className={`px-2 pb-3 font-bold text-base sm:text-lg border-b-4 ${
               activeTab === "envios" ? "border-[#FF6A00] text-[#0C2D6B]" : "border-transparent text-gray-500"
             }`}
           >
@@ -1669,16 +1928,26 @@ export function Logistica() {
           <button
             type="button"
             onClick={() => setActiveTab("depositos")}
-            className={`px-1 pb-3 font-bold text-sm border-b-4 ${
+            className={`px-2 pb-3 font-bold text-base sm:text-lg border-b-4 ${
               activeTab === "depositos" ? "border-[#FF6A00] text-[#0C2D6B]" : "border-transparent text-gray-500"
             }`}
           >
             Gestión de Depósitos
           </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 pb-2">
+            <button type="button" onClick={goToViajes} className="h-9 px-3 rounded-xl border border-blue-100 bg-blue-50 text-[#0C2D6B] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-100">
+              <Truck className="w-4 h-4" /> Viajes
+            </button>
+            <button type="button" onClick={goToTop} className="h-9 px-3 rounded-xl border border-gray-200 bg-white text-gray-600 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-gray-50">
+              <ArrowUp className="w-4 h-4" /> Arriba
+            </button>
+          </div>
         </div>
 
         {activeTab === "envios" && (
-          <div>
+          <div id="logistica-envios" className="scroll-mt-28">
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
               <div className="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_210px_230px_auto] gap-3 2xl:flex-1">
@@ -1728,8 +1997,8 @@ export function Logistica() {
                 </div>
 
                 <div className="flex gap-2 2xl:shrink-0">
-                  <button onClick={openCreateEnvio} className="h-11 px-4 rounded-xl bg-[#0C2D6B] text-white font-bold text-sm inline-flex items-center gap-2 whitespace-nowrap">
-                    <Plus className="w-4 h-4" /> Nuevo Envío
+                  <button onClick={openCreateEnvio} className="h-12 px-6 rounded-xl bg-[#0C2D6B] text-white font-bold text-base inline-flex items-center gap-2.5 whitespace-nowrap shadow-md hover:bg-[#143C8C] transition-colors">
+                    <Plus className="w-5 h-5" /> Nuevo Envío
                   </button>
                   <button onClick={exportEnviosPDF} className="h-11 px-4 rounded-xl bg-red-500 text-white font-bold text-sm inline-flex items-center gap-2 whitespace-nowrap">
                     <FileText className="w-4 h-4" /> PDF
@@ -1770,7 +2039,7 @@ export function Logistica() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {sortedEnvios.map((envio) => (
+              {paginatedEnvios.map((envio) => (
                 <article key={envio.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                   <div className="bg-[#0C2D6B] p-4 text-white">
                     <div className="flex items-start justify-between gap-3">
@@ -1836,11 +2105,21 @@ export function Logistica() {
                 No se encontraron envíos.
               </div>
             )}
+
+            <PaginationControls
+              page={envioPage}
+              totalPages={envioTotalPages}
+              rowsPerPage={envioRowsPerPage}
+              totalItems={sortedEnvios.length}
+              itemLabel="envíos filtrados"
+              onPageChange={setEnvioPage}
+              onRowsPerPageChange={setEnvioRowsPerPage}
+            />
           </div>
         )}
 
         {activeTab === "depositos" && (
-          <div>
+          <div id="logistica-depositos" className="scroll-mt-28">
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
               <div className="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_190px_190px_auto] gap-3 2xl:flex-1">
@@ -1884,8 +2163,8 @@ export function Logistica() {
                 </div>
 
                 <div className="flex gap-2 2xl:shrink-0">
-                  <button onClick={openCreateDeposito} className="h-11 px-4 rounded-xl bg-[#0C2D6B] text-white font-bold text-sm inline-flex items-center gap-2 whitespace-nowrap">
-                    <Plus className="w-4 h-4" /> Nuevo Depósito
+                  <button onClick={openCreateDeposito} className="h-12 px-6 rounded-xl bg-[#0C2D6B] text-white font-bold text-base inline-flex items-center gap-2.5 whitespace-nowrap shadow-md hover:bg-[#143C8C] transition-colors">
+                    <Plus className="w-5 h-5" /> Nuevo Depósito
                   </button>
                   <button onClick={exportDepositosPDF} className="h-11 px-4 rounded-xl bg-red-500 text-white font-bold text-sm inline-flex items-center gap-2 whitespace-nowrap">
                     <FileText className="w-4 h-4" /> PDF
@@ -1932,7 +2211,7 @@ export function Logistica() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {sortedDepositos.map((deposito) => (
+                    {paginatedDepositos.map((deposito) => (
                       <tr key={deposito.id} className="hover:bg-gray-50/60">
                         <td className="px-4 py-3 font-mono font-bold text-[#0C2D6B]">{deposito.codigo}</td>
                         <td className="px-4 py-3 font-bold text-gray-800">{deposito.nombre_deposito || deposito.nombre}</td>
@@ -1968,9 +2247,30 @@ export function Logistica() {
                 </div>
               )}
             </div>
+
+            <PaginationControls
+              page={depositoPage}
+              totalPages={depositoTotalPages}
+              rowsPerPage={depositoRowsPerPage}
+              totalItems={sortedDepositos.length}
+              itemLabel="depósitos filtrados"
+              onPageChange={setDepositoPage}
+              onRowsPerPageChange={setDepositoRowsPerPage}
+            />
           </div>
         )}
       </section>
+
+      {/* Acceso flotante para regresar al inicio del módulo desde listados largos */}
+      <button
+        type="button"
+        onClick={goToTop}
+        title="Volver arriba"
+        aria-label="Volver arriba"
+        className="fixed bottom-5 right-5 z-40 w-11 h-11 rounded-full bg-[#0C2D6B] text-white shadow-xl inline-flex items-center justify-center hover:bg-[#143C8C] transition-colors"
+      >
+        <ArrowUp className="w-5 h-5" />
+      </button>
 
       {viajeModal.open && (
         <Modal

@@ -70,9 +70,9 @@ export function MainLayout({ title, breadcrumbs }: MainLayoutProps) {
         />
       )}
 
-      <div className="flex-1 flex flex-col w-full md:ml-52">
+      <div className="flex min-w-0 flex-1 flex-col md:ml-52">
         <Header onMenuClick={() => setSidebarOpen(true)} />
-        <main className="flex-1 p-4 sm:p-5 md:p-6 overflow-y-auto">
+        <main className="min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-5 md:p-6">
           <Outlet />
         </main>
       </div>

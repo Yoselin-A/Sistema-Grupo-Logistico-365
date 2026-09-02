@@ -87,6 +87,20 @@ const asMoney = (valor) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+// Estados permitidos para una cotización. Se normalizan antes de guardar
+// para evitar valores distintos por mayúsculas/minúsculas o texto inesperado.
+const ESTADOS_COTIZACION = ["Borrador", "Enviada", "Aprobada"];
+
+const normalizarEstadoCotizacion = (valor) => {
+  const raw = limpiar(valor).toLocaleLowerCase("es-GT");
+
+  const encontrado = ESTADOS_COTIZACION.find(
+    (estado) => estado.toLocaleLowerCase("es-GT") === raw
+  );
+
+  return encontrado || "Borrador";
+};
+
 const asDate = (valor) => {
   const v = limpiar(valor);
   if (!v) return null;
@@ -592,7 +606,7 @@ router.get("/crm/bootstrap", async (req, res) => {
         COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * 0.12 AS iva,
         COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * 1.12 AS total,
         CURDATE() AS fecha,
-        'Borrador' AS estado,
+        COALESCE(NULLIF(ct.estado_ui, ''), 'Borrador') AS estado,
         'GTQ' AS moneda
       FROM \`${T.cotizacion}\` ct
       LEFT JOIN \`${T.cliente}\` c ON c.id = ct.cliente_id
@@ -1300,7 +1314,8 @@ router.get("/cotizaciones", async (req, res) => {
         END AS precio_unitario,
 
         CURDATE() AS fecha,
-        'Borrador' AS estado,
+        COALESCE(NULLIF(ct.estado_ui, ''), 'Borrador') AS estado_ui,
+        COALESCE(NULLIF(ct.estado_ui, ''), 'Borrador') AS estado,
         'GTQ' AS moneda,
         m.nombre_modalidad AS tipo_carga,
         '' AS peso,
@@ -1341,6 +1356,10 @@ router.post("/cotizaciones", async (req, res) => {
     const codigo = limpiar(req.body.codigo_cotizacion || req.body.codigo || req.body.numero_cotizacion) ||
       (await nextCode(T.cotizacion, "codigo_cotizacion", "COT"));
 
+    const estadoUi = normalizarEstadoCotizacion(
+      req.body.estado_ui || req.body.estado || "Borrador"
+    );
+
     const clienteId = await resolveOrCreateCliente(connection, req.body);
     const contactoId =
       asId(req.body.contacto_id) ||
@@ -1370,11 +1389,22 @@ router.post("/cotizaciones", async (req, res) => {
         modalidad_id,
         forma_pago_id,
         origen_id,
-        destino_id
+        destino_id,
+        estado_ui
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [codigo, clienteId, contactoId, ejecutivoId, modalidadId, formaPagoId, origenId, destinoId]
+      [
+        codigo,
+        clienteId,
+        contactoId,
+        ejecutivoId,
+        modalidadId,
+        formaPagoId,
+        origenId,
+        destinoId,
+        estadoUi,
+      ]
     );
 
     const cotizacionId = insert.insertId;
@@ -1440,6 +1470,10 @@ router.put("/cotizaciones/:id", async (req, res) => {
       return fail(res, 400, "ID de cotización inválido.");
     }
 
+    const estadoUi = normalizarEstadoCotizacion(
+      req.body.estado_ui || req.body.estado || "Borrador"
+    );
+
     const clienteId = await resolveOrCreateCliente(connection, req.body);
     const contactoId =
       asId(req.body.contacto_id) ||
@@ -1465,10 +1499,21 @@ router.put("/cotizaciones/:id", async (req, res) => {
           modalidad_id = ?,
           forma_pago_id = ?,
           origen_id = ?,
-          destino_id = ?
+          destino_id = ?,
+          estado_ui = ?
       WHERE id = ?
       `,
-      [clienteId, contactoId, ejecutivoId, modalidadId, formaPagoId, origenId, destinoId, id]
+      [
+        clienteId,
+        contactoId,
+        ejecutivoId,
+        modalidadId,
+        formaPagoId,
+        origenId,
+        destinoId,
+        estadoUi,
+        id,
+      ]
     );
 
     await connection.query(`DELETE FROM \`${T.cotizacionDetalle}\` WHERE cotizacion_id = ?`, [id]);
@@ -1513,12 +1558,35 @@ router.put("/cotizaciones/:id", async (req, res) => {
 });
 
 router.patch("/cotizaciones/:id/estado", async (req, res) => {
-  /*
-    La tabla física cotizacion no tiene estado, fecha, moneda, peso,
-    volumen ni observaciones. Se responde OK para que el frontend no falle.
-    Si querés persistir esos campos, hay que agregarlos a la tabla.
-  */
-  return ok(res, { id: asId(req.params.id), estado: req.body.estado || "Borrador" }, "Estado actualizado visualmente.");
+  try {
+    const id = asId(req.params.id);
+
+    if (!id) {
+      return fail(res, 400, "ID de cotización inválido.");
+    }
+
+    const estado = normalizarEstadoCotizacion(
+      req.body.estado_ui || req.body.estado || "Borrador"
+    );
+
+    const [result] = await pool.query(
+      `UPDATE \`${T.cotizacion}\` SET estado_ui = ? WHERE id = ?`,
+      [estado, id]
+    );
+
+    if (!result.affectedRows) {
+      return fail(res, 404, "No se encontró la cotización.");
+    }
+
+    return ok(
+      res,
+      { id, estado_ui: estado, estado },
+      `Estado de cotización actualizado a ${estado}.`
+    );
+  } catch (error) {
+    console.error("Error al actualizar estado de cotización:", error);
+    return fail(res, 500, "No se pudo actualizar el estado de la cotización.", error);
+  }
 });
 
 router.delete("/cotizaciones/:id", async (req, res) => {

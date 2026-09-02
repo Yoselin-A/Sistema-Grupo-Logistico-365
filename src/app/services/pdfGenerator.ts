@@ -1,6 +1,24 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Client, Quote, Assignment, Provider } from './storage';
+import logoEmpresa from '../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png';
+
+async function imageUrlToDataUrl(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () =>
+        resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
 
 // === GENERAR PDF DE CLIENTE ===
 export const generarPDFCliente = (client: Client) => {
@@ -189,18 +207,60 @@ export const generarPDFCliente = (client: Client) => {
 };
 
 // === GENERAR PDF DE COTIZACIÓN (FORMATO IDÉNTICO AL MODAL) ===
-export const generarPDFCotizacion = (quote: Quote) => {
+export const generarPDFCotizacion = async (quote: Quote) => {
   const doc = new jsPDF();
   const q: any = quote;
 
   // Márgenes
   const margin = 15;
-  let yPos = 15;
 
   // Medidas generales
   const pageWidth = doc.internal.pageSize.getWidth();
   const tableWidth = 180;
   const centerX = pageWidth / 2;
+
+  // ========================================================
+  // ENCABEZADO CORPORATIVO
+  // ========================================================
+  // Mantiene la misma identidad visual que el PDF de cliente.
+  doc.setFillColor(12, 45, 107);
+  doc.rect(0, 0, pageWidth, 36, 'F');
+
+  const logo = await imageUrlToDataUrl(logoEmpresa);
+  if (logo) {
+    try {
+      doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(255, 106, 0);
+      doc.setLineWidth(0.55);
+      doc.roundedRect(9, 4, 48, 27, 2.5, 2.5, 'FD');
+      doc.addImage(logo, 'PNG', 12, 6, 42, 23, undefined, 'FAST');
+    } catch {
+      // El PDF continúa aunque el navegador no pueda convertir el logo.
+    }
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(255, 106, 0);
+  doc.setFontSize(9);
+  doc.text('GRUPO LOGÍSTICO 365', 130, 11, { align: 'center' });
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(19);
+  doc.text('COTIZACIÓN', 130, 21, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(220, 229, 245);
+  doc.text('Departamento Comercial · Documento de cotización', 130, 27, {
+    align: 'center',
+  });
+
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(0.8);
+  doc.line(69, 31, 192, 31);
+
+  // La tabla empieza debajo del encabezado, con respiración suficiente.
+  let yPos = 43;
 
   // Moneda
   const moneda = String(q.currency || q.moneda || 'USD').toUpperCase() === 'GTQ'
@@ -372,10 +432,12 @@ export const generarPDFCotizacion = (quote: Quote) => {
   // === HEADER: FECHA ===
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
-  doc.setDrawColor(0, 0, 0);
-  doc.setLineWidth(0.5);
+  doc.setTextColor(12, 45, 107);
+  doc.setDrawColor(12, 45, 107);
+  doc.setLineWidth(0.45);
   doc.rect(margin, yPos, tableWidth, 8);
   doc.text(`FECHA: GUATEMALA, ${fecha}`, centerX, yPos + 5, { align: 'center' });
+  doc.setTextColor(0, 0, 0);
   yPos += 8;
 
   // === FILA 1: N° Cotización y Contacto ===

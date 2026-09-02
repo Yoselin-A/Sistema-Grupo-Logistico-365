@@ -29,6 +29,7 @@ import {
 import { generarPDFCotizacion } from "../services/pdfGenerator";
 import jsPDF from "jspdf";
 import * as XLSX from "xlsx";
+import logoEmpresa from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
 
 // ============================================================
 // CRM GL365 - PROTOTIPO FIGMA ALINEADO A LA BD NORMALIZADA
@@ -692,6 +693,15 @@ const keepSingleSpaces = (value: string) => value.replace(/\s{2,}/g, " ");
 const cleanPersonTyping = (value: string, max = 35) =>
   keepSingleSpaces(cleanName(value)).slice(0, max);
 
+// Da formato mientras se escribe sin eliminar el espacio final:
+// "mARIA fernanda" -> "Maria Fernanda".
+const capitalizePersonTyping = (value: string, max = 35) =>
+  cleanPersonTyping(value, max)
+    .toLocaleLowerCase("es-GT")
+    .replace(/(^|[\s'-])([a-záéíóúüñ])/g, (_m, sep, letter) =>
+      `${sep}${String(letter).toLocaleUpperCase("es-GT")}`
+    );
+
 const cleanRoleTyping = (value: string, max = 60) =>
   keepSingleSpaces(cleanName(value)).slice(0, max);
 
@@ -1027,21 +1037,70 @@ function PaginationControls({
   );
 }
 
-function generarPDFCliente(
+async function imageUrlToDataUrl(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function generarPDFCliente(
   client: ClienteRow,
   contacts: ContactoClienteRow[],
   phones: TelefonoContactoRow[]
 ) {
   const doc = new jsPDF();
+
+  // Encabezado corporativo del PDF.
   doc.setFillColor(12, 45, 107);
-  doc.rect(0, 0, 210, 30, "F");
+  doc.rect(0, 0, 210, 36, "F");
+
+  const logo = await imageUrlToDataUrl(logoEmpresa);
+  if (logo) {
+    try {
+      // Tarjeta blanca para que el logo azul/naranja conserve contraste.
+      doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(255, 106, 0);
+      doc.setLineWidth(0.55);
+      doc.roundedRect(9, 4, 48, 27, 2.5, 2.5, "FD");
+      doc.addImage(logo, "PNG", 12, 6, 42, 23, undefined, "FAST");
+    } catch {
+      // Si el navegador no puede convertir la imagen, el PDF continúa sin fallar.
+    }
+  }
+
+  // Bloque de título alineado con el logo.
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(255, 106, 0);
+  doc.setFontSize(9);
+  doc.text("GRUPO LOGÍSTICO 365", 130, 11, { align: "center" });
+
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
-  doc.text("Detalle de Cliente", 105, 18, { align: "center" });
+  doc.setFontSize(19);
+  doc.text("DETALLE DE CLIENTE", 130, 21, { align: "center" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(220, 229, 245);
+  doc.text("CRM · Información comercial y de contacto", 130, 27, { align: "center" });
+
+  // Línea naranja que integra visualmente el encabezado.
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(0.8);
+  doc.line(69, 31, 192, 31);
+
   doc.setTextColor(0, 0, 0);
   doc.setFontSize(11);
 
-  let y = 42;
+  let y = 48;
   const field = (label: string, value?: string) => {
     doc.setFont(undefined, "bold");
     doc.text(label, 20, y);
@@ -1056,10 +1115,21 @@ function generarPDFCliente(
   field("Dirección:", client.direccion);
   field("Estado:", estadoClienteNombre(client.estado_cliente_id));
 
-  y += 4;
+  // Separación visual entre los datos generales y la sección de contactos.
+  y += 8;
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.35);
+  doc.line(20, y - 3, 190, y - 3);
+
   doc.setFont(undefined, "bold");
-  doc.text("Contactos", 20, y);
-  y += 7;
+  doc.setTextColor(12, 45, 107);
+  doc.setFontSize(12);
+  doc.text("Contactos", 20, y + 2);
+
+  // Más espacio antes del primer contacto para que no quede pegado al título.
+  y += 12;
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(11);
 
   const clientContacts = contacts.filter((c) => c.cliente_id === client.id);
   if (!clientContacts.length) {
@@ -1111,8 +1181,9 @@ export function CRM() {
   const [sortField, setSortField] = useState("date");
   const [crmSortDirection, setCrmSortDirection] = useState<CrmSortDirection>("desc");
 
-  // Paginación independiente para Clientes y Cotizaciones.
+  // Paginación independiente para los tres submódulos del CRM.
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [leadPage, setLeadPage] = useState(1);
   const [clientPage, setClientPage] = useState(1);
   const [quotePage, setQuotePage] = useState(1);
 
@@ -1135,6 +1206,10 @@ export function CRM() {
 
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const firstQuoteFieldRef = useRef<HTMLSelectElement | null>(null);
+
+  // Cuando un cliente se crea desde Oportunidad o Cotización,
+  // se regresa al formulario que lo solicitó y se selecciona automáticamente.
+  const [clientReturnTarget, setClientReturnTarget] = useState<"lead" | "quote" | null>(null);
 
   // ----------------------------------------------------------
   // LOAD / RELOAD
@@ -1579,8 +1654,14 @@ export function CRM() {
 
   // La paginación se aplica DESPUÉS de buscar, filtrar y ordenar.
   // Así cada página conserva exactamente el resultado visible del usuario.
+  const leadTotalPages = Math.max(1, Math.ceil(sortedLeads.length / rowsPerPage));
   const clientTotalPages = Math.max(1, Math.ceil(sortedClients.length / rowsPerPage));
   const quoteTotalPages = Math.max(1, Math.ceil(sortedQuotes.length / rowsPerPage));
+
+  const paginatedLeads = useMemo(() => {
+    const start = (leadPage - 1) * rowsPerPage;
+    return sortedLeads.slice(start, start + rowsPerPage);
+  }, [sortedLeads, leadPage, rowsPerPage]);
 
   const paginatedClients = useMemo(() => {
     const start = (clientPage - 1) * rowsPerPage;
@@ -1595,6 +1676,10 @@ export function CRM() {
   // Cuando cambia una búsqueda, filtro, ordenamiento o cantidad por página,
   // regresamos a la primera página del listado activo.
   useEffect(() => {
+    if (activeTab === "seguimiento") {
+      setLeadPage(1);
+    }
+
     if (activeTab === "clientes") {
       setClientPage(1);
     }
@@ -1602,10 +1687,14 @@ export function CRM() {
     if (activeTab === "cotizaciones") {
       setQuotePage(1);
     }
-  }, [activeTab, searchQuery, statusFilter, sortField, crmSortDirection, rowsPerPage]);
+  }, [activeTab, searchQuery, statusFilter, leadStageFilter, sortField, crmSortDirection, rowsPerPage]);
 
   // Protección adicional por si después de actualizar MySQL disminuye
   // la cantidad de registros y la página actual deja de existir.
+  useEffect(() => {
+    setLeadPage((page) => Math.min(page, leadTotalPages));
+  }, [leadTotalPages]);
+
   useEffect(() => {
     setClientPage((page) => Math.min(page, clientTotalPages));
   }, [clientTotalPages]);
@@ -1635,6 +1724,11 @@ export function CRM() {
     });
   };
 
+  const openNewClientFrom = (target: "lead" | "quote") => {
+    setClientReturnTarget(target);
+    openClient("create");
+  };
+
   const validateClient = () => {
     const v = clientModal.value;
     const e: FieldErrors = {};
@@ -1658,17 +1752,58 @@ export function CRM() {
     };
 
     try {
+      let createdClientId: number | null = null;
+
       if (clientModal.mode === "create") {
-        await apiSendCRM("/clientes", "POST", payload);
+        const created = await apiSendCRM("/clientes", "POST", payload);
+        createdClientId = Number(created?.id || created?.cliente_id || created?.insertId || 0) || null;
+
+        // Algunos endpoints solo devuelven { ok: true }. En ese caso
+        // recuperamos el cliente recién creado por NIT desde el bootstrap.
+        if (!createdClientId && clientReturnTarget) {
+          const fresh = await apiRequestCRM("/crm/bootstrap");
+          const found = (Array.isArray(fresh?.clientes) ? fresh.clientes : []).find(
+            (c: any) => String(c.nit || "").trim().toLowerCase() === payload.nit.toLowerCase()
+          );
+          createdClientId = Number(found?.id || 0) || null;
+        }
       } else if (clientModal.mode === "edit" && clientModal.value.id) {
         await apiSendCRM(`/clientes/${clientModal.value.id}`, "PUT", payload);
       }
 
       await reload();
+
+      if (clientModal.mode === "create" && clientReturnTarget && createdClientId) {
+        if (clientReturnTarget === "lead") {
+          setLeadErrors((x) => ({ ...x, cliente_id: "" }));
+          setLeadModal((p) => ({
+            ...p,
+            value: { ...p.value, cliente_id: createdClientId },
+          }));
+        } else {
+          setQuoteErrors((x) => ({ ...x, cliente_id: "", contacto_id: "" }));
+          setQuoteModal((p) => ({
+            ...p,
+            value: { ...p.value, cliente_id: createdClientId, contacto_id: null },
+          }));
+        }
+
+        setClientModal({ open: false, mode: "create", value: {} });
+        setClientReturnTarget(null);
+        showNotice(
+          "success",
+          clientReturnTarget === "quote"
+            ? "Cliente creado y seleccionado. Ahora agrega o selecciona un contacto para completar la cotización."
+            : "Cliente creado y seleccionado en la oportunidad."
+        );
+        return;
+      }
+
       setSearchQuery("");
       setStatusFilter("Todos");
       setActiveTab("clientes");
       setClientModal({ open: false, mode: "create", value: {} });
+      setClientReturnTarget(null);
       showNotice("success", clientModal.mode === "create" ? "Cliente guardado correctamente en MySQL." : "Cliente actualizado correctamente en MySQL.");
     } catch (error: any) {
       showNotice("error", error.message || "No se pudo guardar el cliente en MySQL.");
@@ -1740,15 +1875,36 @@ export function CRM() {
     };
 
     try {
+      let createdContactId: number | null = null;
+
       if (contactModal.mode === "create") {
-        await apiSendCRM("/contactos-cliente", "POST", payload);
+        const created = await apiSendCRM("/contactos-cliente", "POST", payload);
+        createdContactId = Number(created?.id || created?.contacto_id || created?.insertId || 0) || null;
+
+        if (!createdContactId && quoteModal.open && Number(quoteModal.value.cliente_id) === Number(contactModal.clientId)) {
+          const fresh = await apiRequestCRM("/crm/bootstrap");
+          const freshContacts = Array.isArray(fresh?.contactos) ? fresh.contactos : [];
+          const found = [...freshContacts].reverse().find(
+            (c: any) =>
+              Number(c.cliente_id) === Number(contactModal.clientId) &&
+              String(c.correo || "").toLowerCase() === payload.correo.toLowerCase() &&
+              String(c.primer_nombre || "").toLowerCase() === payload.primer_nombre.toLowerCase()
+          );
+          createdContactId = Number(found?.id || 0) || null;
+        }
       } else if (contactModal.value.id) {
         await apiSendCRM(`/contactos-cliente/${contactModal.value.id}`, "PUT", payload);
       }
 
       await reload();
+
+      if (createdContactId && quoteModal.open && Number(quoteModal.value.cliente_id) === Number(contactModal.clientId)) {
+        setQuoteModal((p) => ({ ...p, value: { ...p.value, contacto_id: createdContactId } }));
+        setQuoteErrors((x) => ({ ...x, contacto_id: "" }));
+      }
+
       setContactModal({ open: false, mode: "create", value: {}, clientId: null });
-      showNotice("success", "Contacto guardado correctamente en MySQL.");
+      showNotice("success", createdContactId && quoteModal.open ? "Contacto creado y seleccionado en la cotización." : "Contacto guardado correctamente en MySQL.");
     } catch (error: any) {
       showNotice("error", error.message || "No se pudo guardar el contacto en MySQL.");
     }
@@ -2109,8 +2265,14 @@ export function CRM() {
     });
 
     try {
-      await apiSendCRM(`/cotizaciones/${id}/estado`, "PATCH", { estado: status, estado_ui: status });
-      showNotice("success", `Estado actualizado a ${status}.`);
+      await apiSendCRM(`/cotizaciones/${id}/estado`, "PATCH", {
+        estado: status,
+        estado_ui: status,
+      });
+
+      // Volvemos a leer MySQL para confirmar que el estado quedó persistido.
+      await reload();
+      showNotice("success", `Estado actualizado a ${status} y guardado en MySQL.`);
     } catch (error: any) {
       showNotice("error", error.message || "No se pudo actualizar el estado.");
       await reload();
@@ -2302,7 +2464,7 @@ export function CRM() {
   // KPIs
   // ----------------------------------------------------------
 
-  const totalWon = leads.filter((l) => l.stage === "ganado").reduce((s, l) => s + l.amount, 0);
+  const totalOpportunityValue = leads.reduce((sum, lead) => sum + Number(lead.amount || 0), 0);
   const activeLeads = leads.filter(
   (l) => l.stage !== "ganado" && l.stage !== "perdido"
 );
@@ -2314,7 +2476,7 @@ export function CRM() {
           { title: "Oportunidades activas", value: activeLeads.length, icon: Target, color: "blue" as const },
           { title: "Tasa de cierre", value: leads.length ? `${Math.round((leads.filter((l) => l.stage === "ganado").length / leads.length) * 100)}%` : "0%", icon: TrendingUp, color: "green" as const },
           { title: "Oportunidades registradas", value: leads.length, icon: FileText, color: "orange" as const },
-          { title: "Valor ganado", value: moneyGTQ(totalWon), icon: DollarSign, color: "blue" as const },
+          { title: "Valor de oportunidades", value: moneyGTQ(totalOpportunityValue), icon: DollarSign, color: "blue" as const },
         ]
       : activeTab === "clientes"
       ? [
@@ -2466,7 +2628,7 @@ export function CRM() {
 
       {/* TABS */}
       <div className="overflow-x-auto">
-        <div className="flex border-b border-gray-200 gap-6 min-w-max">
+        <div className="flex border-b border-gray-200 gap-5 sm:gap-8 min-w-max">
           {[
             ["seguimiento", "Seguimiento de Ventas"],
             ["clientes", "Clientes"],
@@ -2480,7 +2642,7 @@ export function CRM() {
                 setStatusFilter("Todos");
                 setLeadStageFilter("Todos");
               }}
-              className={`pb-3 font-semibold text-sm relative ${activeTab === id ? "text-[#0C2D6B]" : "text-gray-500 hover:text-gray-700"}`}
+              className={`px-2 sm:px-4 pb-4 pt-2 font-bold text-base sm:text-lg relative transition-colors ${activeTab === id ? "text-[#0C2D6B]" : "text-gray-500 hover:text-[#0C2D6B]"}`}
             >
               {label}
               {activeTab === id && <div className="absolute bottom-0 left-0 w-full h-1 bg-[#FF6A00] rounded-t" />}
@@ -2521,8 +2683,8 @@ export function CRM() {
               Limpiar
             </button>
 
-            <button onClick={() => openLead("create")} className="h-11 bg-[#0C2D6B] text-white px-4 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#143C8C] ml-0 xl:ml-auto">
-              <Plus className="w-4 h-4" /> Nueva oportunidad
+            <button onClick={() => openLead("create")} className="h-12 bg-[#0C2D6B] text-white px-6 rounded-xl text-base font-bold flex items-center gap-2.5 shadow-sm hover:bg-[#143C8C] ml-0 xl:ml-auto">
+              <Plus className="w-5 h-5" /> Nueva oportunidad
             </button>
             <button onClick={exportLeads} className="h-11 bg-[#22C55E] text-white px-4 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#16A34A]">
               <Download className="w-4 h-4" /> Excel
@@ -2551,7 +2713,7 @@ export function CRM() {
               { id: "ganado", label: "Ganado", border: "border-l-[#22C55E]", badge: "bg-green-100" },
               { id: "perdido", label: "Perdido", border: "border-l-red-500", badge: "bg-red-100" },
             ].map((col) => {
-              const rows = sortedLeads.filter((l) => l.stage === col.id);
+              const rows = paginatedLeads.filter((l) => l.stage === col.id);
               return (
                 <div key={col.id} onDragOver={(e) => e.preventDefault()} onDrop={(e) => dropLead(e, col.id as Stage)} className="rounded-xl border border-gray-200 bg-[#F3F4F6] p-3 min-h-[360px]">
                   <div className="flex justify-between items-center mb-3">
@@ -2597,6 +2759,18 @@ export function CRM() {
               );
             })}
           </div>
+
+          <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+            <PaginationControls
+              page={leadPage}
+              totalPages={leadTotalPages}
+              rowsPerPage={rowsPerPage}
+              totalItems={sortedLeads.length}
+              itemLabel="oportunidades filtradas"
+              onPageChange={setLeadPage}
+              onRowsPerPageChange={setRowsPerPage}
+            />
+          </div>
         </div>
       )}
 
@@ -2630,8 +2804,8 @@ export function CRM() {
             </button>
 
             <div className="flex gap-2 ml-0 xl:ml-auto">
-              <button onClick={() => openClient("create")} className="h-11 bg-[#0C2D6B] text-white px-4 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#143C8C]">
-                <Plus className="w-4 h-4" /> Nuevo Cliente
+              <button onClick={() => openClient("create")} className="h-12 bg-[#0C2D6B] text-white px-6 rounded-xl text-base font-bold flex items-center gap-2.5 shadow-sm hover:bg-[#143C8C]">
+                <Plus className="w-5 h-5" /> Nuevo Cliente
               </button>
               <button onClick={exportClients} className="h-11 bg-[#22C55E] text-white px-4 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#16A34A]">
                 <Download className="w-4 h-4" /> Excel
@@ -2745,7 +2919,7 @@ export function CRM() {
             </button>
 
             <div className="flex gap-2 ml-0 xl:ml-auto">
-              <button onClick={() => openQuote("create")} className="h-11 bg-[#0C2D6B] text-white px-4 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#143C8C]"><Plus className="w-4 h-4" /> Nueva Cotización</button>
+              <button onClick={() => openQuote("create")} className="h-12 bg-[#0C2D6B] text-white px-6 rounded-xl text-base font-bold flex items-center gap-2.5 shadow-sm hover:bg-[#143C8C]"><Plus className="w-5 h-5" /> Nueva Cotización</button>
               <button onClick={exportQuotes} className="h-11 bg-[#22C55E] text-white px-4 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#16A34A]"><Download className="w-4 h-4" /> Excel</button>
             </div>
           </div>
@@ -2826,14 +3000,14 @@ export function CRM() {
       {/* DRAWER CLIENTE */}
       {/* ==================================================== */}
       {clientModal.open && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex justify-end">
+        <div className="fixed inset-0 z-[120] bg-black/50 flex justify-end">
           <div className="bg-white w-full max-w-2xl h-full flex flex-col shadow-2xl">
             <div className="px-6 py-4 bg-[#0C2D6B] text-white flex items-center justify-between">
               <div>
                 <p className="text-xs text-white/60 uppercase tracking-widest">Expediente del cliente</p>
                 <h2 className="text-xl font-bold">{clientModal.mode === "create" ? "Nuevo Cliente" : clientModal.mode === "edit" ? "Editar Cliente" : "Detalle Cliente"}</h2>
               </div>
-              <button onClick={() => setClientModal({ open: false, mode: "create", value: {} })}><X className="w-6 h-6" /></button>
+              <button onClick={() => { setClientModal({ open: false, mode: "create", value: {} }); setClientReturnTarget(null); }}><X className="w-6 h-6" /></button>
             </div>
 
             <div className="p-6 overflow-y-auto flex-1">
@@ -2950,7 +3124,7 @@ export function CRM() {
             </div>
 
             <div className="p-4 border-t bg-white flex justify-end gap-2">
-              <button onClick={() => setClientModal({ open: false, mode: "create", value: {} })} className="h-10 px-4 rounded-lg font-bold text-gray-600 hover:bg-gray-100">{clientModal.mode === "view" ? "Cerrar" : "Cancelar"}</button>
+              <button onClick={() => { setClientModal({ open: false, mode: "create", value: {} }); setClientReturnTarget(null); }} className="h-10 px-4 rounded-lg font-bold text-gray-600 hover:bg-gray-100">{clientModal.mode === "view" ? "Cerrar" : "Cancelar"}</button>
               {clientModal.mode !== "view" && <button data-enter-save="true" onClick={saveClientData} className="h-10 px-5 rounded-lg font-bold bg-[#0C2D6B] text-white hover:bg-[#143C8C]">Guardar cliente</button>}
             </div>
           </div>
@@ -2961,7 +3135,7 @@ export function CRM() {
       {/* MODAL CONTACTO */}
       {/* ==================================================== */}
       {contactModal.open && (
-        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[130] bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
             <div className="bg-[#0C2D6B] px-6 py-4 flex justify-between items-center">
               <h2 className="text-white font-bold text-lg">{contactModal.mode === "edit" ? "Editar contacto" : "Nuevo contacto"}</h2>
@@ -2970,10 +3144,10 @@ export function CRM() {
             <div className="p-6 space-y-4" data-enter-form>
               <ErrorSummary errors={contactErrors} title="Revisa los datos del contacto:" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer nombre *</label><input autoFocus data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.primer_nombre || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_nombre: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_nombre: cleanPersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_nombre)} /><ErrorText value={contactErrors.primer_nombre} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo nombre</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.segundo_nombre || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_nombre: cleanPersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer apellido *</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.primer_apellido || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_apellido: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_apellido: cleanPersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_apellido)} /><ErrorText value={contactErrors.primer_apellido} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo apellido</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.segundo_apellido || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_apellido: cleanPersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer nombre *</label><input autoFocus data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.primer_nombre || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_nombre: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_nombre: capitalizePersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_nombre)} /><ErrorText value={contactErrors.primer_nombre} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo nombre</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.segundo_nombre || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_nombre: capitalizePersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer apellido *</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.primer_apellido || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_apellido: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_apellido: capitalizePersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_apellido)} /><ErrorText value={contactErrors.primer_apellido} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo apellido</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.segundo_apellido || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_apellido: capitalizePersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Cargo</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={60} value={contactModal.value.cargo || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, cargo: cleanRoleTyping(e.target.value, 60) } }))} className={inputClass()} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Correo</label><input data-enter-item="true" onKeyDown={moveWithEnter} type="email" maxLength={150} value={contactModal.value.correo || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, correo: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, correo: cleanEmail(e.target.value) } })); }} className={inputClass(contactErrors.correo)} placeholder="maria.lopez@empresa.com.gt" /><ErrorText value={contactErrors.correo} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Contacto principal</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={contactModal.value.es_principal ? "1" : "0"} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, es_principal: e.target.value === "1" } }))} className={inputClass()}><option value="1">Sí</option><option value="0">No</option></select></div>
@@ -2989,7 +3163,7 @@ export function CRM() {
       {/* MODAL TELÉFONO */}
       {/* ==================================================== */}
       {phoneModal.open && (
-        <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[140] bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
             <div className="bg-[#0C2D6B] px-6 py-4 flex justify-between items-center"><h2 className="text-white font-bold">{phoneModal.mode === "edit" ? "Editar teléfono" : "Nuevo teléfono"}</h2><button onClick={() => setPhoneModal({ open: false, mode: "create", value: {}, contactId: null })} className="text-white/70"><X className="w-5 h-5" /></button></div>
             <div className="p-6 space-y-4" data-enter-form>
@@ -3071,7 +3245,22 @@ export function CRM() {
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Código</label><input disabled value={leadModal.value.codigo_oportunidad || ""} className={baseInput} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Etapa *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={Number(leadModal.value.estado_id || 1)} onChange={(e) => { setLeadErrors((x) => ({ ...x, estado_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, estado_id: Number(e.target.value) } })); }} className={inputClass(leadErrors.estado_id)}><option value={1}>Prospecto</option><option value={2}>Cotizado</option><option value={3}>Negociación</option><option value={4}>Ganado</option><option value={5}>Perdido</option></select><ErrorText value={leadErrors.estado_id} /></div>
                 <div className="sm:col-span-2"><label className="block text-xs font-bold text-gray-700 mb-1">Nombre de la oportunidad *</label><input autoFocus disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} maxLength={100} value={leadModal.value.nombre_oportunidad || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, nombre_oportunidad: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, nombre_oportunidad: cleanCommercialTyping(e.target.value, 100) } })); }} className={inputClass(leadErrors.nombre_oportunidad)} placeholder="Exportación terrestre de textiles a El Salvador" /><ErrorText value={leadErrors.nombre_oportunidad} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Cliente *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.cliente_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, cliente_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, cliente_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.cliente_id)}><option value="">Seleccione...</option>{clients.filter((c) => c.estado_cliente_id === 1).map((c) => <option key={c.id} value={c.id}>{c.codigo_cliente} · {c.nombre_empresa}</option>)}</select><ErrorText value={leadErrors.cliente_id} /></div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="block text-xs font-bold text-gray-700">Cliente *</label>
+                    {leadModal.mode !== "view" && (
+                      <button
+                        type="button"
+                        onClick={() => openNewClientFrom("lead")}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-[#FF6A00] hover:underline"
+                      >
+                        <UserPlus className="w-3.5 h-3.5" /> Cliente nuevo
+                      </button>
+                    )}
+                  </div>
+                  <select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.cliente_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, cliente_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, cliente_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.cliente_id)}><option value="">Seleccione...</option>{clients.filter((c) => c.estado_cliente_id === 1).map((c) => <option key={c.id} value={c.id}>{c.codigo_cliente} · {c.nombre_empresa}</option>)}</select>
+                  <ErrorText value={leadErrors.cliente_id} />
+                </div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Ejecutivo *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.ejecutivo_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, ejecutivo_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, ejecutivo_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.ejecutivo_id)}><option value="">Seleccione...</option>{salesUsers.map((u) => <option key={u.id} value={u.id}>{fullUserName(u)} ({u.nombre_usuario})</option>)}</select><ErrorText value={leadErrors.ejecutivo_id} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Modalidad *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.modalidad_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, modalidad_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, modalidad_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.modalidad_id)}><option value="">Seleccione...</option>{modalidades.map((m) => <option key={m.id} value={m.id}>{m.nombre_modalidad}</option>)}</select><ErrorText value={leadErrors.modalidad_id} /></div>
                 <div><label className="block text-xs font-bold text-gray-700 mb-1">Probabilidad (%) *</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="text" inputMode="numeric" value={leadModal.value.probabilidad ?? ""} onChange={(e) => { const limpio = cleanInteger(e.target.value, 3); const n = limpio === "" ? undefined : Math.min(100, Number(limpio)); setLeadErrors((x) => ({ ...x, probabilidad: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, probabilidad: n } })); }} className={inputClass(leadErrors.probabilidad)} /><ErrorText value={leadErrors.probabilidad} /></div>
@@ -3201,7 +3390,18 @@ export function CRM() {
                     </div>
 
                     <div className="p-2 flex items-center gap-2">
-                      <span className="font-bold whitespace-nowrap">CONTACTO:</span>
+                      <div className="flex flex-col shrink-0">
+                        <span className="font-bold whitespace-nowrap">CONTACTO:</span>
+                        {quoteModal.mode !== "view" && quoteModal.value.cliente_id && (
+                          <button
+                            type="button"
+                            onClick={() => openContact("create", Number(quoteModal.value.cliente_id))}
+                            className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-[#FF6A00] hover:underline"
+                          >
+                            <UserPlus className="w-3 h-3" /> Contacto nuevo
+                          </button>
+                        )}
+                      </div>
                       <select
                         disabled={quoteModal.mode === "view"}
                         data-enter-item="true"
@@ -3222,7 +3422,18 @@ export function CRM() {
                   {/* RAZÓN SOCIAL / EMAIL */}
                   <div className="grid grid-cols-2 border-b border-black">
                     <div className="border-r border-black p-2 flex items-center gap-2">
-                      <span className="font-bold whitespace-nowrap">RAZÓN SOCIAL:</span>
+                      <div className="flex flex-col shrink-0">
+                        <span className="font-bold whitespace-nowrap">RAZÓN SOCIAL:</span>
+                        {quoteModal.mode !== "view" && (
+                          <button
+                            type="button"
+                            onClick={() => openNewClientFrom("quote")}
+                            className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-[#FF6A00] hover:underline"
+                          >
+                            <UserPlus className="w-3 h-3" /> Cliente nuevo
+                          </button>
+                        )}
+                      </div>
                       <select
                         ref={firstQuoteFieldRef}
                         disabled={quoteModal.mode === "view"}

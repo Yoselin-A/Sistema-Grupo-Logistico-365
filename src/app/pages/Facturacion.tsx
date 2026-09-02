@@ -542,6 +542,43 @@ function drawLogoFacturaPdf(doc: jsPDF, x: number, y: number, width = 43) {
   doc.addImage(LOGO_GL365_FACTURA, "PNG", x, y, width, height, undefined, "FAST");
 }
 
+function drawCorporateHeaderComprobantes(
+  doc: jsPDF,
+  title: string,
+  subtitle: string
+) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  doc.setFillColor(12, 45, 107);
+  doc.rect(0, 0, pageWidth, 38, "F");
+
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(0.7);
+  doc.roundedRect(10, 6, 48, 25, 3, 3, "FD");
+
+  drawLogoFacturaPdf(doc, 13, 8, 42);
+
+  const centerX = pageWidth / 2 + 18;
+
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(255, 106, 0);
+  doc.setFontSize(10);
+  doc.text("GRUPO LOGÍSTICO 365", centerX, 11, { align: "center" });
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(17);
+  doc.text(title, centerX, 20, { align: "center" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.text(subtitle, centerX, 27, { align: "center" });
+
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(1);
+  doc.line(70, 31, pageWidth - 12, 31);
+}
+
 function drawQrFacturaPdf(doc: jsPDF, x: number, y: number, size = 24, seed = 1) {
   const cells = 21;
   const cell = size / cells;
@@ -656,7 +693,7 @@ function Badge({ estado }: { estado?: string | null }) {
   const Icon = estadoIcon(estado);
   return (
     <span className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold ${estadoTone(estado)}`}>
-      <Icon className="h-3.5 w-3.5" />
+      <Icon className="h-[18px] w-[18px]" />
       {estado || "Sin estado"}
     </span>
   );
@@ -694,7 +731,7 @@ function ActionButton({ title, icon: Icon, tone = "default", onClick }: { title:
       type="button"
       title={title}
       onClick={onClick}
-      className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border shadow-sm transition-colors ${tones[tone]}`}
+      className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border shadow-sm transition-colors ${tones[tone]}`}
     >
       <Icon className="h-3.5 w-3.5" />
     </button>
@@ -801,6 +838,8 @@ export function Facturacion() {
   const [formaPagoFilter, setFormaPagoFilter] = useState("Todos");
   const [sortField, setSortField] = useState("");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const [modalMode, setModalMode] = useState<ModalMode | null>(null);
   const [viewModal, setViewModal] = useState<ComprobanteRow | null>(null);
@@ -964,6 +1003,33 @@ export function Facturacion() {
 
     return rows;
   }, [filteredComprobantes, sortField, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedComprobantes.length / pageSize));
+
+  const paginatedComprobantes = useMemo(() => {
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const start = (safePage - 1) * pageSize;
+
+    return sortedComprobantes.slice(start, start + pageSize);
+  }, [sortedComprobantes, page, pageSize, totalPages]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [
+    search,
+    estadoFilter,
+    clienteFilter,
+    formaPagoFilter,
+    sortField,
+    sortDirection,
+    pageSize,
+  ]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   const totalGeneral = comprobantes.reduce((sum, item) => sum + numeric(item.total), 0);
   const saldoGeneral = comprobantes.reduce((sum, item) => sum + numeric(item.saldo), 0);
@@ -1156,17 +1222,48 @@ export function Facturacion() {
     setFormaPagoFilter("Todos");
     setSortField("");
     setSortDirection("asc");
+    setPage(1);
   };
 
   const exportReportPDF = () => {
     const doc = new jsPDF();
-    doc.setFillColor(12, 45, 107);
-    doc.rect(0, 0, 210, 30, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.text("Grupo Logístico 365", 14, 14);
-    doc.setFontSize(10);
-    doc.text("Reporte de comprobantes", 14, 22);
+
+    drawCorporateHeaderComprobantes(
+      doc,
+      "REPORTE DE COMPROBANTES",
+      "Facturación · Control de comprobantes y saldos"
+    );
+
+    doc.setTextColor(12, 45, 107);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("Resumen de facturación", 14, 49);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(75, 85, 99);
+
+    const totalVisible = sortedComprobantes.reduce(
+      (sum, item) => sum + numeric(item.total),
+      0
+    );
+
+    const saldoVisible = sortedComprobantes.reduce(
+      (sum, item) => sum + numeric(item.saldo),
+      0
+    );
+
+    doc.text(
+      `Comprobantes visibles: ${sortedComprobantes.length} de ${comprobantes.length}`,
+      14,
+      56
+    );
+
+    doc.text(
+      `Total facturado: ${formatMoney(totalVisible)}  ·  Saldo por cobrar: ${formatMoney(saldoVisible)}`,
+      14,
+      62
+    );
 
     const table = sortedComprobantes.map((item) => [
       `${item.serie}-${item.numero_comprobante}`,
@@ -1178,18 +1275,42 @@ export function Facturacion() {
     ]);
 
     autoTable(doc, {
-      startY: 40,
+      startY: 70,
       head: [["Comprobante", "Cliente", "Fecha", "Total", "Estado", "Saldo"]],
       body: table,
-      styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [255, 106, 0], textColor: [255, 255, 255] },
+      margin: { left: 14, right: 14 },
+      styles: {
+        fontSize: 7.8,
+        cellPadding: 2.2,
+        textColor: [17, 24, 39],
+        lineColor: [226, 232, 240],
+        lineWidth: 0.15,
+      },
+      headStyles: {
+        fillColor: [255, 106, 0],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
     });
 
-    const finalY = (doc as any).lastAutoTable?.finalY || 45;
-    doc.setTextColor(12, 45, 107);
-    doc.setFontSize(10);
-    doc.text(`Total comprobantes: ${sortedComprobantes.length}`, 14, finalY + 12);
-    doc.text(`Total facturado: ${formatMoney(sortedComprobantes.reduce((sum, item) => sum + numeric(item.total), 0))}`, 14, finalY + 18);
+    const finalY = (doc as any).lastAutoTable?.finalY || 75;
+
+    if (finalY < 270) {
+      doc.setDrawColor(226, 232, 240);
+      doc.line(14, finalY + 7, 196, finalY + 7);
+
+      doc.setTextColor(12, 45, 107);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+
+      doc.text(`Total comprobantes: ${sortedComprobantes.length}`, 14, finalY + 15);
+      doc.text(`Total facturado: ${formatMoney(totalVisible)}`, 14, finalY + 21);
+      doc.text(`Saldo pendiente: ${formatMoney(saldoVisible)}`, 14, finalY + 27);
+    }
+
     doc.save(`Reporte_Comprobantes_${Date.now()}.pdf`);
   };
 
@@ -1541,7 +1662,7 @@ export function Facturacion() {
   };
 
   return (
-    <div className="w-full min-w-0 max-w-[calc(100vw-17rem)] space-y-5 overflow-x-hidden px-2 sm:px-3 pb-10">
+    <div className="w-full min-w-0 max-w-[calc(100vw-17rem)] space-y-7 overflow-x-hidden px-2 sm:px-3 pb-12">
       <div className="flex min-w-0 flex-col gap-4 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-[0.25em] text-[#FF6A00]">Facturación</p>
@@ -1560,28 +1681,43 @@ export function Facturacion() {
             {loading ? "Cargando..." : "Actualizar"}
           </button>
 
-          <button
-            type="button"
-            onClick={openCreateModal}
-            className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#0C2D6B] px-4 text-sm font-bold text-white shadow-sm hover:bg-[#143C8C]"
-          >
-            <Plus className="h-4 w-4" />
-            Nuevo Comprobante
-          </button>
         </div>
       </div>
 
       {apiError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{apiError}</div>}
       {notice && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-700">{notice}</div>}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard title="Total facturado" value={formatMoney(totalGeneral)} icon={ReceiptText} bar="bg-[#0C2D6B]" subtitle={`${comprobantes.length} comprobantes`} />
         <KpiCard title="Pagadas" value={pagadas} icon={CheckCircle} bar="bg-green-500" />
         <KpiCard title="Pendientes" value={pendientes} icon={Clock} bar="bg-[#FF6A00]" />
         <KpiCard title="Saldo por cobrar" value={formatMoney(saldoGeneral)} icon={WalletCards} bar={vencidas > 0 ? "bg-red-500" : "bg-blue-500"} subtitle={`${vencidas} vencidas`} />
       </div>
 
-      <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+      <section className="pt-2">
+        <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-2xl font-bold text-[#0C2D6B]">
+              <ReceiptText className="h-6 w-6 text-[#FF6A00]" />
+              Listado de Comprobantes
+            </h2>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Consulta, emisión, pagos y seguimiento de los comprobantes registrados.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#0C2D6B] px-7 text-base font-bold text-white shadow-md hover:bg-[#143C8C]"
+          >
+            <Plus className="h-5 w-5" />
+            Nuevo Comprobante
+          </button>
+        </div>
+
+      <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_175px_210px_190px_105px_90px_100px]">
           <div className="relative min-w-0">
             <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
@@ -1618,27 +1754,43 @@ export function Facturacion() {
             <X className="h-4 w-4" /> Limpiar
           </button>
 
-          <button type="button" onClick={exportReportPDF} className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl bg-red-500 px-3 text-sm font-bold text-white shadow-sm hover:bg-red-600 whitespace-nowrap">
+          <button type="button" onClick={exportReportPDF} className="inline-flex h-12 items-center justify-center gap-1.5 rounded-xl bg-red-500 px-4 text-sm font-bold text-white shadow-sm hover:bg-red-600 whitespace-nowrap">
             <FileText className="h-4 w-4" /> PDF
           </button>
 
-          <button type="button" onClick={exportExcel} className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl bg-[#22C55E] px-3 text-sm font-bold text-white shadow-sm hover:bg-[#16A34A] whitespace-nowrap">
+          <button type="button" onClick={exportExcel} className="inline-flex h-12 items-center justify-center gap-1.5 rounded-xl bg-[#22C55E] px-4 text-sm font-bold text-white shadow-sm hover:bg-[#16A34A] whitespace-nowrap">
             <Download className="h-4 w-4" /> Excel
           </button>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <span className="text-sm font-bold text-gray-400">
             {sortedComprobantes.length} de {comprobantes.length} registros visibles
           </span>
+
           <span className="hidden sm:inline text-xs font-semibold text-gray-300">·</span>
+
           <span className="text-xs font-semibold text-gray-400">
             Ordená tocando los encabezados de la tabla.
           </span>
+
+          <label className="ml-0 inline-flex items-center gap-2 text-xs font-bold text-gray-500 lg:ml-auto">
+            Mostrar
+            <select
+              value={pageSize}
+              onChange={(event) => setPageSize(Number(event.target.value))}
+              className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-[#0C2D6B]"
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
+          </label>
         </div>
       </div>
 
-      <div className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+      <div className="mt-6 min-w-0 max-w-full overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
         <div className="w-full max-w-full overflow-x-auto">
           <table className="w-full min-w-[1040px] text-left text-[12.5px]">
             <thead className="border-b border-gray-100 bg-gray-50 text-[11px] uppercase tracking-wide text-gray-400">
@@ -1655,7 +1807,7 @@ export function Facturacion() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {sortedComprobantes.map((comprobante) => (
+              {paginatedComprobantes.map((comprobante) => (
                 <tr key={comprobante.id} className="hover:bg-gray-50/70">
                   <td className="px-3 py-3">
                     <p className="font-mono font-bold text-[#0C2D6B]">{comprobante.serie}-{comprobante.numero_comprobante}</p>
@@ -1697,6 +1849,66 @@ export function Facturacion() {
           </div>
         )}
       </div>
+
+      {sortedComprobantes.length > 0 && (
+        <div className="mt-6 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <p className="text-sm font-semibold text-gray-500">
+              Página <b className="text-[#0C2D6B]">{Math.min(page, totalPages)}</b> de{" "}
+              <b className="text-[#0C2D6B]">{totalPages}</b>
+              {" · "}
+              Mostrando{" "}
+              <b className="text-[#0C2D6B]">
+                {(Math.min(page, totalPages) - 1) * pageSize + 1}
+              </b>
+              {" - "}
+              <b className="text-[#0C2D6B]">
+                {Math.min(Math.min(page, totalPages) * pageSize, sortedComprobantes.length)}
+              </b>{" "}
+              de <b className="text-[#0C2D6B]">{sortedComprobantes.length}</b>
+            </p>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage(1)}
+                className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Primera
+              </button>
+
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Anterior
+              </button>
+
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Siguiente
+              </button>
+
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage(totalPages)}
+                className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Última
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </section>
 
       {modalMode && form && (
         <ComprobanteModal

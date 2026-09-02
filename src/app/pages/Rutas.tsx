@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
-  AlertTriangle,
   CheckCircle,
-  Clock,
   DollarSign,
   Download,
   Edit2,
@@ -21,6 +19,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import * as XLSX from "xlsx";
+import logoImage from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
 
 const API_BASE_URL = "/api";
 
@@ -28,6 +27,7 @@ type Modo = "nuevo" | "ver" | "editar" | null;
 type LocationTarget = "origen" | "destino" | null;
 type FormErrors = Record<string, string>;
 type AnyRow = Record<string, any>;
+type SortDirection = "asc" | "desc";
 
 interface Ubicacion {
   id: number;
@@ -87,6 +87,13 @@ interface LocationForm {
   pais: string;
 }
 
+type RouteEstimate = {
+  distancia_km: string;
+  tiempo: string;
+  source: "existente" | "coordenadas";
+  label: string;
+};
+
 const inputClass =
   "w-full h-11 rounded-xl border border-gray-200 bg-white px-3 text-sm outline-none focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/10 disabled:bg-gray-100 disabled:text-gray-500";
 const labelClass = "block text-xs font-bold text-gray-600 mb-1.5";
@@ -128,7 +135,10 @@ const titleCase = (value: string) =>
   value
     .trimStart()
     .toLocaleLowerCase("es-GT")
-    .replace(/(^|[\s'-])([a-záéíóúüñ])/g, (_m, sep, letter) => `${sep}${letter.toLocaleUpperCase("es-GT")}`)
+    .replace(
+      /(^|[\s'-])([a-záéíóúüñ])/g,
+      (_m, sep, letter) => `${sep}${letter.toLocaleUpperCase("es-GT")}`
+    )
     .replace(/\bGL365\b/gi, "GL365")
     .replace(/\bKm\b/g, "Km")
     .replace(/\bA30\b/gi, "A30");
@@ -157,7 +167,6 @@ const cleanDecimal = (value: string, maxInteger = 8, maxDecimals = 2) => {
   const parts = value.replace(/[^0-9.]/g, "").split(".");
   const integer = parts[0].slice(0, maxInteger);
   const decimals = parts.slice(1).join("").slice(0, maxDecimals);
-
   return parts.length > 1 ? `${integer}.${decimals}` : integer;
 };
 
@@ -165,8 +174,6 @@ const numeric = (value: any) => {
   const n = Number(String(value ?? "").replace(/,/g, ""));
   return Number.isFinite(n) ? n : 0;
 };
-
-type SortDirection = "asc" | "desc";
 
 const compareValues = (a: any, b: any, direction: SortDirection) => {
   const av = a ?? "";
@@ -199,15 +206,22 @@ const formatNumber = (value: any, decimals = 2) =>
 
 const splitDuration = (value: any) => {
   const totalMinutes = Math.max(0, Math.round(numeric(value) * 60));
-  const horas = Math.floor(totalMinutes / 60);
-  const minutos = totalMinutes % 60;
-
-  return { horas, minutos };
+  return {
+    horas: Math.floor(totalMinutes / 60),
+    minutos: totalMinutes % 60,
+  };
 };
 
 const durationToDecimal = (horas: any, minutos: any) => {
-  const cleanHours = Math.max(0, Number(String(horas ?? "").replace(/\D/g, "")) || 0);
-  const cleanMinutes = Math.min(59, Math.max(0, Number(String(minutos ?? "").replace(/\D/g, "")) || 0));
+  const cleanHours = Math.max(
+    0,
+    Number(String(horas ?? "").replace(/\D/g, "")) || 0
+  );
+
+  const cleanMinutes = Math.min(
+    59,
+    Math.max(0, Number(String(minutos ?? "").replace(/\D/g, "")) || 0)
+  );
 
   return Number(((cleanHours * 60 + cleanMinutes) / 60).toFixed(2));
 };
@@ -223,6 +237,7 @@ const formatDuration = (value: any) => {
 };
 
 const cleanHours = (value: string) => value.replace(/\D/g, "").slice(0, 3);
+
 const cleanMinutes = (value: string) => {
   const clean = value.replace(/\D/g, "").slice(0, 2);
   if (clean === "") return "";
@@ -237,21 +252,18 @@ const dateText = (value: any) => {
 const estadoTone = (estado: string) => {
   const text = normalize(estado);
 
-  if (text.includes("activa")) return "bg-green-100 text-green-700 border-green-200";
-  if (text.includes("inactiva")) return "bg-gray-100 text-gray-600 border-gray-200";
+  if (text.includes("activa")) {
+    return "bg-green-100 text-green-700 border-green-200";
+  }
+
+  if (text.includes("inactiva")) {
+    return "bg-gray-100 text-gray-600 border-gray-200";
+  }
 
   return "bg-blue-100 text-[#0C2D6B] border-blue-200";
 };
 
-type RouteEstimate = {
-  distancia_km: string;
-  tiempo: string;
-  source: "existente" | "coordenadas";
-  label: string;
-};
-
 const LOCATION_COORDS: Record<string, { lat: number; lng: number }> = {
-  // Guatemala
   "ciudad de guatemala|guatemala": { lat: 14.6349, lng: -90.5069 },
   "guatemala|guatemala": { lat: 14.6349, lng: -90.5069 },
   "zona 12|guatemala": { lat: 14.5852, lng: -90.5486 },
@@ -269,38 +281,36 @@ const LOCATION_COORDS: Record<string, { lat: number; lng: number }> = {
   "mazatenango|guatemala": { lat: 14.5342, lng: -91.5033 },
   "huehuetenango|guatemala": { lat: 15.3192, lng: -91.4724 },
   "quiche|guatemala": { lat: 15.0306, lng: -91.1489 },
-  "chiquimula|guatemala": { lat: 14.7970, lng: -89.5453 },
+  "chiquimula|guatemala": { lat: 14.797, lng: -89.5453 },
   "zacapa|guatemala": { lat: 14.9722, lng: -89.5306 },
   "puerto barrios|guatemala": { lat: 15.7308, lng: -88.5944 },
   "flores|guatemala": { lat: 16.9181, lng: -89.8925 },
   "peten|guatemala": { lat: 16.9181, lng: -89.8925 },
   "san marcos|guatemala": { lat: 14.9639, lng: -91.7944 },
-  "sanarate|guatemala": { lat: 14.7950, lng: -90.1925 },
+  "sanarate|guatemala": { lat: 14.795, lng: -90.1925 },
   "jutiapa|guatemala": { lat: 14.2828, lng: -89.8922 },
   "malacatan san marcos|guatemala": { lat: 14.9107, lng: -92.0576 },
-  "km22.4|guatemala": { lat: 14.5430, lng: -90.6240 },
-  "hospital san juan de dios|guatemala": { lat: 14.6393, lng: -90.5150 },
+  "km22.4|guatemala": { lat: 14.543, lng: -90.624 },
+  "hospital san juan de dios|guatemala": { lat: 14.6393, lng: -90.515 },
 
-  // Centroamérica
   "san salvador|el salvador": { lat: 13.6929, lng: -89.2182 },
   "tegucigalpa|honduras": { lat: 14.0723, lng: -87.1921 },
-  "san pedro sula|honduras": { lat: 15.5042, lng: -88.0250 },
-  "managua|nicaragua": { lat: 12.1140, lng: -86.2362 },
+  "san pedro sula|honduras": { lat: 15.5042, lng: -88.025 },
+  "managua|nicaragua": { lat: 12.114, lng: -86.2362 },
   "san jose|costa rica": { lat: 9.9281, lng: -84.0907 },
   "alajuela|costa rica": { lat: 10.0163, lng: -84.2116 },
   "panama|panama": { lat: 8.9824, lng: -79.5199 },
   "ciudad de panama|panama": { lat: 8.9824, lng: -79.5199 },
   "belice|belice": { lat: 17.5046, lng: -88.1962 },
 
-  // México / USA frecuentes
-  "ciudad hidalgo|mexico": { lat: 14.6811, lng: -92.1490 },
+  "ciudad hidalgo|mexico": { lat: 14.6811, lng: -92.149 },
   "tapachula|mexico": { lat: 14.9056, lng: -92.2634 },
   "ciudad de mexico|mexico": { lat: 19.4326, lng: -99.1332 },
   "cdmx|mexico": { lat: 19.4326, lng: -99.1332 },
   "monterrey|mexico": { lat: 25.6866, lng: -100.3161 },
   "laredo|estados unidos": { lat: 27.5036, lng: -99.5076 },
   "houston|estados unidos": { lat: 29.7604, lng: -95.3698 },
-  "dallas|estados unidos": { lat: 32.7767, lng: -96.7970 },
+  "dallas|estados unidos": { lat: 32.7767, lng: -96.797 },
   "miami|estados unidos": { lat: 25.7617, lng: -80.1918 },
   "los angeles|estados unidos": { lat: 34.0522, lng: -118.2437 },
 };
@@ -321,6 +331,7 @@ const getLocationCoord = (ubicacion?: Partial<Ubicacion> | null) => {
 
   const foundKey = Object.keys(LOCATION_COORDS).find((key) => {
     const [knownName, knownCountry] = key.split("|");
+
     return (
       knownCountry === country &&
       (name.includes(knownName) || knownName.includes(name))
@@ -357,6 +368,7 @@ const mapsDirectionUrl = (
   const origenText = origen
     ? `${origen.nombre_ubicacion}, ${origen.pais}`
     : "";
+
   const destinoText = destino
     ? `${destino.nombre_ubicacion}, ${destino.pais}`
     : "";
@@ -432,8 +444,83 @@ const estimateRouteData = (
     distancia_km: String(roundTo(distancia, 2)),
     tiempo: String(roundTo(tiempo, 2)),
     source: "coordenadas",
-    label: "Estimación automática por coordenadas aproximadas. Podés verificarla en Google Maps.",
+    label:
+      "Estimación automática por coordenadas aproximadas. Podés verificarla en Google Maps.",
   };
+};
+
+const loadImageDataUrl = async (src: string): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+
+    image.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth || image.width;
+        canvas.height = image.naturalHeight || image.height;
+
+        const context = canvas.getContext("2d");
+
+        if (!context) {
+          reject(new Error("No se pudo preparar el logo."));
+          return;
+        }
+
+        context.drawImage(image, 0, 0);
+        resolve(canvas.toDataURL("image/png"));
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    image.onerror = () => reject(new Error("No se pudo cargar el logo."));
+    image.src = src;
+  });
+
+const addCorporatePdfHeader = async (
+  doc: jsPDF,
+  title: string,
+  subtitle: string,
+  landscape = false
+) => {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const headerHeight = landscape ? 34 : 38;
+
+  doc.setFillColor(12, 45, 107);
+  doc.rect(0, 0, pageWidth, headerHeight, "F");
+
+  try {
+    const logo = await loadImageDataUrl(logoImage);
+
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(255, 106, 0);
+    doc.setLineWidth(0.7);
+
+    doc.roundedRect(10, 6, landscape ? 44 : 48, 25, 3, 3, "FD");
+    doc.addImage(logo, "PNG", 13, 8, landscape ? 38 : 42, 21);
+  } catch (error) {
+    console.warn("No se pudo agregar el logo al PDF:", error);
+  }
+
+  const centerX = landscape ? pageWidth / 2 + 14 : pageWidth / 2 + 18;
+
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(255, 106, 0);
+  doc.setFontSize(10);
+  doc.text("GRUPO LOGÍSTICO 365", centerX, 11, { align: "center" });
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(landscape ? 18 : 17);
+  doc.text(title, centerX, 20, { align: "center" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.text(subtitle, centerX, 27, { align: "center" });
+
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(1);
+  doc.line(landscape ? 72 : 70, 31, pageWidth - 12, 31);
 };
 
 function moveOnEnter(event: KeyboardEvent<HTMLElement>) {
@@ -450,9 +537,11 @@ function moveOnEnter(event: KeyboardEvent<HTMLElement>) {
   const fields = Array.from(
     form.querySelectorAll<HTMLElement>("input, select, textarea, button")
   ).filter((item) => {
-    const disabled = item.hasAttribute("disabled") || item.getAttribute("aria-disabled") === "true";
-    const hidden = item.offsetParent === null;
+    const disabled =
+      item.hasAttribute("disabled") ||
+      item.getAttribute("aria-disabled") === "true";
 
+    const hidden = item.offsetParent === null;
     return !disabled && !hidden;
   });
 
@@ -464,7 +553,10 @@ function moveOnEnter(event: KeyboardEvent<HTMLElement>) {
     return;
   }
 
-  const save = form.querySelector<HTMLButtonElement>("[data-save-button='true']");
+  const save = form.querySelector<HTMLButtonElement>(
+    "[data-save-button='true']"
+  );
+
   save?.click();
 }
 
@@ -483,7 +575,9 @@ function Field({
     <div className={className}>
       <label className={labelClass}>{label}</label>
       {children}
-      {error && <p className="mt-1 text-[11px] font-semibold text-red-600">{error}</p>}
+      {error && (
+        <p className="mt-1 text-[11px] font-semibold text-red-600">{error}</p>
+      )}
     </div>
   );
 }
@@ -502,11 +596,13 @@ function KpiCard({
   return (
     <div className="relative overflow-hidden rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
       <div className={`absolute bottom-0 left-0 h-1 w-full ${bar}`} />
+
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-gray-500">{title}</p>
           <h3 className="mt-1 text-2xl font-bold text-[#0C2D6B]">{value}</h3>
         </div>
+
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-[#0C2D6B]">
           <Icon className="h-5 w-5" />
         </div>
@@ -515,9 +611,17 @@ function KpiCard({
   );
 }
 
-function Badge({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+function Badge({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-bold ${className}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-bold ${className}`}
+    >
       {children}
     </span>
   );
@@ -547,9 +651,9 @@ function ActionButton({
       type="button"
       title={title}
       onClick={onClick}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-colors ${tones[tone]}`}
+      className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border shadow-sm transition-colors ${tones[tone]}`}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className="h-[18px] w-[18px]" />
     </button>
   );
 }
@@ -573,7 +677,10 @@ function SearchableSelect({
   error?: string;
   disabled?: boolean;
 }) {
-  const selected = options.find((item) => Number(item.id) === Number(value));
+  const selected = options.find(
+    (item) => Number(item.id) === Number(value)
+  );
+
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
 
@@ -582,7 +689,10 @@ function SearchableSelect({
 
     return options
       .filter((item) => {
-        const text = normalize(`${getLabel(item)} ${getSubLabel?.(item) || ""}`);
+        const text = normalize(
+          `${getLabel(item)} ${getSubLabel?.(item) || ""}`
+        );
+
         return !term || text.includes(term);
       })
       .slice(0, 60);
@@ -590,7 +700,7 @@ function SearchableSelect({
 
   return (
     <div className="relative">
-      <Search className="w-4 h-4 text-gray-400 absolute left-3 top-[14px] z-10" />
+      <Search className="absolute left-3 top-[14px] z-10 h-4 w-4 text-gray-400" />
 
       <input
         disabled={disabled}
@@ -623,11 +733,13 @@ function SearchableSelect({
         }}
         onBlur={() => window.setTimeout(() => setOpen(false), 140)}
         placeholder={placeholder}
-        className={`${inputClass} pl-9 ${error ? errorInput : ""}`}
+        className={`${inputClass} pl-9 ${
+          error ? errorInput : ""
+        }`}
       />
 
       {open && !disabled && (
-        <div className="absolute z-[130] mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl">
+        <div className="absolute z-[130] mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl">
           {filtered.map((item) => (
             <button
               type="button"
@@ -638,12 +750,21 @@ function SearchableSelect({
                 setOpen(false);
                 setQuery("");
               }}
-              className={`w-full text-left px-3 py-2.5 hover:bg-blue-50 ${
-                Number(item.id) === Number(value) ? "bg-blue-50 text-[#0C2D6B]" : "text-gray-700"
+              className={`w-full px-3 py-2.5 text-left hover:bg-blue-50 ${
+                Number(item.id) === Number(value)
+                  ? "bg-blue-50 text-[#0C2D6B]"
+                  : "text-gray-700"
               }`}
             >
-              <span className="block text-sm font-semibold leading-5">{getLabel(item)}</span>
-              {getSubLabel && <span className="block text-[11px] text-gray-400">{getSubLabel(item)}</span>}
+              <span className="block text-sm font-semibold leading-5">
+                {getLabel(item)}
+              </span>
+
+              {getSubLabel && (
+                <span className="block text-[11px] text-gray-400">
+                  {getSubLabel(item)}
+                </span>
+              )}
             </button>
           ))}
 
@@ -673,7 +794,11 @@ export function Rutas() {
   const [filterEstado, setFilterEstado] = useState("Todos");
   const [filterFrecuencia, setFilterFrecuencia] = useState("Todos");
   const [sortField, setSortField] = useState("");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [sortDirection, setSortDirection] =
+    useState<SortDirection>("asc");
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(8);
 
   const [errors, setErrors] = useState<FormErrors>({});
   const [apiError, setApiError] = useState("");
@@ -681,13 +806,17 @@ export function Rutas() {
   const [loading, setLoading] = useState(false);
 
   const [locationModal, setLocationModal] = useState(false);
-  const [locationTarget, setLocationTarget] = useState<LocationTarget>(null);
+  const [locationTarget, setLocationTarget] =
+    useState<LocationTarget>(null);
+
   const [locationForm, setLocationForm] = useState<LocationForm>({
     codigo_ubicacion: "",
     nombre_ubicacion: "",
     pais: "Guatemala",
   });
-  const [locationErrors, setLocationErrors] = useState<FormErrors>({});
+
+  const [locationErrors, setLocationErrors] =
+    useState<FormErrors>({});
 
   const load = async () => {
     setLoading(true);
@@ -703,7 +832,10 @@ export function Rutas() {
       setHistorial(asArray<RutaHistorial>(data.historial));
     } catch (error: any) {
       console.error("Error cargando rutas:", error);
-      setApiError(error.message || "No se pudo conectar Rutas con MySQL.");
+
+      setApiError(
+        error.message || "No se pudo conectar Rutas con MySQL."
+      );
     } finally {
       setLoading(false);
     }
@@ -725,7 +857,10 @@ export function Rutas() {
 
   const handleSort = (field: string) => {
     if (sortField === field) {
-      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      setSortDirection((prev) =>
+        prev === "asc" ? "desc" : "asc"
+      );
+
       return;
     }
 
@@ -733,7 +868,13 @@ export function Rutas() {
     setSortDirection("asc");
   };
 
-  const SortChip = ({ field, label }: { field: string; label: ReactNode }) => (
+  const SortChip = ({
+    field,
+    label,
+  }: {
+    field: string;
+    label: ReactNode;
+  }) => (
     <button
       type="button"
       onClick={() => handleSort(field)}
@@ -744,28 +885,44 @@ export function Rutas() {
       }`}
       title="Ordenar ascendente o descendente"
     >
-      {label} <span className="ml-1 text-[9px] leading-none">{sortIcon(field)}</span>
+      {label}{" "}
+      <span className="ml-1 text-[9px] leading-none">
+        {sortIcon(field)}
+      </span>
     </button>
   );
 
   const ubicacionById = (id?: number | null) =>
-    ubicaciones.find((item) => Number(item.id) === Number(id));
+    ubicaciones.find(
+      (item) => Number(item.id) === Number(id)
+    );
 
   const frecuenciaById = (id?: number | null) =>
-    frecuencias.find((item) => Number(item.id) === Number(id));
+    frecuencias.find(
+      (item) => Number(item.id) === Number(id)
+    );
 
   const estadoById = (id?: number | null) =>
     estados.find((item) => Number(item.id) === Number(id));
 
   const nombreUbicacion = (id?: number | null) => {
     const u = ubicacionById(id);
+
     if (!u) return "-";
+
     return `${u.nombre_ubicacion}, ${u.pais}`;
   };
 
   const routeName = (ruta: Partial<Ruta>) => {
-    const origen = ubicacionById(ruta.origen_id)?.nombre_ubicacion || ruta.origen_nombre || "";
-    const destino = ubicacionById(ruta.destino_id)?.nombre_ubicacion || ruta.destino_nombre || "";
+    const origen =
+      ubicacionById(ruta.origen_id)?.nombre_ubicacion ||
+      ruta.origen_nombre ||
+      "";
+
+    const destino =
+      ubicacionById(ruta.destino_id)?.nombre_ubicacion ||
+      ruta.destino_nombre ||
+      "";
 
     if (origen && destino) return `${origen} → ${destino}`;
 
@@ -773,7 +930,9 @@ export function Rutas() {
   };
 
   const activeEstadoId =
-    estados.find((estado) => normalize(estado.nombre_estado_ruta).includes("activa"))?.id ||
+    estados.find((estado) =>
+      normalize(estado.nombre_estado_ruta).includes("activa")
+    )?.id ||
     estados[0]?.id ||
     1;
 
@@ -781,62 +940,163 @@ export function Rutas() {
     const term = normalize(search.trim());
 
     return rutas.filter((ruta) => {
-      const estado = ruta.estado || estadoById(ruta.estado_id)?.nombre_estado_ruta || "";
-      const frecuencia = ruta.frecuencia || frecuenciaById(ruta.frecuencia_id)?.nombre_frecuencia_ruta || "";
+      const estado =
+        ruta.estado ||
+        estadoById(ruta.estado_id)?.nombre_estado_ruta ||
+        "";
+
+      const frecuencia =
+        ruta.frecuencia ||
+        frecuenciaById(ruta.frecuencia_id)
+          ?.nombre_frecuencia_ruta ||
+        "";
+
       const text = normalize(
-        `${ruta.codigo_ruta} ${ruta.nombre_ruta} ${routeName(ruta)} ${nombreUbicacion(ruta.origen_id)} ${nombreUbicacion(ruta.destino_id)} ${estado} ${frecuencia}`
+        `${ruta.codigo_ruta} ${ruta.nombre_ruta} ${routeName(
+          ruta
+        )} ${nombreUbicacion(ruta.origen_id)} ${nombreUbicacion(
+          ruta.destino_id
+        )} ${estado} ${frecuencia}`
       );
 
       const matchSearch = !term || text.includes(term);
-      const matchEstado = filterEstado === "Todos" || Number(ruta.estado_id) === Number(filterEstado);
-      const matchFrecuencia = filterFrecuencia === "Todos" || Number(ruta.frecuencia_id) === Number(filterFrecuencia);
+
+      const matchEstado =
+        filterEstado === "Todos" ||
+        Number(ruta.estado_id) === Number(filterEstado);
+
+      const matchFrecuencia =
+        filterFrecuencia === "Todos" ||
+        Number(ruta.frecuencia_id) === Number(filterFrecuencia);
 
       return matchSearch && matchEstado && matchFrecuencia;
     });
-  }, [rutas, search, filterEstado, filterFrecuencia, ubicaciones, frecuencias, estados]);
+  }, [
+    rutas,
+    search,
+    filterEstado,
+    filterFrecuencia,
+    ubicaciones,
+    frecuencias,
+    estados,
+  ]);
 
   const sortedRutas = useMemo(() => {
     const rows = [...filteredRutas];
 
     rows.sort((a, b) => {
-      const estadoA = a.estado || estadoById(a.estado_id)?.nombre_estado_ruta || "";
-      const estadoB = b.estado || estadoById(b.estado_id)?.nombre_estado_ruta || "";
-      const frecuenciaA = a.frecuencia || frecuenciaById(a.frecuencia_id)?.nombre_frecuencia_ruta || "";
-      const frecuenciaB = b.frecuencia || frecuenciaById(b.frecuencia_id)?.nombre_frecuencia_ruta || "";
+      const estadoA =
+        a.estado ||
+        estadoById(a.estado_id)?.nombre_estado_ruta ||
+        "";
+
+      const estadoB =
+        b.estado ||
+        estadoById(b.estado_id)?.nombre_estado_ruta ||
+        "";
+
+      const frecuenciaA =
+        a.frecuencia ||
+        frecuenciaById(a.frecuencia_id)
+          ?.nombre_frecuencia_ruta ||
+        "";
+
+      const frecuenciaB =
+        b.frecuencia ||
+        frecuenciaById(b.frecuencia_id)
+          ?.nombre_frecuencia_ruta ||
+        "";
+
       const origenA = nombreUbicacion(a.origen_id);
       const origenB = nombreUbicacion(b.origen_id);
       const destinoA = nombreUbicacion(a.destino_id);
       const destinoB = nombreUbicacion(b.destino_id);
 
       const av =
-        sortField === "codigo" ? a.codigo_ruta :
-        sortField === "ruta" ? routeName(a) :
-        sortField === "origen" ? origenA :
-        sortField === "destino" ? destinoA :
-        sortField === "distancia" ? numeric(a.distancia_km) :
-        sortField === "tiempo" ? numeric(a.tiempo) :
-        sortField === "costo" ? numeric(a.costo) :
-        sortField === "frecuencia" ? frecuenciaA :
-        sortField === "estado" ? estadoA :
-        "";
+        sortField === "codigo"
+          ? a.codigo_ruta
+          : sortField === "ruta"
+          ? routeName(a)
+          : sortField === "origen"
+          ? origenA
+          : sortField === "destino"
+          ? destinoA
+          : sortField === "distancia"
+          ? numeric(a.distancia_km)
+          : sortField === "tiempo"
+          ? numeric(a.tiempo)
+          : sortField === "costo"
+          ? numeric(a.costo)
+          : sortField === "frecuencia"
+          ? frecuenciaA
+          : sortField === "estado"
+          ? estadoA
+          : "";
 
       const bv =
-        sortField === "codigo" ? b.codigo_ruta :
-        sortField === "ruta" ? routeName(b) :
-        sortField === "origen" ? origenB :
-        sortField === "destino" ? destinoB :
-        sortField === "distancia" ? numeric(b.distancia_km) :
-        sortField === "tiempo" ? numeric(b.tiempo) :
-        sortField === "costo" ? numeric(b.costo) :
-        sortField === "frecuencia" ? frecuenciaB :
-        sortField === "estado" ? estadoB :
-        "";
+        sortField === "codigo"
+          ? b.codigo_ruta
+          : sortField === "ruta"
+          ? routeName(b)
+          : sortField === "origen"
+          ? origenB
+          : sortField === "destino"
+          ? destinoB
+          : sortField === "distancia"
+          ? numeric(b.distancia_km)
+          : sortField === "tiempo"
+          ? numeric(b.tiempo)
+          : sortField === "costo"
+          ? numeric(b.costo)
+          : sortField === "frecuencia"
+          ? frecuenciaB
+          : sortField === "estado"
+          ? estadoB
+          : "";
 
-      return sortField ? compareValues(av, bv, sortDirection) : 0;
+      return sortField
+        ? compareValues(av, bv, sortDirection)
+        : 0;
     });
 
     return rows;
-  }, [filteredRutas, sortField, sortDirection, ubicaciones, frecuencias, estados]);
+  }, [
+    filteredRutas,
+    sortField,
+    sortDirection,
+    ubicaciones,
+    frecuencias,
+    estados,
+  ]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(sortedRutas.length / pageSize)
+  );
+
+  const paginatedRutas = useMemo(() => {
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const start = (safePage - 1) * pageSize;
+
+    return sortedRutas.slice(start, start + pageSize);
+  }, [sortedRutas, page, pageSize, totalPages]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [
+    search,
+    filterEstado,
+    filterFrecuencia,
+    sortField,
+    sortDirection,
+    pageSize,
+  ]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   const kpis = [
     {
@@ -847,19 +1107,37 @@ export function Rutas() {
     },
     {
       title: "Activas",
-      value: rutas.filter((ruta) => normalize(ruta.estado || estadoById(ruta.estado_id)?.nombre_estado_ruta).includes("activa")).length,
+      value: rutas.filter((ruta) =>
+        normalize(
+          ruta.estado ||
+            estadoById(ruta.estado_id)?.nombre_estado_ruta
+        ).includes("activa")
+      ).length,
       icon: CheckCircle,
       bar: "bg-green-500",
     },
     {
       title: "Distancia total",
-      value: `${formatNumber(rutas.reduce((acc, ruta) => acc + numeric(ruta.distancia_km), 0), 0)} km`,
+      value: `${formatNumber(
+        rutas.reduce(
+          (acc, ruta) => acc + numeric(ruta.distancia_km),
+          0
+        ),
+        0
+      )} km`,
       icon: Navigation,
       bar: "bg-blue-500",
     },
     {
       title: "Costo promedio",
-      value: formatMoney(rutas.length ? rutas.reduce((acc, ruta) => acc + numeric(ruta.costo), 0) / rutas.length : 0),
+      value: formatMoney(
+        rutas.length
+          ? rutas.reduce(
+              (acc, ruta) => acc + numeric(ruta.costo),
+              0
+            ) / rutas.length
+          : 0
+      ),
       icon: DollarSign,
       bar: "bg-[#FF6A00]",
     },
@@ -873,6 +1151,7 @@ export function Rutas() {
 
   const openNuevo = () => {
     setErrors({});
+
     setSelected({
       id: 0,
       codigo_ruta: "",
@@ -885,6 +1164,7 @@ export function Rutas() {
       frecuencia_id: frecuencias[0]?.id || null,
       estado_id: activeEstadoId,
     });
+
     setModo("nuevo");
   };
 
@@ -905,27 +1185,53 @@ export function Rutas() {
 
     const nextErrors: FormErrors = {};
 
-    if (!selected.origen_id) nextErrors.origen_id = "Selecciona el origen.";
-    if (!selected.destino_id) nextErrors.destino_id = "Selecciona el destino.";
-
-    if (selected.origen_id && selected.destino_id && Number(selected.origen_id) === Number(selected.destino_id)) {
-      nextErrors.destino_id = "El destino debe ser diferente del origen.";
+    if (!selected.origen_id) {
+      nextErrors.origen_id = "Selecciona el origen.";
     }
 
-    if (!String(selected.distancia_km ?? "").trim() || numeric(selected.distancia_km) <= 0) {
-      nextErrors.distancia_km = "Ingresa una distancia válida mayor a 0.";
+    if (!selected.destino_id) {
+      nextErrors.destino_id = "Selecciona el destino.";
     }
 
-    if (!String(selected.tiempo ?? "").trim() || numeric(selected.tiempo) <= 0) {
-      nextErrors.tiempo = "Ingresa un tiempo válido mayor a 0.";
+    if (
+      selected.origen_id &&
+      selected.destino_id &&
+      Number(selected.origen_id) === Number(selected.destino_id)
+    ) {
+      nextErrors.destino_id =
+        "El destino debe ser diferente del origen.";
     }
 
-    if (!String(selected.costo ?? "").trim() || numeric(selected.costo) < 0) {
+    if (
+      !String(selected.distancia_km ?? "").trim() ||
+      numeric(selected.distancia_km) <= 0
+    ) {
+      nextErrors.distancia_km =
+        "Ingresa una distancia válida mayor a 0.";
+    }
+
+    if (
+      !String(selected.tiempo ?? "").trim() ||
+      numeric(selected.tiempo) <= 0
+    ) {
+      nextErrors.tiempo =
+        "Ingresa un tiempo válido mayor a 0.";
+    }
+
+    if (
+      !String(selected.costo ?? "").trim() ||
+      numeric(selected.costo) < 0
+    ) {
       nextErrors.costo = "Ingresa un costo válido.";
     }
 
-    if (!selected.frecuencia_id) nextErrors.frecuencia_id = "Selecciona la frecuencia.";
-    if (!selected.estado_id) nextErrors.estado_id = "Selecciona el estado.";
+    if (!selected.frecuencia_id) {
+      nextErrors.frecuencia_id = "Selecciona la frecuencia.";
+    }
+
+    if (!selected.estado_id) {
+      nextErrors.estado_id = "Selecciona el estado.";
+    }
 
     setErrors(nextErrors);
 
@@ -937,7 +1243,9 @@ export function Rutas() {
 
     try {
       await apiRequest(
-        modo === "editar" && selected.id ? `/rutas/${selected.id}` : "/rutas",
+        modo === "editar" && selected.id
+          ? `/rutas/${selected.id}`
+          : "/rutas",
         {
           method: modo === "editar" ? "PUT" : "POST",
           body: JSON.stringify({
@@ -953,13 +1261,24 @@ export function Rutas() {
         }
       );
 
+      const fueNueva = modo === "nuevo";
+
       setModo(null);
       setSelected(null);
       setErrors({});
+
       await load();
-      showNotice(modo === "nuevo" ? "Ruta guardada correctamente." : "Ruta actualizada correctamente.");
+
+      showNotice(
+        fueNueva
+          ? "Ruta guardada correctamente."
+          : "Ruta actualizada correctamente."
+      );
     } catch (error: any) {
-      setErrors({ general: error.message || "No se pudo guardar la ruta." });
+      setErrors({
+        general:
+          error.message || "No se pudo guardar la ruta.",
+      });
     }
   };
 
@@ -967,29 +1286,46 @@ export function Rutas() {
     if (!deleteModal) return;
 
     try {
-      await apiRequest(`/rutas/${deleteModal.id}`, { method: "DELETE" });
+      await apiRequest(`/rutas/${deleteModal.id}`, {
+        method: "DELETE",
+      });
+
       const code = deleteModal.codigo_ruta;
+
       setDeleteModal(null);
+
       await load();
+
       showNotice(`Ruta ${code} eliminada correctamente.`);
     } catch (error: any) {
       setDeleteModal(null);
-      setApiError(error.message || "No se pudo eliminar la ruta.");
+
+      setApiError(
+        error.message || "No se pudo eliminar la ruta."
+      );
     }
   };
 
   const historialRuta = (rutaId?: number | null) =>
     historial
-      .filter((item) => Number(item.ruta_id) === Number(rutaId))
-      .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+      .filter(
+        (item) => Number(item.ruta_id) === Number(rutaId)
+      )
+      .sort((a, b) =>
+        String(b.fecha || "").localeCompare(
+          String(a.fecha || "")
+        )
+      );
 
   const openLocationModal = (target: LocationTarget) => {
     setLocationTarget(target);
+
     setLocationForm({
       codigo_ubicacion: "",
       nombre_ubicacion: "",
       pais: "Guatemala",
     });
+
     setLocationErrors({});
     setLocationModal(true);
   };
@@ -998,7 +1334,8 @@ export function Rutas() {
     const nextErrors: FormErrors = {};
 
     if (!locationForm.nombre_ubicacion.trim()) {
-      nextErrors.nombre_ubicacion = "Ingresa el nombre de la ubicación.";
+      nextErrors.nombre_ubicacion =
+        "Ingresa el nombre de la ubicación.";
     }
 
     if (!locationForm.pais.trim()) {
@@ -1028,16 +1365,23 @@ export function Rutas() {
       if (selected && locationTarget) {
         setSelected({
           ...selected,
-          [locationTarget === "origen" ? "origen_id" : "destino_id"]: saved.id,
+          [locationTarget === "origen"
+            ? "origen_id"
+            : "destino_id"]: saved.id,
         });
       }
 
       setLocationModal(false);
       setLocationTarget(null);
       setLocationErrors({});
+
       showNotice("Ubicación guardada correctamente.");
     } catch (error: any) {
-      setLocationErrors({ general: error.message || "No se pudo guardar la ubicación." });
+      setLocationErrors({
+        general:
+          error.message ||
+          "No se pudo guardar la ubicación.",
+      });
     }
   };
 
@@ -1047,12 +1391,21 @@ export function Rutas() {
     setFilterFrecuencia("Todos");
     setSortField("");
     setSortDirection("asc");
+    setPage(1);
   };
 
   const exportRutasExcel = () => {
     const rows = sortedRutas.map((ruta) => {
-      const estado = ruta.estado || estadoById(ruta.estado_id)?.nombre_estado_ruta || "-";
-      const frecuencia = ruta.frecuencia || frecuenciaById(ruta.frecuencia_id)?.nombre_frecuencia_ruta || "-";
+      const estado =
+        ruta.estado ||
+        estadoById(ruta.estado_id)?.nombre_estado_ruta ||
+        "-";
+
+      const frecuencia =
+        ruta.frecuencia ||
+        frecuenciaById(ruta.frecuencia_id)
+          ?.nombre_frecuencia_ruta ||
+        "-";
 
       return {
         Código: ruta.codigo_ruta,
@@ -1070,40 +1423,64 @@ export function Rutas() {
 
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
+
     XLSX.utils.book_append_sheet(wb, ws, "Rutas");
     XLSX.writeFile(wb, "Reporte_Rutas_GL365.xlsx");
   };
 
-  const exportRutasPDF = () => {
+  const exportRutasPDF = async () => {
     const doc = new jsPDF("landscape", "mm", "a4");
     const pageWidth = doc.internal.pageSize.getWidth();
 
-    doc.setFillColor(12, 45, 107);
-    doc.rect(0, 0, pageWidth, 24, "F");
-
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.setFont(undefined, "bold");
-    doc.text("Grupo Logístico 365", 14, 10);
-    doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
-    doc.text("Reporte de Rutas", 14, 17);
+    await addCorporatePdfHeader(
+      doc,
+      "REPORTE DE RUTAS",
+      "Rutas · Distancias, tiempos, costos y frecuencias",
+      true
+    );
 
     doc.setTextColor(12, 45, 107);
     doc.setFontSize(13);
-    doc.setFont(undefined, "bold");
-    doc.text("Resumen operativo", 14, 35);
+    doc.setFont("helvetica", "bold");
+    doc.text("Resumen operativo", 14, 45);
 
     doc.setFontSize(9);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.setTextColor(75, 85, 99);
-    doc.text(`Rutas visibles: ${sortedRutas.length} de ${rutas.length}`, 14, 42);
-    doc.text(`Activas: ${kpis[1].value}  |  Distancia total: ${kpis[2].value}  |  Costo promedio: ${kpis[3].value}`, 14, 48);
 
-    const columns = ["Código", "Ruta", "Distancia", "Tiempo", "Costo", "Frecuencia", "Estado"];
+    doc.text(
+      `Rutas visibles: ${sortedRutas.length} de ${rutas.length}`,
+      14,
+      52
+    );
+
+    doc.text(
+      `Activas: ${kpis[1].value}  |  Distancia total: ${kpis[2].value}  |  Costo promedio: ${kpis[3].value}`,
+      14,
+      58
+    );
+
+    const columns = [
+      "Código",
+      "Ruta",
+      "Distancia",
+      "Tiempo",
+      "Costo",
+      "Frecuencia",
+      "Estado",
+    ];
+
     const rows = sortedRutas.map((ruta) => {
-      const estado = ruta.estado || estadoById(ruta.estado_id)?.nombre_estado_ruta || "-";
-      const frecuencia = ruta.frecuencia || frecuenciaById(ruta.frecuencia_id)?.nombre_frecuencia_ruta || "-";
+      const estado =
+        ruta.estado ||
+        estadoById(ruta.estado_id)?.nombre_estado_ruta ||
+        "-";
+
+      const frecuencia =
+        ruta.frecuencia ||
+        frecuenciaById(ruta.frecuencia_id)
+          ?.nombre_frecuencia_ruta ||
+        "-";
 
       return [
         ruta.codigo_ruta || "-",
@@ -1116,41 +1493,76 @@ export function Rutas() {
       ];
     });
 
-    let y = 58;
-
-    doc.setFillColor(255, 106, 0);
-    doc.roundedRect(14, y, pageWidth - 28, 10, 3, 3, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(8);
-    doc.setFont(undefined, "bold");
-
     const widths = [28, 88, 30, 30, 34, 40, 32];
-    let x = 18;
+    let y = 68;
 
-    columns.forEach((column, index) => {
-      doc.text(column, x, y + 6.5);
-      x += widths[index];
-    });
+    const drawHeader = () => {
+      doc.setFillColor(255, 106, 0);
+      doc.roundedRect(
+        14,
+        y,
+        pageWidth - 28,
+        10,
+        3,
+        3,
+        "F"
+      );
 
-    y += 13;
-    doc.setFont(undefined, "normal");
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+
+      let x = 18;
+
+      columns.forEach((column, index) => {
+        doc.text(column, x, y + 6.5);
+        x += widths[index];
+      });
+
+      y += 13;
+    };
+
+    drawHeader();
+
+    doc.setFont("helvetica", "normal");
     doc.setTextColor(17, 24, 39);
 
     rows.forEach((row, rowIndex) => {
-      if (y > 185) {
+      if (y > 188) {
         doc.addPage();
+
         y = 18;
+
+        drawHeader();
+
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(17, 24, 39);
       }
 
       if (rowIndex % 2 === 0) {
         doc.setFillColor(248, 250, 252);
-        doc.rect(14, y - 4, pageWidth - 28, 10, "F");
+
+        doc.rect(
+          14,
+          y - 4,
+          pageWidth - 28,
+          10,
+          "F"
+        );
       }
 
-      x = 18;
+      let x = 18;
+
       row.forEach((value, index) => {
-        const limit = index === 1 ? 45 : index === 5 ? 22 : 18;
-        doc.text(String(value).slice(0, limit), x, y + 2);
+        const limit =
+          index === 1 ? 45 : index === 5 ? 22 : 18;
+
+        doc.text(
+          String(value).slice(0, limit),
+          x,
+          y + 2
+        );
+
         x += widths[index];
       });
 
@@ -1160,31 +1572,39 @@ export function Rutas() {
     doc.save("Reporte_Rutas_GL365.pdf");
   };
 
-  const printRuta = (ruta: Ruta) => {
+  const printRuta = async (ruta: Ruta) => {
     const doc = new jsPDF();
-    const estado = ruta.estado || estadoById(ruta.estado_id)?.nombre_estado_ruta || "-";
-    const frecuencia = ruta.frecuencia || frecuenciaById(ruta.frecuencia_id)?.nombre_frecuencia_ruta || "-";
 
-    doc.setFillColor(12, 45, 107);
-    doc.rect(0, 0, 210, 32, "F");
+    const estado =
+      ruta.estado ||
+      estadoById(ruta.estado_id)?.nombre_estado_ruta ||
+      "-";
 
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.text("Grupo Logístico 365", 20, 15);
+    const frecuencia =
+      ruta.frecuencia ||
+      frecuenciaById(ruta.frecuencia_id)
+        ?.nombre_frecuencia_ruta ||
+      "-";
 
-    doc.setFontSize(10);
-    doc.text("Reporte de Ruta", 20, 23);
+    await addCorporatePdfHeader(
+      doc,
+      "DETALLE DE RUTA",
+      `Rutas · ${ruta.codigo_ruta || "Ruta"}`
+    );
 
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(12);
-
-    let y = 48;
+    let y = 50;
 
     const line = (label: string, value: any) => {
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(12, 45, 107);
       doc.text(`${label}:`, 20, y);
-      doc.setFont(undefined, "normal");
-      doc.text(String(value || "-"), 78, y);
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(17, 24, 39);
+      doc.text(String(value || "-"), 72, y, {
+        maxWidth: 118,
+      });
+
       y += 9;
     };
 
@@ -1192,22 +1612,62 @@ export function Rutas() {
     line("Ruta", routeName(ruta));
     line("Origen", nombreUbicacion(ruta.origen_id));
     line("Destino", nombreUbicacion(ruta.destino_id));
-    line("Distancia", `${formatNumber(ruta.distancia_km)} km`);
+    line(
+      "Distancia",
+      `${formatNumber(ruta.distancia_km)} km`
+    );
     line("Tiempo", formatDuration(ruta.tiempo));
     line("Costo", formatMoney(ruta.costo));
     line("Frecuencia", frecuencia);
     line("Estado", estado);
 
+    const routeHistory = historialRuta(ruta.id);
+
+    if (routeHistory.length) {
+      y += 6;
+
+      doc.setFillColor(248, 250, 252);
+
+      doc.roundedRect(
+        15,
+        y - 6,
+        180,
+        10,
+        2,
+        2,
+        "F"
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(12, 45, 107);
+      doc.text("HISTORIAL DE COSTO", 20, y);
+
+      y += 11;
+
+      routeHistory.slice(0, 5).forEach((item, index) => {
+        line(
+          `Cambio ${index + 1}`,
+          `${dateText(item.fecha)} · ${formatMoney(
+            item.costo
+          )}`
+        );
+      });
+    }
+
     doc.save(`Ruta_${ruta.codigo_ruta}.pdf`);
   };
 
   return (
-    <div className="w-full max-w-full space-y-5 overflow-hidden px-3 sm:px-4 pb-10">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div className="w-full max-w-full space-y-7 overflow-hidden px-3 sm:px-4 pb-12">
+      <div className="flex flex-col gap-5 pt-1 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-[#0C2D6B]">Rutas</h1>
+          <h1 className="text-3xl font-bold text-[#0C2D6B]">
+            Rutas
+          </h1>
+
           <p className="mt-1 text-gray-500">
-            Gestión de rutas, distancias, horas, minutos, costos y frecuencias operativas
+            Gestión de rutas, distancias, horas, minutos,
+            costos y frecuencias operativas
           </p>
         </div>
 
@@ -1218,14 +1678,19 @@ export function Rutas() {
             disabled={loading}
             className="inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:opacity-60"
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-4 w-4 ${
+                loading ? "animate-spin" : ""
+              }`}
+            />
+
             {loading ? "Cargando..." : "Actualizar"}
           </button>
 
           <button
             type="button"
             onClick={exportRutasPDF}
-            className="inline-flex h-11 items-center gap-2 rounded-xl bg-red-500 px-4 text-sm font-bold text-white shadow-sm hover:bg-red-600"
+            className="inline-flex h-12 items-center gap-2 rounded-xl bg-red-500 px-5 text-sm font-bold text-white shadow-sm hover:bg-red-600"
           >
             <FileText className="h-4 w-4" />
             PDF
@@ -1234,19 +1699,10 @@ export function Rutas() {
           <button
             type="button"
             onClick={exportRutasExcel}
-            className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#22C55E] px-4 text-sm font-bold text-white shadow-sm hover:bg-[#16A34A]"
+            className="inline-flex h-12 items-center gap-2 rounded-xl bg-[#22C55E] px-5 text-sm font-bold text-white shadow-sm hover:bg-[#16A34A]"
           >
             <Download className="h-4 w-4" />
             Excel
-          </button>
-
-          <button
-            type="button"
-            onClick={openNuevo}
-            className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#0C2D6B] px-5 text-sm font-bold text-white shadow-sm hover:bg-[#143C8C]"
-          >
-            <Plus className="h-4 w-4" />
-            Nueva Ruta
           </button>
         </div>
       </div>
@@ -1263,192 +1719,445 @@ export function Rutas() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map((kpi) => (
           <KpiCard key={kpi.title} {...kpi} />
         ))}
       </div>
 
-      <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(280px,1fr)_230px_240px_auto] gap-3">
-          <div className="relative min-w-0">
-            <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por código, origen, destino..."
-              className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
-            />
-          </div>
+      <section className="pt-2">
+        <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-2xl font-bold text-[#0C2D6B]">
+              <RouteIcon className="h-6 w-6 text-[#FF6A00]" />
+              Rutas Operativas
+            </h2>
 
-          <div className="relative">
-            <Filter className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 pointer-events-none" />
-            <select
-              value={filterEstado}
-              onChange={(event) => setFilterEstado(event.target.value)}
-              className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
-            >
-              <option value="Todos">Todos los estados</option>
-              {estados.map((estado) => (
-                <option key={estado.id} value={estado.id}>
-                  {estado.nombre_estado_ruta}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="relative">
-            <Filter className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 pointer-events-none" />
-            <select
-              value={filterFrecuencia}
-              onChange={(event) => setFilterFrecuencia(event.target.value)}
-              className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
-            >
-              <option value="Todos">Todas las frecuencias</option>
-              {frecuencias.map((frecuencia) => (
-                <option key={frecuencia.id} value={frecuencia.id}>
-                  {frecuencia.nombre_frecuencia_ruta}
-                </option>
-              ))}
-            </select>
+            <p className="mt-1 text-sm text-gray-500">
+              Consulta, creación y control de recorridos,
+              costos y frecuencias.
+            </p>
           </div>
 
           <button
             type="button"
-            onClick={clearFilters}
-            className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border border-orange-200 bg-white px-4 text-sm font-bold text-[#FF6A00] shadow-sm transition hover:border-[#FF6A00] hover:bg-orange-50 whitespace-nowrap"
+            onClick={openNuevo}
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#0C2D6B] px-7 text-base font-bold text-white shadow-md hover:bg-[#143C8C]"
           >
-            <X className="h-4 w-4" />
-            Limpiar
+            <Plus className="h-5 w-5" />
+            Nueva Ruta
           </button>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold uppercase text-gray-400">Ordenar por:</span>
-          <SortChip field="codigo" label="Código" />
-          <SortChip field="ruta" label="Ruta" />
-          <SortChip field="origen" label="Origen" />
-          <SortChip field="destino" label="Destino" />
-          <SortChip field="distancia" label="Distancia" />
-          <SortChip field="tiempo" label="Tiempo" />
-          <SortChip field="costo" label="Costo" />
-          <SortChip field="frecuencia" label="Frecuencia" />
-          <SortChip field="estado" label="Estado" />
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,1fr)_230px_240px_auto]">
+            <div className="relative min-w-0">
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
 
-          <span className="ml-0 lg:ml-auto text-sm font-bold text-gray-400">
-            {sortedRutas.length} de {rutas.length} registros visibles
-          </span>
+              <input
+                value={search}
+                onChange={(event) =>
+                  setSearch(event.target.value)
+                }
+                placeholder="Buscar por código, origen, destino..."
+                className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
+              />
+            </div>
+
+            <div className="relative">
+              <Filter className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
+
+              <select
+                value={filterEstado}
+                onChange={(event) =>
+                  setFilterEstado(event.target.value)
+                }
+                className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
+              >
+                <option value="Todos">
+                  Todos los estados
+                </option>
+
+                {estados.map((estado) => (
+                  <option
+                    key={estado.id}
+                    value={estado.id}
+                  >
+                    {estado.nombre_estado_ruta}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="relative">
+              <Filter className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
+
+              <select
+                value={filterFrecuencia}
+                onChange={(event) =>
+                  setFilterFrecuencia(event.target.value)
+                }
+                className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
+              >
+                <option value="Todos">
+                  Todas las frecuencias
+                </option>
+
+                {frecuencias.map((frecuencia) => (
+                  <option
+                    key={frecuencia.id}
+                    value={frecuencia.id}
+                  >
+                    {frecuencia.nombre_frecuencia_ruta}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="inline-flex h-11 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-orange-200 bg-white px-4 text-sm font-bold text-[#FF6A00] shadow-sm transition hover:border-[#FF6A00] hover:bg-orange-50"
+            >
+              <X className="h-4 w-4" />
+              Limpiar
+            </button>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold uppercase text-gray-400">
+              Ordenar por:
+            </span>
+
+            <SortChip field="codigo" label="Código" />
+            <SortChip field="ruta" label="Ruta" />
+            <SortChip field="origen" label="Origen" />
+            <SortChip field="destino" label="Destino" />
+            <SortChip
+              field="distancia"
+              label="Distancia"
+            />
+            <SortChip field="tiempo" label="Tiempo" />
+            <SortChip field="costo" label="Costo" />
+            <SortChip
+              field="frecuencia"
+              label="Frecuencia"
+            />
+            <SortChip field="estado" label="Estado" />
+
+            <div className="ml-0 flex flex-wrap items-center gap-3 lg:ml-auto">
+              <span className="text-sm font-bold text-gray-400">
+                {sortedRutas.length} de {rutas.length} registros
+                visibles
+              </span>
+
+              <label className="inline-flex items-center gap-2 text-xs font-bold text-gray-500">
+                Mostrar
+
+                <select
+                  value={pageSize}
+                  onChange={(event) =>
+                    setPageSize(
+                      Number(event.target.value)
+                    )
+                  }
+                  className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-[#0C2D6B]"
+                >
+                  <option value={4}>4</option>
+                  <option value={8}>8</option>
+                  <option value={12}>12</option>
+                  <option value={20}>20</option>
+                  <option value={40}>40</option>
+                </select>
+              </label>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {sortedRutas.map((ruta) => {
-          const estado = ruta.estado || estadoById(ruta.estado_id)?.nombre_estado_ruta || "-";
-          const frecuencia = ruta.frecuencia || frecuenciaById(ruta.frecuencia_id)?.nombre_frecuencia_ruta || "-";
+        <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-2">
+          {paginatedRutas.map((ruta) => {
+            const estado =
+              ruta.estado ||
+              estadoById(ruta.estado_id)
+                ?.nombre_estado_ruta ||
+              "-";
 
-          return (
-            <article key={ruta.id} className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition hover:shadow-md">
-              <div className="p-4">
-                <div className="flex items-start justify-between gap-3 mb-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-bold text-[#0C2D6B] text-lg leading-6 break-words">
-                        {routeName(ruta)}
-                      </h3>
-                      <span className="font-mono text-[11px] font-bold text-[#0C2D6B] bg-blue-50 px-2 py-1 rounded-lg">
-                        {ruta.codigo_ruta}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-500 mt-1">Frecuencia: {frecuencia}</p>
-                  </div>
+            const frecuencia =
+              ruta.frecuencia ||
+              frecuenciaById(ruta.frecuencia_id)
+                ?.nombre_frecuencia_ruta ||
+              "-";
 
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-[#0C2D6B]">
-                    <RouteIcon className="h-7 w-7" />
-                  </div>
-                </div>
+            return (
+              <article
+                key={ruta.id}
+                className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition hover:shadow-md"
+              >
+                <div className="p-4">
+                  <div className="mb-4 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="break-words text-lg font-bold leading-6 text-[#0C2D6B]">
+                          {routeName(ruta)}
+                        </h3>
 
-                <div className="flex flex-wrap gap-2 mb-4">
-                  <Badge className={estadoTone(estado)}>{estado}</Badge>
-                  <Badge className="bg-orange-50 text-[#FF6A00] border-orange-100">{frecuencia}</Badge>
-                </div>
+                        <span className="rounded-lg bg-blue-50 px-2 py-1 font-mono text-[11px] font-bold text-[#0C2D6B]">
+                          {ruta.codigo_ruta}
+                        </span>
+                      </div>
 
-                <div className="rounded-2xl bg-gray-50 p-4 mb-4">
-                  <div className="grid grid-cols-[24px_1fr] gap-x-3 gap-y-3">
-                    <MapPin className="h-5 w-5 text-green-600 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-400 font-bold uppercase">Origen</p>
-                      <p className="text-sm font-semibold text-gray-800">{nombreUbicacion(ruta.origen_id)}</p>
+                      <p className="mt-1 text-sm text-gray-500">
+                        Frecuencia: {frecuencia}
+                      </p>
                     </div>
 
-                    <Navigation className="h-5 w-5 text-[#FF6A00] mt-0.5" />
-                    <div>
-                      <p className="text-xs text-gray-400 font-bold uppercase">Destino</p>
-                      <p className="text-sm font-semibold text-gray-800">{nombreUbicacion(ruta.destino_id)}</p>
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-[#0C2D6B]">
+                      <RouteIcon className="h-7 w-7" />
+                    </div>
+                  </div>
+
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    <Badge
+                      className={estadoTone(estado)}
+                    >
+                      {estado}
+                    </Badge>
+
+                    <Badge className="border-orange-100 bg-orange-50 text-[#FF6A00]">
+                      {frecuencia}
+                    </Badge>
+                  </div>
+
+                  <div className="mb-4 rounded-2xl bg-gray-50 p-4">
+                    <div className="grid grid-cols-[24px_1fr] gap-x-3 gap-y-3">
+                      <MapPin className="mt-0.5 h-5 w-5 text-green-600" />
+
+                      <div>
+                        <p className="text-xs font-bold uppercase text-gray-400">
+                          Origen
+                        </p>
+
+                        <p className="text-sm font-semibold text-gray-800">
+                          {nombreUbicacion(
+                            ruta.origen_id
+                          )}
+                        </p>
+                      </div>
+
+                      <Navigation className="mt-0.5 h-5 w-5 text-[#FF6A00]" />
+
+                      <div>
+                        <p className="text-xs font-bold uppercase text-gray-400">
+                          Destino
+                        </p>
+
+                        <p className="text-sm font-semibold text-gray-800">
+                          {nombreUbicacion(
+                            ruta.destino_id
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">
+                        Distancia
+                      </p>
+
+                      <p className="font-bold text-gray-800">
+                        {formatNumber(
+                          ruta.distancia_km
+                        )}{" "}
+                        km
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">
+                        Tiempo
+                      </p>
+
+                      <p className="font-bold text-gray-800">
+                        {formatDuration(ruta.tiempo)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">
+                        Costo
+                      </p>
+
+                      <p className="font-bold text-green-600">
+                        {formatMoney(ruta.costo)}
+                      </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="rounded-2xl bg-gray-50 p-3">
-                    <p className="text-xs text-gray-500">Distancia</p>
-                    <p className="font-bold text-gray-800">{formatNumber(ruta.distancia_km)} km</p>
-                  </div>
+                <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-3 py-2.5">
+                  <ActionButton
+                    title="Ver"
+                    icon={Eye}
+                    tone="blue"
+                    onClick={() => openVer(ruta)}
+                  />
 
-                  <div className="rounded-2xl bg-gray-50 p-3">
-                    <p className="text-xs text-gray-500">Tiempo</p>
-                    <p className="font-bold text-gray-800">{formatDuration(ruta.tiempo)}</p>
-                  </div>
+                  <ActionButton
+                    title="Editar"
+                    icon={Edit2}
+                    tone="orange"
+                    onClick={() => openEditar(ruta)}
+                  />
 
-                  <div className="rounded-2xl bg-gray-50 p-3">
-                    <p className="text-xs text-gray-500">Costo</p>
-                    <p className="font-bold text-green-600">{formatMoney(ruta.costo)}</p>
-                  </div>
+                  <ActionButton
+                    title="Imprimir"
+                    icon={Download}
+                    tone="green"
+                    onClick={() => {
+                      void printRuta(ruta);
+                    }}
+                  />
+
+                  <ActionButton
+                    title="Eliminar"
+                    icon={Trash2}
+                    tone="red"
+                    onClick={() =>
+                      setDeleteModal(ruta)
+                    }
+                  />
                 </div>
+              </article>
+            );
+          })}
+
+          {!sortedRutas.length && (
+            <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-10 text-center text-gray-500 xl:col-span-2">
+              <RouteIcon className="mx-auto mb-3 h-12 w-12 text-gray-300" />
+              No se encontraron rutas.
+            </div>
+          )}
+        </div>
+
+        {sortedRutas.length > 0 && (
+          <div className="mt-6 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <p className="text-sm font-semibold text-gray-500">
+                Página{" "}
+                <b className="text-[#0C2D6B]">
+                  {Math.min(page, totalPages)}
+                </b>{" "}
+                de{" "}
+                <b className="text-[#0C2D6B]">
+                  {totalPages}
+                </b>
+                {" · "}
+                Mostrando{" "}
+                <b className="text-[#0C2D6B]">
+                  {(Math.min(page, totalPages) -
+                    1) *
+                    pageSize +
+                    1}
+                </b>
+                {" - "}
+                <b className="text-[#0C2D6B]">
+                  {Math.min(
+                    Math.min(page, totalPages) *
+                      pageSize,
+                    sortedRutas.length
+                  )}
+                </b>{" "}
+                de{" "}
+                <b className="text-[#0C2D6B]">
+                  {sortedRutas.length}
+                </b>
+              </p>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => setPage(1)}
+                  className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Primera
+                </button>
+
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() =>
+                    setPage((current) =>
+                      Math.max(1, current - 1)
+                    )
+                  }
+                  className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Anterior
+                </button>
+
+                <button
+                  type="button"
+                  disabled={page >= totalPages}
+                  onClick={() =>
+                    setPage((current) =>
+                      Math.min(
+                        totalPages,
+                        current + 1
+                      )
+                    )
+                  }
+                  className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Siguiente
+                </button>
+
+                <button
+                  type="button"
+                  disabled={page >= totalPages}
+                  onClick={() =>
+                    setPage(totalPages)
+                  }
+                  className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Última
+                </button>
               </div>
-
-              <div className="border-t border-gray-100 bg-gray-50 px-3 py-2 flex justify-end gap-2">
-                <ActionButton title="Ver" icon={Eye} tone="blue" onClick={() => openVer(ruta)} />
-                <ActionButton title="Editar" icon={Edit2} tone="orange" onClick={() => openEditar(ruta)} />
-                <ActionButton title="Imprimir" icon={Download} tone="green" onClick={() => printRuta(ruta)} />
-                <ActionButton title="Eliminar" icon={Trash2} tone="red" onClick={() => setDeleteModal(ruta)} />
-              </div>
-            </article>
-          );
-        })}
-
-        {!sortedRutas.length && (
-          <div className="xl:col-span-2 rounded-2xl border border-dashed border-gray-200 bg-white p-10 text-center text-gray-500">
-            <RouteIcon className="mx-auto mb-3 h-12 w-12 text-gray-300" />
-            No se encontraron rutas.
+            </div>
           </div>
         )}
-      </div>
+      </section>
 
-      {(modo === "nuevo" || modo === "editar" || modo === "ver") && selected && (
-        <RutaModal
-          modo={modo}
-          selected={selected}
-          setSelected={setSelected}
-          ubicaciones={ubicaciones}
-          rutas={rutas}
-          frecuencias={frecuencias}
-          estados={estados}
-          errors={errors}
-          clearError={clearError}
-          routeName={routeName}
-          nombreUbicacion={nombreUbicacion}
-          frecuenciaById={frecuenciaById}
-          estadoById={estadoById}
-          historial={historialRuta(selected.id)}
-          openLocationModal={openLocationModal}
-          onClose={() => {
-            setModo(null);
-            setSelected(null);
-            setErrors({});
-          }}
-          onSave={saveRuta}
-        />
-      )}
+      {(modo === "nuevo" ||
+        modo === "editar" ||
+        modo === "ver") &&
+        selected && (
+          <RutaModal
+            modo={modo}
+            selected={selected}
+            setSelected={setSelected}
+            ubicaciones={ubicaciones}
+            rutas={rutas}
+            frecuencias={frecuencias}
+            estados={estados}
+            errors={errors}
+            clearError={clearError}
+            routeName={routeName}
+            nombreUbicacion={nombreUbicacion}
+            frecuenciaById={frecuenciaById}
+            estadoById={estadoById}
+            historial={historialRuta(selected.id)}
+            openLocationModal={openLocationModal}
+            onClose={() => {
+              setModo(null);
+              setSelected(null);
+              setErrors({});
+            }}
+            onSave={saveRuta}
+          />
+        )}
 
       {locationModal && (
         <LocationModal
@@ -1499,7 +2208,9 @@ function RutaModal({
 }: {
   modo: Exclude<Modo, null>;
   selected: Ruta;
-  setSelected: React.Dispatch<React.SetStateAction<Ruta | null>>;
+  setSelected: React.Dispatch<
+    React.SetStateAction<Ruta | null>
+  >;
   ubicaciones: Ubicacion[];
   rutas: Ruta[];
   frecuencias: FrecuenciaRuta[];
@@ -1508,62 +2219,110 @@ function RutaModal({
   clearError: (field: string) => void;
   routeName: (ruta: Partial<Ruta>) => string;
   nombreUbicacion: (id?: number | null) => string;
-  frecuenciaById: (id?: number | null) => FrecuenciaRuta | undefined;
-  estadoById: (id?: number | null) => EstadoRuta | undefined;
+  frecuenciaById: (
+    id?: number | null
+  ) => FrecuenciaRuta | undefined;
+  estadoById: (
+    id?: number | null
+  ) => EstadoRuta | undefined;
   historial: RutaHistorial[];
   openLocationModal: (target: LocationTarget) => void;
   onClose: () => void;
   onSave: () => void;
 }) {
   const readonly = modo === "ver";
-  const origenSeleccionado = ubicaciones.find((item) => Number(item.id) === Number(selected.origen_id));
-  const destinoSeleccionado = ubicaciones.find((item) => Number(item.id) === Number(selected.destino_id));
-  const routeEstimate = estimateRouteData(selected, ubicaciones, rutas);
+
+  const origenSeleccionado = ubicaciones.find(
+    (item) =>
+      Number(item.id) === Number(selected.origen_id)
+  );
+
+  const destinoSeleccionado = ubicaciones.find(
+    (item) =>
+      Number(item.id) === Number(selected.destino_id)
+  );
+
+  const routeEstimate = estimateRouteData(
+    selected,
+    ubicaciones,
+    rutas
+  );
+
   const mapsUrl =
     origenSeleccionado && destinoSeleccionado
-      ? mapsDirectionUrl(origenSeleccionado, destinoSeleccionado)
+      ? mapsDirectionUrl(
+          origenSeleccionado,
+          destinoSeleccionado
+        )
       : "";
 
   const applyRouteEstimate = (
     nextSelected: Ruta,
     options: { force?: boolean } = {}
   ) => {
-    const estimate = estimateRouteData(nextSelected, ubicaciones, rutas);
+    const estimate = estimateRouteData(
+      nextSelected,
+      ubicaciones,
+      rutas
+    );
 
     if (!estimate) return nextSelected;
 
     const shouldFillDistance =
-      options.force || !String(nextSelected.distancia_km ?? "").trim();
+      options.force ||
+      !String(nextSelected.distancia_km ?? "").trim();
+
     const shouldFillTime =
-      options.force || !String(nextSelected.tiempo ?? "").trim();
+      options.force ||
+      !String(nextSelected.tiempo ?? "").trim();
 
     return {
       ...nextSelected,
       distancia_km: shouldFillDistance
         ? estimate.distancia_km
         : nextSelected.distancia_km,
-      tiempo: shouldFillTime ? estimate.tiempo : nextSelected.tiempo,
+      tiempo: shouldFillTime
+        ? estimate.tiempo
+        : nextSelected.tiempo,
     };
   };
 
-  const updateLocationAndEstimate = (field: "origen_id" | "destino_id", id: number) => {
-    const next = applyRouteEstimate({ ...selected, [field]: id }, { force: true });
+  const updateLocationAndEstimate = (
+    field: "origen_id" | "destino_id",
+    id: number
+  ) => {
+    const next = applyRouteEstimate(
+      {
+        ...selected,
+        [field]: id,
+      },
+      { force: true }
+    );
+
     setSelected(next);
+
     clearError(field);
     clearError("distancia_km");
     clearError("tiempo");
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-3">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
       <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
           <div>
             <h2 className="text-xl font-bold text-[#0C2D6B]">
-              {modo === "nuevo" ? "Nueva Ruta" : modo === "editar" ? "Editar Ruta" : "Detalle de Ruta"}
+              {modo === "nuevo"
+                ? "Nueva Ruta"
+                : modo === "editar"
+                ? "Editar Ruta"
+                : "Detalle de Ruta"}
             </h2>
+
             <p className="mt-0.5 text-xs text-gray-400">
-              {modo === "nuevo" ? "El código se genera automáticamente al guardar" : selected.codigo_ruta}
+              {modo === "nuevo"
+                ? "El código se genera automáticamente al guardar"
+                : selected.codigo_ruta}
             </p>
           </div>
 
@@ -1582,81 +2341,118 @@ function RutaModal({
           </div>
         )}
 
-        <div data-form onKeyDown={moveOnEnter} className="overflow-y-auto p-5">
+        <div
+          data-form
+          onKeyDown={moveOnEnter}
+          className="overflow-y-auto p-5"
+        >
           {modo === "nuevo" && (
             <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-              <p className="text-sm font-bold text-[#0C2D6B]">Código automático</p>
+              <p className="text-sm font-bold text-[#0C2D6B]">
+                Código automático
+              </p>
+
               <p className="mt-1 text-xs text-gray-600">
-                El sistema generará el código de la ruta automáticamente. El nombre se forma con el origen y destino.
+                El sistema generará el código de la ruta
+                automáticamente. El nombre se forma con el origen y
+                destino.
               </p>
             </div>
           )}
 
           <div className="mb-4 rounded-2xl border border-orange-100 bg-orange-50 p-4">
-            <p className="text-xs text-[#C85100] font-bold uppercase">Ruta</p>
-            <p className="text-lg font-bold text-[#0C2D6B] mt-1">
-              {routeName(selected) || "Selecciona origen y destino"}
+            <p className="text-xs font-bold uppercase text-[#C85100]">
+              Ruta
+            </p>
+
+            <p className="mt-1 text-lg font-bold text-[#0C2D6B]">
+              {routeName(selected) ||
+                "Selecciona origen y destino"}
             </p>
           </div>
 
-          {!readonly && selected.origen_id && selected.destino_id && Number(selected.origen_id) !== Number(selected.destino_id) && (
-            <div className={`mb-4 rounded-2xl border p-4 ${
-              routeEstimate
-                ? "border-blue-100 bg-blue-50"
-                : "border-amber-200 bg-amber-50"
-            }`}>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className={`text-sm font-bold ${
-                    routeEstimate ? "text-[#0C2D6B]" : "text-amber-700"
-                  }`}>
-                    {routeEstimate ? "Cálculo automático disponible" : "Verificar ruta en mapa"}
-                  </p>
-                  <p className="mt-1 text-xs leading-relaxed text-gray-600">
-                    {routeEstimate
-                      ? `${routeEstimate.label} Distancia: ${routeEstimate.distancia_km} km · Tiempo: ${formatDuration(routeEstimate.tiempo)}.`
-                      : "No hay coordenadas registradas para una de estas ubicaciones. Podés abrir Google Maps y copiar los valores manualmente."}
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {routeEstimate && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = applyRouteEstimate(selected, { force: true });
-                        setSelected(next);
-                        clearError("distancia_km");
-                        clearError("tiempo");
-                      }}
-                      className="h-10 rounded-xl bg-[#0C2D6B] px-4 text-xs font-bold text-white hover:bg-[#143C8C]"
+          {!readonly &&
+            selected.origen_id &&
+            selected.destino_id &&
+            Number(selected.origen_id) !==
+              Number(selected.destino_id) && (
+              <div
+                className={`mb-4 rounded-2xl border p-4 ${
+                  routeEstimate
+                    ? "border-blue-100 bg-blue-50"
+                    : "border-amber-200 bg-amber-50"
+                }`}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p
+                      className={`text-sm font-bold ${
+                        routeEstimate
+                          ? "text-[#0C2D6B]"
+                          : "text-amber-700"
+                      }`}
                     >
-                      Usar km, horas y minutos
-                    </button>
-                  )}
+                      {routeEstimate
+                        ? "Cálculo automático disponible"
+                        : "Verificar ruta en mapa"}
+                    </p>
 
-                  {mapsUrl && (
-                    <a
-                      href={mapsUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-10 items-center justify-center rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-gray-50"
-                    >
-                      Abrir Maps
-                    </a>
-                  )}
+                    <p className="mt-1 text-xs leading-relaxed text-gray-600">
+                      {routeEstimate
+                        ? `${routeEstimate.label} Distancia: ${routeEstimate.distancia_km} km · Tiempo: ${formatDuration(
+                            routeEstimate.tiempo
+                          )}.`
+                        : "No hay coordenadas registradas para una de estas ubicaciones. Podés abrir Google Maps y copiar los valores manualmente."}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {routeEstimate && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next =
+                            applyRouteEstimate(
+                              selected,
+                              { force: true }
+                            );
+
+                          setSelected(next);
+                          clearError("distancia_km");
+                          clearError("tiempo");
+                        }}
+                        className="h-10 rounded-xl bg-[#0C2D6B] px-4 text-xs font-bold text-white hover:bg-[#143C8C]"
+                      >
+                        Usar km, horas y minutos
+                      </button>
+                    )}
+
+                    {mapsUrl && (
+                      <a
+                        href={mapsUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex h-10 items-center justify-center rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-gray-50"
+                      >
+                        Abrir Maps
+                      </a>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
           {readonly && mapsUrl && (
             <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-sm font-bold text-[#0C2D6B]">Mapa de la ruta</p>
+                  <p className="text-sm font-bold text-[#0C2D6B]">
+                    Mapa de la ruta
+                  </p>
+
                   <p className="mt-1 text-xs text-gray-600">
-                    Abre la ruta en Google Maps para validar el recorrido.
+                    Abre la ruta en Google Maps para validar el
+                    recorrido.
                   </p>
                 </div>
 
@@ -1672,27 +2468,42 @@ function RutaModal({
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Origen *" error={errors.origen_id}>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field
+              label="Origen *"
+              error={errors.origen_id}
+            >
               {readonly ? (
-                <ReadBox>{nombreUbicacion(selected.origen_id)}</ReadBox>
+                <ReadBox>
+                  {nombreUbicacion(selected.origen_id)}
+                </ReadBox>
               ) : (
                 <div className="space-y-2">
                   <SearchableSelect
                     value={selected.origen_id}
                     options={ubicaciones}
                     placeholder="Buscar origen..."
-                    getLabel={(item) => `${item.nombre_ubicacion}, ${item.pais}`}
-                    getSubLabel={(item) => item.codigo_ubicacion}
-                    onSelect={(item) => {
-                      updateLocationAndEstimate("origen_id", item.id);
-                    }}
+                    getLabel={(item) =>
+                      `${item.nombre_ubicacion}, ${item.pais}`
+                    }
+                    getSubLabel={(item) =>
+                      item.codigo_ubicacion
+                    }
+                    onSelect={(item) =>
+                      updateLocationAndEstimate(
+                        "origen_id",
+                        item.id
+                      )
+                    }
                     error={errors.origen_id}
                   />
+
                   <button
                     type="button"
-                    onClick={() => openLocationModal("origen")}
-                    className="text-xs font-bold text-[#0C2D6B] hover:underline inline-flex items-center gap-1"
+                    onClick={() =>
+                      openLocationModal("origen")
+                    }
+                    className="inline-flex items-center gap-1 text-xs font-bold text-[#0C2D6B] hover:underline"
                   >
                     <Plus className="h-3 w-3" />
                     Crear nueva ubicación
@@ -1701,26 +2512,45 @@ function RutaModal({
               )}
             </Field>
 
-            <Field label="Destino *" error={errors.destino_id}>
+            <Field
+              label="Destino *"
+              error={errors.destino_id}
+            >
               {readonly ? (
-                <ReadBox>{nombreUbicacion(selected.destino_id)}</ReadBox>
+                <ReadBox>
+                  {nombreUbicacion(selected.destino_id)}
+                </ReadBox>
               ) : (
                 <div className="space-y-2">
                   <SearchableSelect
                     value={selected.destino_id}
-                    options={ubicaciones.filter((ubicacion) => Number(ubicacion.id) !== Number(selected.origen_id))}
+                    options={ubicaciones.filter(
+                      (ubicacion) =>
+                        Number(ubicacion.id) !==
+                        Number(selected.origen_id)
+                    )}
                     placeholder="Buscar destino..."
-                    getLabel={(item) => `${item.nombre_ubicacion}, ${item.pais}`}
-                    getSubLabel={(item) => item.codigo_ubicacion}
-                    onSelect={(item) => {
-                      updateLocationAndEstimate("destino_id", item.id);
-                    }}
+                    getLabel={(item) =>
+                      `${item.nombre_ubicacion}, ${item.pais}`
+                    }
+                    getSubLabel={(item) =>
+                      item.codigo_ubicacion
+                    }
+                    onSelect={(item) =>
+                      updateLocationAndEstimate(
+                        "destino_id",
+                        item.id
+                      )
+                    }
                     error={errors.destino_id}
                   />
+
                   <button
                     type="button"
-                    onClick={() => openLocationModal("destino")}
-                    className="text-xs font-bold text-[#0C2D6B] hover:underline inline-flex items-center gap-1"
+                    onClick={() =>
+                      openLocationModal("destino")
+                    }
+                    className="inline-flex items-center gap-1 text-xs font-bold text-[#0C2D6B] hover:underline"
                   >
                     <Plus className="h-3 w-3" />
                     Crear nueva ubicación
@@ -1729,44 +2559,89 @@ function RutaModal({
               )}
             </Field>
 
-            <Field label="Distancia (km) *" error={errors.distancia_km}>
+            <Field
+              label="Distancia (km) *"
+              error={errors.distancia_km}
+            >
               {readonly ? (
-                <ReadBox>{formatNumber(selected.distancia_km)} km</ReadBox>
+                <ReadBox>
+                  {formatNumber(selected.distancia_km)} km
+                </ReadBox>
               ) : (
                 <input
                   inputMode="decimal"
                   value={selected.distancia_km ?? ""}
                   onChange={(event) => {
-                    setSelected({ ...selected, distancia_km: cleanDecimal(event.target.value, 8, 2) });
+                    setSelected({
+                      ...selected,
+                      distancia_km: cleanDecimal(
+                        event.target.value,
+                        8,
+                        2
+                      ),
+                    });
+
                     clearError("distancia_km");
                   }}
-                  className={`${inputClass} ${errors.distancia_km ? errorInput : ""}`}
+                  className={`${inputClass} ${
+                    errors.distancia_km
+                      ? errorInput
+                      : ""
+                  }`}
                   placeholder="Auto o manual"
                 />
               )}
             </Field>
 
-            <Field label="Tiempo estimado *" error={errors.tiempo}>
+            <Field
+              label="Tiempo estimado *"
+              error={errors.tiempo}
+            >
               {readonly ? (
-                <ReadBox>{formatDuration(selected.tiempo)}</ReadBox>
+                <ReadBox>
+                  {formatDuration(selected.tiempo)}
+                </ReadBox>
               ) : (
                 <div className="grid grid-cols-2 gap-2">
                   <div className="relative">
                     <input
                       inputMode="numeric"
-                      value={splitDuration(selected.tiempo).horas || ""}
+                      value={
+                        splitDuration(selected.tiempo)
+                          .horas || ""
+                      }
                       onChange={(event) => {
-                        const horas = cleanHours(event.target.value);
-                        const minutos = splitDuration(selected.tiempo).minutos;
+                        const horas = cleanHours(
+                          event.target.value
+                        );
+
+                        const minutos =
+                          splitDuration(
+                            selected.tiempo
+                          ).minutos;
+
                         setSelected({
                           ...selected,
-                          tiempo: horas === "" && minutos === 0 ? "" : durationToDecimal(horas || 0, minutos),
+                          tiempo:
+                            horas === "" &&
+                            minutos === 0
+                              ? ""
+                              : durationToDecimal(
+                                  horas || 0,
+                                  minutos
+                                ),
                         });
+
                         clearError("tiempo");
                       }}
-                      className={`${inputClass} pr-12 ${errors.tiempo ? errorInput : ""}`}
+                      className={`${inputClass} pr-12 ${
+                        errors.tiempo
+                          ? errorInput
+                          : ""
+                      }`}
                       placeholder="Horas"
                     />
+
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">
                       hrs
                     </span>
@@ -1775,85 +2650,174 @@ function RutaModal({
                   <div className="relative">
                     <input
                       inputMode="numeric"
-                      value={splitDuration(selected.tiempo).minutos || ""}
+                      value={
+                        splitDuration(selected.tiempo)
+                          .minutos || ""
+                      }
                       onChange={(event) => {
-                        const minutos = cleanMinutes(event.target.value);
-                        const horas = splitDuration(selected.tiempo).horas;
+                        const minutos = cleanMinutes(
+                          event.target.value
+                        );
+
+                        const horas =
+                          splitDuration(
+                            selected.tiempo
+                          ).horas;
+
                         setSelected({
                           ...selected,
-                          tiempo: minutos === "" && horas === 0 ? "" : durationToDecimal(horas, minutos || 0),
+                          tiempo:
+                            minutos === "" &&
+                            horas === 0
+                              ? ""
+                              : durationToDecimal(
+                                  horas,
+                                  minutos || 0
+                                ),
                         });
+
                         clearError("tiempo");
                       }}
-                      className={`${inputClass} pr-12 ${errors.tiempo ? errorInput : ""}`}
+                      className={`${inputClass} pr-12 ${
+                        errors.tiempo
+                          ? errorInput
+                          : ""
+                      }`}
                       placeholder="Min"
                     />
+
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">
                       min
                     </span>
                   </div>
 
                   <p className="col-span-2 text-[11px] text-gray-400">
-                    Se guarda en la base como horas decimales, pero aquí se captura separado.
+                    Se guarda en la base como horas
+                    decimales, pero aquí se captura separado.
                   </p>
                 </div>
               )}
             </Field>
 
-            <Field label="Costo (Q) *" error={errors.costo}>
+            <Field
+              label="Costo (Q) *"
+              error={errors.costo}
+            >
               {readonly ? (
-                <ReadBox>{formatMoney(selected.costo)}</ReadBox>
+                <ReadBox>
+                  {formatMoney(selected.costo)}
+                </ReadBox>
               ) : (
                 <input
                   inputMode="decimal"
                   value={selected.costo ?? ""}
                   onChange={(event) => {
-                    setSelected({ ...selected, costo: cleanDecimal(event.target.value, 8, 2) });
+                    setSelected({
+                      ...selected,
+                      costo: cleanDecimal(
+                        event.target.value,
+                        8,
+                        2
+                      ),
+                    });
+
                     clearError("costo");
                   }}
-                  className={`${inputClass} ${errors.costo ? errorInput : ""}`}
+                  className={`${inputClass} ${
+                    errors.costo ? errorInput : ""
+                  }`}
                   placeholder="Solo números"
                 />
               )}
             </Field>
 
-            <Field label="Frecuencia *" error={errors.frecuencia_id}>
+            <Field
+              label="Frecuencia *"
+              error={errors.frecuencia_id}
+            >
               {readonly ? (
-                <ReadBox>{frecuenciaById(selected.frecuencia_id)?.nombre_frecuencia_ruta || "-"}</ReadBox>
+                <ReadBox>
+                  {frecuenciaById(
+                    selected.frecuencia_id
+                  )?.nombre_frecuencia_ruta || "-"}
+                </ReadBox>
               ) : (
                 <select
                   value={selected.frecuencia_id || ""}
                   onChange={(event) => {
-                    setSelected({ ...selected, frecuencia_id: event.target.value ? Number(event.target.value) : null });
+                    setSelected({
+                      ...selected,
+                      frecuencia_id:
+                        event.target.value
+                          ? Number(
+                              event.target.value
+                            )
+                          : null,
+                    });
+
                     clearError("frecuencia_id");
                   }}
-                  className={`${inputClass} ${errors.frecuencia_id ? errorInput : ""}`}
+                  className={`${inputClass} ${
+                    errors.frecuencia_id
+                      ? errorInput
+                      : ""
+                  }`}
                 >
-                  <option value="">Seleccionar frecuencia</option>
+                  <option value="">
+                    Seleccionar frecuencia
+                  </option>
+
                   {frecuencias.map((frecuencia) => (
-                    <option key={frecuencia.id} value={frecuencia.id}>
-                      {frecuencia.nombre_frecuencia_ruta}
+                    <option
+                      key={frecuencia.id}
+                      value={frecuencia.id}
+                    >
+                      {
+                        frecuencia.nombre_frecuencia_ruta
+                      }
                     </option>
                   ))}
                 </select>
               )}
             </Field>
 
-            <Field label="Estado *" error={errors.estado_id}>
+            <Field
+              label="Estado *"
+              error={errors.estado_id}
+            >
               {readonly ? (
-                <ReadBox>{estadoById(selected.estado_id)?.nombre_estado_ruta || "-"}</ReadBox>
+                <ReadBox>
+                  {estadoById(selected.estado_id)
+                    ?.nombre_estado_ruta || "-"}
+                </ReadBox>
               ) : (
                 <select
                   value={selected.estado_id || ""}
                   onChange={(event) => {
-                    setSelected({ ...selected, estado_id: event.target.value ? Number(event.target.value) : null });
+                    setSelected({
+                      ...selected,
+                      estado_id: event.target.value
+                        ? Number(event.target.value)
+                        : null,
+                    });
+
                     clearError("estado_id");
                   }}
-                  className={`${inputClass} ${errors.estado_id ? errorInput : ""}`}
+                  className={`${inputClass} ${
+                    errors.estado_id
+                      ? errorInput
+                      : ""
+                  }`}
                 >
-                  <option value="">Seleccionar estado</option>
+                  <option value="">
+                    Seleccionar estado
+                  </option>
+
                   {estados.map((estado) => (
-                    <option key={estado.id} value={estado.id}>
+                    <option
+                      key={estado.id}
+                      value={estado.id}
+                    >
                       {estado.nombre_estado_ruta}
                     </option>
                   ))}
@@ -1864,23 +2828,35 @@ function RutaModal({
 
           {readonly && (
             <div className="mt-5 rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <h3 className="mb-3 text-sm font-bold text-[#0C2D6B] flex items-center gap-2">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-[#0C2D6B]">
                 <History className="h-4 w-4 text-[#FF6A00]" />
                 Historial de costo
               </h3>
 
               {historial.length ? (
                 <div className="space-y-2">
-                  {historial.slice(0, 5).map((item) => (
-                    <div key={item.id} className="flex items-center justify-between rounded-xl bg-white border border-gray-100 px-4 py-3 text-sm">
-                      <span className="text-gray-500">{dateText(item.fecha)}</span>
-                      <span className="font-bold text-green-600">{formatMoney(item.costo)}</span>
-                    </div>
-                  ))}
+                  {historial
+                    .slice(0, 5)
+                    .map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3 text-sm"
+                      >
+                        <span className="text-gray-500">
+                          {dateText(item.fecha)}
+                        </span>
+
+                        <span className="font-bold text-green-600">
+                          {formatMoney(item.costo)}
+                        </span>
+                      </div>
+                    ))}
                 </div>
               ) : (
                 <p className="text-sm text-gray-500">
-                  No hay cambios de costo registrados. El historial aparece cuando editás una ruta y cambiás su costo.
+                  No hay cambios de costo registrados. El
+                  historial aparece cuando editás una ruta y
+                  cambiás su costo.
                 </p>
               )}
             </div>
@@ -1903,7 +2879,9 @@ function RutaModal({
               onClick={onSave}
               className="h-10 rounded-xl bg-[#0C2D6B] px-5 text-sm font-bold text-white hover:bg-[#143C8C]"
             >
-              {modo === "nuevo" ? "Crear Ruta" : "Guardar Cambios"}
+              {modo === "nuevo"
+                ? "Crear Ruta"
+                : "Guardar Cambios"}
             </button>
           </div>
         )}
@@ -1912,7 +2890,11 @@ function RutaModal({
   );
 }
 
-function ReadBox({ children }: { children: React.ReactNode }) {
+function ReadBox({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <div className="min-h-11 rounded-xl border border-gray-100 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-800">
       {children}
@@ -1930,9 +2912,13 @@ function LocationModal({
   onSave,
 }: {
   form: LocationForm;
-  setForm: React.Dispatch<React.SetStateAction<LocationForm>>;
+  setForm: React.Dispatch<
+    React.SetStateAction<LocationForm>
+  >;
   errors: FormErrors;
-  setErrors: React.Dispatch<React.SetStateAction<FormErrors>>;
+  setErrors: React.Dispatch<
+    React.SetStateAction<FormErrors>
+  >;
   target: LocationTarget;
   onClose: () => void;
   onSave: () => void;
@@ -1944,13 +2930,20 @@ function LocationModal({
     }));
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 backdrop-blur-sm p-3">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
       <div className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
           <div>
-            <h2 className="text-xl font-bold text-[#0C2D6B]">Nueva ubicación</h2>
+            <h2 className="text-xl font-bold text-[#0C2D6B]">
+              Nueva ubicación
+            </h2>
+
             <p className="mt-0.5 text-xs text-gray-400">
-              Se asignará como {target === "origen" ? "origen" : "destino"} de la ruta.
+              Se asignará como{" "}
+              {target === "origen"
+                ? "origen"
+                : "destino"}{" "}
+              de la ruta.
             </p>
           </div>
 
@@ -1969,52 +2962,104 @@ function LocationModal({
           </div>
         )}
 
-        <div data-form onKeyDown={moveOnEnter} className="overflow-y-auto p-5">
+        <div
+          data-form
+          onKeyDown={moveOnEnter}
+          className="overflow-y-auto p-5"
+        >
           <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-            <p className="text-sm font-bold text-[#0C2D6B]">Ubicación rápida</p>
+            <p className="text-sm font-bold text-[#0C2D6B]">
+              Ubicación rápida
+            </p>
+
             <p className="mt-1 text-xs text-gray-600">
-              El código es opcional. Si lo dejás vacío, el sistema lo genera automáticamente.
+              El código es opcional. Si lo dejás vacío, el
+              sistema lo genera automáticamente.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Código" error={errors.codigo_ubicacion}>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field
+              label="Código"
+              error={errors.codigo_ubicacion}
+            >
               <input
                 value={form.codigo_ubicacion}
                 onChange={(event) => {
-                  setForm({ ...form, codigo_ubicacion: cleanCode(event.target.value, 12) });
+                  setForm({
+                    ...form,
+                    codigo_ubicacion: cleanCode(
+                      event.target.value,
+                      12
+                    ),
+                  });
+
                   clearError("codigo_ubicacion");
                 }}
-                className={`${inputClass} ${errors.codigo_ubicacion ? errorInput : ""}`}
+                className={`${inputClass} ${
+                  errors.codigo_ubicacion
+                    ? errorInput
+                    : ""
+                }`}
                 placeholder="Ej. GUA"
                 maxLength={12}
               />
             </Field>
 
-            <Field label="País *" error={errors.pais}>
+            <Field
+              label="País *"
+              error={errors.pais}
+            >
               <input
                 value={form.pais}
                 onChange={(event) => {
-                  setForm({ ...form, pais: cleanPais(event.target.value, 60) });
+                  setForm({
+                    ...form,
+                    pais: cleanPais(
+                      event.target.value,
+                      60
+                    ),
+                  });
+
                   clearError("pais");
                 }}
-                className={`${inputClass} ${errors.pais ? errorInput : ""}`}
+                className={`${inputClass} ${
+                  errors.pais ? errorInput : ""
+                }`}
                 placeholder="Solo letras"
               />
             </Field>
 
-            <Field label="Nombre de ubicación *" error={errors.nombre_ubicacion} className="md:col-span-2">
+            <Field
+              label="Nombre de ubicación *"
+              error={errors.nombre_ubicacion}
+              className="md:col-span-2"
+            >
               <input
                 value={form.nombre_ubicacion}
                 onChange={(event) => {
-                  setForm({ ...form, nombre_ubicacion: cleanLocationName(event.target.value, 120) });
+                  setForm({
+                    ...form,
+                    nombre_ubicacion:
+                      cleanLocationName(
+                        event.target.value,
+                        120
+                      ),
+                  });
+
                   clearError("nombre_ubicacion");
                 }}
-                className={`${inputClass} ${errors.nombre_ubicacion ? errorInput : ""}`}
+                className={`${inputClass} ${
+                  errors.nombre_ubicacion
+                    ? errorInput
+                    : ""
+                }`}
                 placeholder="Ej. Zona 12, A30 Amatitlán, Cobán..."
               />
-              <p className="text-[11px] text-gray-400 mt-1">
-                Se permiten letras y números porque las rutas usan nombres como Zona 12, A30 y Km22.4.
+
+              <p className="mt-1 text-[11px] text-gray-400">
+                Se permiten letras y números porque las rutas
+                usan nombres como Zona 12, A30 y Km22.4.
               </p>
             </Field>
           </div>
@@ -2055,7 +3100,7 @@ function ConfirmDelete({
   onConfirm: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
       <div className="w-full max-w-md overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-2xl">
         <div className="h-2 bg-red-500" />
 
@@ -2066,17 +3111,27 @@ function ConfirmDelete({
             </div>
 
             <div className="min-w-0 flex-1">
-              <h3 className="text-xl font-bold text-[#0C2D6B]">Eliminar ruta</h3>
+              <h3 className="text-xl font-bold text-[#0C2D6B]">
+                Eliminar ruta
+              </h3>
+
               <p className="mt-1 text-sm leading-relaxed text-gray-500">
-                Esta acción eliminará la ruta seleccionada si no tiene viajes o asignaciones relacionadas.
+                Esta acción eliminará la ruta seleccionada si
+                no tiene viajes o asignaciones relacionadas.
               </p>
 
               <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">
                   Ruta seleccionada
                 </p>
-                <p className="mt-1 font-mono text-sm font-bold text-gray-800">{ruta.codigo_ruta}</p>
-                <p className="mt-1 text-sm text-gray-600">{routeName(ruta)}</p>
+
+                <p className="mt-1 font-mono text-sm font-bold text-gray-800">
+                  {ruta.codigo_ruta}
+                </p>
+
+                <p className="mt-1 text-sm text-gray-600">
+                  {routeName(ruta)}
+                </p>
               </div>
             </div>
 

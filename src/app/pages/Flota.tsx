@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import * as XLSX from "xlsx";
+import logoImage from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
 
 const API_BASE_URL = "/api";
 
@@ -192,6 +193,77 @@ const safeDate = (value: any) => {
   return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : "";
 };
 
+
+const loadImageDataUrl = async (src: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+
+    image.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth || image.width;
+        canvas.height = image.naturalHeight || image.height;
+
+        const context = canvas.getContext("2d");
+        if (!context) {
+          reject(new Error("No se pudo preparar el logo."));
+          return;
+        }
+
+        context.drawImage(image, 0, 0);
+        resolve(canvas.toDataURL("image/png"));
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    image.onerror = () => reject(new Error("No se pudo cargar el logo."));
+    image.src = src;
+  });
+};
+
+const drawCorporatePdfHeader = (
+  doc: jsPDF,
+  logoData: string | null,
+  title: string,
+  subtitle: string,
+  landscape = false
+) => {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const headerHeight = landscape ? 34 : 38;
+
+  doc.setFillColor(12, 45, 107);
+  doc.rect(0, 0, pageWidth, headerHeight, "F");
+
+  if (logoData) {
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(255, 106, 0);
+    doc.setLineWidth(0.7);
+    doc.roundedRect(10, 6, landscape ? 44 : 48, 25, 3, 3, "FD");
+    doc.addImage(logoData, "PNG", 13, 8, landscape ? 38 : 42, 21);
+  }
+
+  const centerX = landscape ? pageWidth / 2 + 14 : pageWidth / 2 + 18;
+
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(255, 106, 0);
+  doc.setFontSize(10);
+  doc.text("GRUPO LOGÍSTICO 365", centerX, 11, { align: "center" });
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(landscape ? 18 : 17);
+  doc.text(title, centerX, 20, { align: "center" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.text(subtitle, centerX, 27, { align: "center" });
+
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(1);
+  doc.line(landscape ? 72 : 70, 31, pageWidth - 12, 31);
+};
+
 const getEfficiencyTone = (value: any) => {
   const n = numeric(value);
   if (n >= 85) return "bg-green-500";
@@ -312,9 +384,9 @@ function ActionButton({
       type="button"
       title={title}
       onClick={onClick}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-colors ${tones[tone]}`}
+      className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border shadow-sm transition-colors ${tones[tone]}`}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className="h-[18px] w-[18px]" />
     </button>
   );
 }
@@ -357,6 +429,8 @@ export function Flota() {
   const [filterMantenimiento, setFilterMantenimiento] = useState("Todos");
   const [sortField, setSortField] = useState("");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(9);
 
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState("");
@@ -513,6 +587,25 @@ export function Flota() {
 
     return rows;
   }, [filteredVehiculos, sortField, sortDirection, tiposVehiculo, estadosVehiculo, estadosMantenimiento]);
+
+
+  const totalPages = Math.max(1, Math.ceil(sortedVehiculos.length / pageSize));
+
+  const paginatedVehiculos = useMemo(() => {
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const start = (safePage - 1) * pageSize;
+    return sortedVehiculos.slice(start, start + pageSize);
+  }, [sortedVehiculos, page, pageSize, totalPages]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, filterEstado, filterMantenimiento, sortField, sortDirection, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   const kpis = [
     {
@@ -738,7 +831,7 @@ export function Flota() {
     }
   };
 
-  const imprimirVehiculo = (vehiculo: Vehiculo) => {
+  const imprimirVehiculo = async (vehiculo: Vehiculo) => {
     const doc = new jsPDF();
 
     const tipo = vehiculo.tipo || nombreTipo(vehiculo.tipo_id);
@@ -746,26 +839,30 @@ export function Flota() {
     const mantenimiento =
       vehiculo.mantenimiento || nombreMantenimiento(vehiculo.estado_mantenimiento_id || vehiculo.estados_mantenimiento_id);
 
-    doc.setFillColor(12, 45, 107);
-    doc.rect(0, 0, 210, 32, "F");
+    let logoData: string | null = null;
+    try {
+      logoData = await loadImageDataUrl(logoImage);
+    } catch (error) {
+      console.warn("No se pudo agregar el logo al PDF:", error);
+    }
 
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.text("Grupo Logístico 365", 20, 15);
+    drawCorporatePdfHeader(
+      doc,
+      logoData,
+      "DETALLE DE VEHÍCULO",
+      `Flota · ${vehiculo.codigo || "Vehículo"}`
+    );
 
-    doc.setFontSize(10);
-    doc.text("Reporte de Vehículo", 20, 23);
-
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(12);
-
-    let y = 48;
+    let y = 50;
 
     const line = (label: string, value: any) => {
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(12, 45, 107);
       doc.text(`${label}:`, 20, y);
-      doc.setFont(undefined, "normal");
-      doc.text(String(value || "-"), 82, y);
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(17, 24, 39);
+      doc.text(String(value || "-"), 78, y, { maxWidth: 112 });
       y += 9;
     };
 
@@ -778,17 +875,23 @@ export function Flota() {
     line("Próximo mantenimiento", dateText(vehiculo.proximo_mantenimiento));
 
     if (vehiculo.ultimo_mantenimiento_id) {
-      y += 5;
+      y += 6;
+
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(15, y - 6, 180, 10, 2, 2, "F");
+      doc.setFont("helvetica", "bold");
       doc.setTextColor(12, 45, 107);
-      doc.setFont(undefined, "bold");
-      doc.text("Último mantenimiento registrado", 20, y);
-      y += 9;
-      doc.setTextColor(0, 0, 0);
+      doc.text("ÚLTIMO MANTENIMIENTO REGISTRADO", 20, y);
+      y += 11;
 
       line("Código", vehiculo.ultimo_codigo_mantenimiento || "-");
       line("Tipo", vehiculo.ultimo_tipo_mantenimiento || "-");
       line("Fecha", dateText(vehiculo.ultimo_fecha_mantenimiento));
       line("Costo", formatMoney(vehiculo.ultimo_costo_mantenimiento));
+
+      if (vehiculo.ultimo_descripcion_mantenimiento) {
+        line("Descripción", vehiculo.ultimo_descripcion_mantenimiento);
+      }
     }
 
     doc.save(`Vehiculo_${vehiculo.codigo}.pdf`);
@@ -828,31 +931,45 @@ export function Flota() {
     XLSX.writeFile(wb, "Reporte_Flota_GL365.xlsx");
   };
 
-  const exportFlotaPDF = () => {
+  const exportFlotaPDF = async () => {
     const doc = new jsPDF("landscape", "mm", "a4");
     const pageWidth = doc.internal.pageSize.getWidth();
 
-    doc.setFillColor(12, 45, 107);
-    doc.rect(0, 0, pageWidth, 24, "F");
+    let logoData: string | null = null;
+    try {
+      logoData = await loadImageDataUrl(logoImage);
+    } catch (error) {
+      console.warn("No se pudo agregar el logo al PDF:", error);
+    }
 
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.setFont(undefined, "bold");
-    doc.text("Grupo Logístico 365", 14, 10);
-    doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
-    doc.text("Reporte de Flota", 14, 17);
+    const drawPageHeader = (continuation = false) => {
+      drawCorporatePdfHeader(
+        doc,
+        logoData,
+        "REPORTE DE FLOTA",
+        continuation
+          ? "Flota · Continuación del reporte"
+          : "Flota · Control de vehículos y mantenimiento",
+        true
+      );
+    };
+
+    drawPageHeader(false);
 
     doc.setTextColor(12, 45, 107);
     doc.setFontSize(13);
-    doc.setFont(undefined, "bold");
-    doc.text("Resumen operativo", 14, 35);
+    doc.setFont("helvetica", "bold");
+    doc.text("Resumen operativo", 14, 45);
 
     doc.setFontSize(9);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.setTextColor(75, 85, 99);
-    doc.text(`Vehículos visibles: ${sortedVehiculos.length} de ${vehiculos.length}`, 14, 42);
-    doc.text(`Disponibles: ${kpis[1].value}  |  En operación: ${kpis[2].value}  |  Mantenimiento: ${kpis[3].value}`, 14, 48);
+    doc.text(`Vehículos visibles: ${sortedVehiculos.length} de ${vehiculos.length}`, 14, 52);
+    doc.text(
+      `Disponibles: ${kpis[1].value}  |  En operación: ${kpis[2].value}  |  Mantenimiento: ${kpis[3].value}`,
+      14,
+      58
+    );
 
     const columns = ["Código", "Tipo", "Estado", "Eficiencia", "Kilometraje", "Mantenimiento", "Próximo"];
     const rows = sortedVehiculos.map((vehiculo) => {
@@ -872,29 +989,35 @@ export function Flota() {
       ];
     });
 
-    let y = 58;
-
-    doc.setFillColor(255, 106, 0);
-    doc.roundedRect(14, y, pageWidth - 28, 10, 3, 3, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(8);
-    doc.setFont(undefined, "bold");
-
     const widths = [34, 45, 34, 28, 34, 45, 32];
-    let x = 18;
-    columns.forEach((column, index) => {
-      doc.text(column, x, y + 6.5);
-      x += widths[index];
-    });
+    let y = 68;
 
-    y += 13;
-    doc.setFont(undefined, "normal");
-    doc.setTextColor(17, 24, 39);
+    const drawTableHeader = () => {
+      doc.setFillColor(255, 106, 0);
+      doc.roundedRect(14, y, pageWidth - 28, 10, 3, 3, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+
+      let x = 18;
+      columns.forEach((column, index) => {
+        doc.text(column, x, y + 6.5);
+        x += widths[index];
+      });
+
+      y += 13;
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(17, 24, 39);
+    };
+
+    drawTableHeader();
 
     rows.forEach((row, rowIndex) => {
-      if (y > 185) {
+      if (y > 188) {
         doc.addPage();
-        y = 18;
+        drawPageHeader(true);
+        y = 44;
+        drawTableHeader();
       }
 
       if (rowIndex % 2 === 0) {
@@ -902,7 +1025,7 @@ export function Flota() {
         doc.rect(14, y - 4, pageWidth - 28, 10, "F");
       }
 
-      x = 18;
+      let x = 18;
       row.forEach((value, index) => {
         doc.text(String(value).slice(0, index === 1 || index === 5 ? 30 : 18), x, y + 2);
         x += widths[index];
@@ -915,8 +1038,8 @@ export function Flota() {
   };
 
   return (
-    <div className="w-full max-w-full space-y-5 overflow-hidden px-3 sm:px-4 pb-10">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div className="w-full max-w-full space-y-7 overflow-hidden px-3 sm:px-4 pb-12">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 pt-1">
         <div>
           <h1 className="text-3xl font-bold text-[#0C2D6B]">Flota</h1>
           <p className="mt-1 text-gray-500">
@@ -938,7 +1061,7 @@ export function Flota() {
           <button
             type="button"
             onClick={exportFlotaPDF}
-            className="inline-flex h-11 items-center gap-2 rounded-xl bg-red-500 px-4 text-sm font-bold text-white shadow-sm hover:bg-red-600"
+            className="inline-flex h-12 items-center gap-2 rounded-xl bg-red-500 px-5 text-sm font-bold text-white shadow-sm hover:bg-red-600"
           >
             <Download className="h-4 w-4" />
             PDF
@@ -947,20 +1070,12 @@ export function Flota() {
           <button
             type="button"
             onClick={exportFlotaExcel}
-            className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#22C55E] px-4 text-sm font-bold text-white shadow-sm hover:bg-[#16A34A]"
+            className="inline-flex h-12 items-center gap-2 rounded-xl bg-[#22C55E] px-5 text-sm font-bold text-white shadow-sm hover:bg-[#16A34A]"
           >
             <Download className="h-4 w-4" />
             Excel
           </button>
 
-          <button
-            type="button"
-            onClick={openNuevo}
-            className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#0C2D6B] px-5 text-sm font-bold text-white shadow-sm hover:bg-[#143C8C]"
-          >
-            <Plus className="h-4 w-4" />
-            Nuevo Vehículo
-          </button>
         </div>
       </div>
 
@@ -976,13 +1091,35 @@ export function Flota() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {kpis.map((kpi) => (
           <KpiCard key={kpi.title} {...kpi} />
         ))}
       </div>
 
-      <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+      <section className="pt-2">
+        <div className="mb-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-[#0C2D6B] flex items-center gap-2">
+              <Truck className="h-6 w-6 text-[#FF6A00]" />
+              Vehículos de Flota
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Consulta, mantenimiento y control operativo de las unidades registradas.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={openNuevo}
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#0C2D6B] px-7 text-base font-bold text-white shadow-md hover:bg-[#143C8C]"
+          >
+            <Plus className="h-5 w-5" />
+            Nuevo Vehículo
+          </button>
+        </div>
+
+      <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(280px,1fr)_230px_250px_auto] gap-3">
           <div className="relative min-w-0">
             <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
@@ -1046,14 +1183,31 @@ export function Flota() {
           <SortChip field="mantenimiento" label="Mantenimiento" />
           <SortChip field="proximo" label="Próximo" />
 
-          <span className="ml-0 lg:ml-auto text-sm font-bold text-gray-400">
-            {sortedVehiculos.length} de {vehiculos.length} registros visibles
-          </span>
+          <div className="ml-0 lg:ml-auto flex flex-wrap items-center gap-3">
+            <span className="text-sm font-bold text-gray-400">
+              {sortedVehiculos.length} de {vehiculos.length} registros visibles
+            </span>
+
+            <label className="inline-flex items-center gap-2 text-xs font-bold text-gray-500">
+              Mostrar
+              <select
+                value={pageSize}
+                onChange={(event) => setPageSize(Number(event.target.value))}
+                className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-[#0C2D6B]"
+              >
+                <option value={6}>6</option>
+                <option value={9}>9</option>
+                <option value={12}>12</option>
+                <option value={18}>18</option>
+                <option value={30}>30</option>
+              </select>
+            </label>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {sortedVehiculos.map((vehiculo) => {
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        {paginatedVehiculos.map((vehiculo) => {
           const tipo = vehiculo.tipo || nombreTipo(vehiculo.tipo_id);
           const estado = vehiculo.estado || nombreEstado(vehiculo.estado_id);
           const mantenimiento =
@@ -1142,6 +1296,64 @@ export function Flota() {
           </div>
         )}
       </div>
+
+      {sortedVehiculos.length > 0 && (
+        <div className="mt-6 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+            <p className="text-sm font-semibold text-gray-500">
+              Página <b className="text-[#0C2D6B]">{Math.min(page, totalPages)}</b> de{" "}
+              <b className="text-[#0C2D6B]">{totalPages}</b>
+              {" · "}
+              Mostrando{" "}
+              <b className="text-[#0C2D6B]">
+                {(Math.min(page, totalPages) - 1) * pageSize + 1}
+              </b>
+              {" - "}
+              <b className="text-[#0C2D6B]">
+                {Math.min(Math.min(page, totalPages) * pageSize, sortedVehiculos.length)}
+              </b>
+              {" de "}
+              <b className="text-[#0C2D6B]">{sortedVehiculos.length}</b>
+            </p>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage(1)}
+                className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] disabled:cursor-not-allowed disabled:opacity-40 hover:bg-blue-50"
+              >
+                Primera
+              </button>
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] disabled:cursor-not-allowed disabled:opacity-40 hover:bg-blue-50"
+              >
+                Anterior
+              </button>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] disabled:cursor-not-allowed disabled:opacity-40 hover:bg-blue-50"
+              >
+                Siguiente
+              </button>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage(totalPages)}
+                className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] disabled:cursor-not-allowed disabled:opacity-40 hover:bg-blue-50"
+              >
+                Última
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </section>
 
       {(modo === "nuevo" || modo === "editar" || modo === "ver") && selected && (
         <VehicleModal

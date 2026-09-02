@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import * as XLSX from "xlsx";
+import logoEmpresa from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
 
 const API_BASE_URL = "/api";
 
@@ -79,6 +80,33 @@ const numeric = (value: any) => {
 
 const cleanNum = (value: string) =>
   value.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
+
+const cleanCommercialTyping = (value: string, max = 140) =>
+  value
+    .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\s.,#&()'\/-]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .slice(0, max);
+
+function titleCaseText(value: string) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("es-GT")
+    .replace(/(^|[\s'-])([a-záéíóúüñ])/g, (_m, sep, letter) =>
+      `${sep}${letter.toLocaleUpperCase("es-GT")}`
+    );
+}
+
+function titleCaseCompany(value: string) {
+  return titleCaseText(value)
+    .replace(/\bS\.\s*A\.?\b/gi, "S.A.")
+    .replace(/\bS\.\s*De\s*R\.\s*L\.?\b/gi, "S. de R.L.")
+    .replace(/\bGl365\b/gi, "GL365")
+    .replace(/\bFtl\b/g, "FTL")
+    .replace(/\bLtl\b/g, "LTL")
+    .replace(/\bFcl\b/g, "FCL")
+    .replace(/\bLcl\b/g, "LCL");
+}
 
 type SortDirection = "asc" | "desc";
 
@@ -197,6 +225,109 @@ function ActionButton({
   );
 }
 
+function PaginationControls({
+  page,
+  totalPages,
+  rowsPerPage,
+  totalItems,
+  itemLabel,
+  onPageChange,
+  onRowsPerPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  rowsPerPage: number;
+  totalItems: number;
+  itemLabel: string;
+  onPageChange: (page: number) => void;
+  onRowsPerPageChange: (rows: number) => void;
+}) {
+  const start = totalItems === 0 ? 0 : (page - 1) * rowsPerPage + 1;
+  const end = Math.min(page * rowsPerPage, totalItems);
+
+  return (
+    <div className="border-t bg-white px-4 py-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <p className="text-sm font-semibold text-gray-500">
+        Página {page} de {totalPages} · Mostrando {start} a {end} de {totalItems} {itemLabel}.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={rowsPerPage}
+          onChange={(event) => {
+            onRowsPerPageChange(Number(event.target.value));
+            onPageChange(1);
+          }}
+          className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm outline-none focus:border-[#0C2D6B]"
+          aria-label="Registros por página"
+        >
+          {[5, 10, 15, 25, 50].map((size) => (
+            <option key={size} value={size}>{size} por página</option>
+          ))}
+        </select>
+
+        <button type="button" onClick={() => onPageChange(1)} disabled={page <= 1} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none">Primera</button>
+        <button type="button" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none">Anterior</button>
+        <button type="button" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none">Siguiente</button>
+        <button type="button" onClick={() => onPageChange(totalPages)} disabled={page >= totalPages} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:shadow-none">Última</button>
+      </div>
+    </div>
+  );
+}
+
+async function imageUrlToDataUrl(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function drawCorporatePdfHeader(doc: jsPDF, title: string, subtitle: string) {
+  doc.setFillColor(12, 45, 107);
+  doc.rect(0, 0, 210, 38, "F");
+
+  // Tarjeta blanca para que el logo azul/naranja conserve contraste.
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(0.6);
+  doc.roundedRect(8, 4, 48, 29, 2, 2, "FD");
+
+  const logo = await imageUrlToDataUrl(logoEmpresa);
+  if (logo) {
+    try {
+      doc.addImage(logo, "PNG", 11, 7, 42, 23, undefined, "FAST");
+    } catch {
+      // El reporte sigue funcionando aunque el navegador no convierta la imagen.
+    }
+  }
+
+  doc.setTextColor(255, 106, 0);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.text("GRUPO LOGÍSTICO 365", 132, 10, { align: "center" });
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(17);
+  doc.text(title.toUpperCase(), 132, 20, { align: "center" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.text(subtitle, 132, 27, { align: "center" });
+
+  doc.setDrawColor(255, 106, 0);
+  doc.setLineWidth(0.8);
+  doc.line(70, 32, 196, 32);
+  doc.setTextColor(0, 0, 0);
+}
+
 export function Operaciones() {
   const [tab, setTab] = useState<Tab>("asignaciones");
   const [loading, setLoading] = useState(false);
@@ -222,6 +353,11 @@ export function Operaciones() {
   const [sortField, setSortField] = useState("");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
+  // Paginación independiente para cada submódulo.
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [assignmentPage, setAssignmentPage] = useState(1);
+  const [providerPage, setProviderPage] = useState(1);
+
   const [assignmentModal, setAssignmentModal] = useState<{ open: boolean; mode: Mode }>({
     open: false,
     mode: "create",
@@ -236,6 +372,12 @@ export function Operaciones() {
   });
   const [providerForm, setProviderForm] = useState<AnyRow>({});
   const [providerErrors, setProviderErrors] = useState<Record<string, string>>({});
+  const [providerReturnToAssignment, setProviderReturnToAssignment] = useState(false);
+
+  // Alta rápida de cliente desde Nueva Asignación.
+  const [quickClientOpen, setQuickClientOpen] = useState(false);
+  const [quickClientForm, setQuickClientForm] = useState<AnyRow>({});
+  const [quickClientErrors, setQuickClientErrors] = useState<Record<string, string>>({});
 
   const [deleteBox, setDeleteBox] = useState<{ type: "asignacion" | "proveedor"; id: number } | null>(null);
 
@@ -349,6 +491,8 @@ export function Operaciones() {
     setSatFiltro("Todos");
     setSortField("");
     setSortDirection("asc");
+    setAssignmentPage(1);
+    setProviderPage(1);
   };
 
   const sortIcon = (field: string) => {
@@ -517,6 +661,35 @@ export function Operaciones() {
 
     return rows;
   }, [filteredProviders, sortField, sortDirection, estadosProveedor]);
+
+  const assignmentTotalPages = Math.max(1, Math.ceil(sortedAssignments.length / rowsPerPage));
+  const providerTotalPages = Math.max(1, Math.ceil(sortedProviders.length / rowsPerPage));
+
+  const paginatedAssignments = useMemo(() => {
+    const start = (assignmentPage - 1) * rowsPerPage;
+    return sortedAssignments.slice(start, start + rowsPerPage);
+  }, [sortedAssignments, assignmentPage, rowsPerPage]);
+
+  const paginatedProviders = useMemo(() => {
+    const start = (providerPage - 1) * rowsPerPage;
+    return sortedProviders.slice(start, start + rowsPerPage);
+  }, [sortedProviders, providerPage, rowsPerPage]);
+
+  useEffect(() => {
+    setAssignmentPage(1);
+  }, [search, estadoAsigFiltro, proveedorAsigFiltro, sortField, sortDirection, rowsPerPage]);
+
+  useEffect(() => {
+    setProviderPage(1);
+  }, [search, estadoProvFiltro, nivelFiltro, satFiltro, sortField, sortDirection, rowsPerPage]);
+
+  useEffect(() => {
+    setAssignmentPage((page) => Math.min(page, assignmentTotalPages));
+  }, [assignmentTotalPages]);
+
+  useEffect(() => {
+    setProviderPage((page) => Math.min(page, providerTotalPages));
+  }, [providerTotalPages]);
 
   const margenTotal = asignaciones.reduce(
     (sum, item) => sum + numeric(item.total) - numeric(item.totalProveedor || item.total_proveedor),
@@ -762,6 +935,93 @@ export function Operaciones() {
     });
   };
 
+  const openQuickClient = (term = "") => {
+    setQuickClientErrors({});
+    setQuickClientForm({
+      codigo_cliente: nextCode("CLI", clientes, "codigo_cliente"),
+      nombre_empresa: cleanCommercialTyping(term, 120),
+      nit: "",
+      direccion: "",
+      estado_cliente_id: 1,
+    });
+    setQuickClientOpen(true);
+  };
+
+  const saveQuickClient = async () => {
+    const errors: Record<string, string> = {};
+    const nombre = String(quickClientForm.nombre_empresa || "").trim();
+    const nit = String(quickClientForm.nit || "").trim();
+
+    if (!nombre) errors.nombre_empresa = "El nombre de la empresa es obligatorio.";
+    if (!nit) errors.nit = "El NIT es obligatorio.";
+    if (clientes.some((item) => String(item.nit || "").trim().toLowerCase() === nit.toLowerCase())) {
+      errors.nit = "Ya existe un cliente registrado con ese NIT.";
+    }
+
+    setQuickClientErrors(errors);
+    if (Object.keys(errors).length) return;
+
+    const payload = {
+      codigo_cliente: quickClientForm.codigo_cliente,
+      nombre_empresa: titleCaseCompany(nombre),
+      nit,
+      direccion: titleCaseCompany(String(quickClientForm.direccion || "")),
+      estado_cliente_id: 1,
+    };
+
+    try {
+      const created = await apiRequest<AnyRow>("/clientes", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      let createdId = Number(created?.id || created?.cliente_id || created?.insertId || 0) || null;
+
+      if (!createdId) {
+        const fresh = await apiRequest<AnyRow>("/crm/bootstrap");
+        const found = rows<AnyRow>(fresh?.clientes).find(
+          (item) => String(item.nit || "").trim().toLowerCase() === nit.toLowerCase()
+        );
+        createdId = Number(found?.id || 0) || null;
+      }
+
+      await loadData();
+
+      if (createdId) {
+        setAssignmentForm((current: AnyRow) => ({ ...current, cliente_id: createdId }));
+        setAssignmentErrors((current) => ({ ...current, cliente_id: "" }));
+      }
+
+      setQuickClientOpen(false);
+      setNotice("Cliente creado y seleccionado en la asignación.");
+      window.setTimeout(() => setNotice(""), 3000);
+    } catch (error: any) {
+      setQuickClientErrors({ general: error.message || "No se pudo crear el cliente." });
+    }
+  };
+
+  const openProviderFromAssignment = (term = "") => {
+    setProviderReturnToAssignment(true);
+    setProviderErrors({});
+    setProviderModal({ open: true, mode: "create" });
+    setProviderForm({
+      codigo_proveedor: nextCode("PROV", proveedores, "codigo_proveedor"),
+      razon_social: cleanCommercialTyping(term, 120),
+      nombre_comercial: cleanCommercialTyping(term, 100),
+      nit: "",
+      estado_id: 1,
+      correo: "",
+      telefono: "",
+      service: "Transporte FTL",
+      estado_sat: "pendiente",
+      performance: "Amarillo",
+      rtuValidated: false,
+      pilotLicenseValidated: false,
+      bankAccountValidated: false,
+      clintonInvestigation: "Aprobado",
+    });
+  };
+
   const validateProvider = () => {
     const errors: Record<string, string> = {};
 
@@ -794,7 +1054,7 @@ export function Operaciones() {
     };
 
     try {
-      await apiRequest(
+      const saved = await apiRequest<AnyRow>(
         providerModal.mode === "create"
           ? "/operaciones/proveedores"
           : `/operaciones/proveedores/${providerForm.id}`,
@@ -804,10 +1064,35 @@ export function Operaciones() {
         }
       );
 
+      let createdProviderId =
+        providerModal.mode === "create"
+          ? Number(saved?.id || saved?.proveedor_id || saved?.insertId || 0) || null
+          : Number(providerForm.id || 0) || null;
+
+      if (providerModal.mode === "create" && providerReturnToAssignment && !createdProviderId) {
+        const fresh = await apiRequest<AnyRow>("/operaciones/bootstrap");
+        const found = rows<AnyRow>(fresh?.proveedores).find(
+          (item) => String(item.nit || "").trim().toLowerCase() === String(payload.nit || "").trim().toLowerCase()
+        );
+        createdProviderId = Number(found?.id || 0) || null;
+      }
+
+      await loadData();
+
+      if (providerReturnToAssignment && createdProviderId) {
+        setAssignmentForm((current: AnyRow) => ({ ...current, proveedor_id: createdProviderId }));
+        setAssignmentErrors((current) => ({ ...current, proveedor_id: "" }));
+        setProviderModal({ open: false, mode: "create" });
+        setProviderReturnToAssignment(false);
+        setNotice("Proveedor creado y seleccionado en la asignación.");
+        window.setTimeout(() => setNotice(""), 3000);
+        return;
+      }
+
       setProviderModal({ open: false, mode: "create" });
+      setProviderReturnToAssignment(false);
       setTab("proveedores");
       setNotice("Proveedor guardado correctamente en MySQL.");
-      await loadData();
       window.setTimeout(() => setNotice(""), 3000);
     } catch (error: any) {
       setProviderErrors({ general: error.message || "No se pudo guardar el proveedor." });
@@ -871,61 +1156,77 @@ export function Operaciones() {
     XLSX.writeFile(wb, `Operaciones_Proveedores_${Date.now()}.xlsx`);
   };
 
-  const pdfAssignment = (item: AnyRow) => {
+  const pdfAssignment = async (item: AnyRow) => {
     const doc = new jsPDF();
-    doc.setFillColor(12, 45, 107);
-    doc.rect(0, 0, 210, 28, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.text(`Asignación ${item.codigo_asignacion}`, 105, 17, { align: "center" });
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(10);
+    await drawCorporatePdfHeader(
+      doc,
+      "Detalle de Asignación",
+      `Operaciones y Compras · ${item.codigo_asignacion || "Asignación"}`
+    );
 
-    let y = 42;
+    doc.setFontSize(10.5);
+    let y = 50;
     const line = (label: string, value: string) => {
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(12, 45, 107);
       doc.text(label, 18, y);
-      doc.setFont(undefined, "normal");
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(25, 25, 25);
       doc.text(value || "-", 65, y, { maxWidth: 125 });
       y += 8;
     };
 
+    line("Código:", item.codigo_asignacion || "-");
     line("Cliente:", getCliente(item.cliente_id)?.nombre_empresa || item.cliente || item.nombre_empresa || "-");
+    line("Estado:", estadoAsignacionNombre(item.estado_asignacion_id));
     line("Ruta:", rutaLabel(getRuta(item.ruta_id)) || item.ruta || "-");
     line("Piloto:", fullPilot(getPiloto(item.pilotos_id || item.piloto_id)) || item.piloto || "-");
     line("Vehículo:", getVehiculo(item.vehiculo_id)?.codigo || item.cabezal || "-");
     line("Proveedor:", getProveedor(item.proveedor_id)?.razon_social || item.proveedor || "-");
+
+    y += 3;
+    doc.setDrawColor(225, 229, 235);
+    doc.line(18, y, 192, y);
+    y += 8;
+
     line("Total cliente:", money(item.total));
     line("Total proveedor:", money(item.totalProveedor || item.total_proveedor));
     line("Margen:", money(numeric(item.total) - numeric(item.totalProveedor || item.total_proveedor)));
+
     doc.save(`${item.codigo_asignacion || "asignacion"}.pdf`);
   };
 
-  const pdfProvider = (item: AnyRow) => {
+  const pdfProvider = async (item: AnyRow) => {
     const doc = new jsPDF();
-    doc.setFillColor(12, 45, 107);
-    doc.rect(0, 0, 210, 28, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.text(`Proveedor ${item.codigo_proveedor}`, 105, 17, { align: "center" });
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(10);
+    await drawCorporatePdfHeader(
+      doc,
+      "Expediente de Proveedor",
+      `Operaciones y Compras · ${item.codigo_proveedor || "Proveedor"}`
+    );
 
-    let y = 42;
+    doc.setFontSize(10.5);
+    let y = 50;
     const line = (label: string, value: string) => {
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(12, 45, 107);
       doc.text(label, 18, y);
-      doc.setFont(undefined, "normal");
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(25, 25, 25);
       doc.text(value || "-", 65, y, { maxWidth: 125 });
       y += 8;
     };
 
+    line("Código:", item.codigo_proveedor || "-");
     line("Razón social:", item.razon_social || item.name || "-");
     line("Nombre comercial:", item.nombre_comercial || "-");
     line("NIT:", item.nit || "-");
+    line("Correo:", providerEmail(item) || "-");
+    line("Teléfono:", providerPhone(item) || "-");
     line("Servicio:", item.service || item.servicio || "-");
-    line("SAT:", item.estado_sat || item.satStatus || "-");
+    line("SAT:", item.estado_sat === "vigente" ? "Vigente" : item.estado_sat === "no_vigente" ? "No vigente" : item.estado_sat || item.satStatus || "Pendiente");
     line("Desempeño:", item.performance || item.desempeno || "-");
+    line("Estado:", estadoProveedorNombre(item.estado_id));
+
     doc.save(`${item.codigo_proveedor || "proveedor"}.pdf`);
   };
 
@@ -979,13 +1280,14 @@ export function Operaciones() {
         ))}
       </div>
 
-      <div className="flex border-b border-gray-200 gap-6">
+      <div className="overflow-x-auto">
+        <div className="flex border-b border-gray-200 gap-5 sm:gap-8 min-w-max">
         <button
           onClick={() => {
             setTab("asignaciones");
             resetFilters();
           }}
-          className={`pb-3 text-sm font-semibold relative ${tab === "asignaciones" ? "text-[#0C2D6B]" : "text-gray-500"}`}
+          className={`px-2 sm:px-4 pb-4 pt-2 text-base sm:text-lg font-bold relative transition-colors ${tab === "asignaciones" ? "text-[#0C2D6B]" : "text-gray-500 hover:text-[#0C2D6B]"}`}
         >
           Asignaciones de Unidades
           {tab === "asignaciones" && <div className="absolute left-0 bottom-0 h-1 w-full bg-[#FF6A00] rounded-t" />}
@@ -995,11 +1297,12 @@ export function Operaciones() {
             setTab("proveedores");
             resetFilters();
           }}
-          className={`pb-3 text-sm font-semibold relative ${tab === "proveedores" ? "text-[#0C2D6B]" : "text-gray-500"}`}
+          className={`px-2 sm:px-4 pb-4 pt-2 text-base sm:text-lg font-bold relative transition-colors ${tab === "proveedores" ? "text-[#0C2D6B]" : "text-gray-500 hover:text-[#0C2D6B]"}`}
         >
           Directorio de Proveedores
           {tab === "proveedores" && <div className="absolute left-0 bottom-0 h-1 w-full bg-[#FF6A00] rounded-t" />}
         </button>
+        </div>
       </div>
 
       {tab === "asignaciones" && (
@@ -1051,9 +1354,9 @@ export function Operaciones() {
             <div className="flex gap-2">
               <button
                 onClick={() => openAssignment("create")}
-                className="h-11 px-4 rounded-xl bg-[#0C2D6B] text-white font-bold text-sm inline-flex items-center gap-2 shadow-sm"
+                className="h-12 px-6 rounded-xl bg-[#0C2D6B] text-white font-bold text-base inline-flex items-center gap-2.5 shadow-sm hover:bg-[#143C8C] transition-colors"
               >
-                <Plus className="w-4 h-4" /> Nueva Asignación
+                <Plus className="w-5 h-5" /> Nueva Asignación
               </button>
               <button
                 onClick={exportAssignmentsExcel}
@@ -1083,7 +1386,7 @@ export function Operaciones() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sortedAssignments.map((item) => {
+                {paginatedAssignments.map((item) => {
                   const cliente = getCliente(item.cliente_id);
                   const ruta = getRuta(item.ruta_id);
                   const vehiculo = getVehiculo(item.vehiculo_id);
@@ -1188,6 +1491,16 @@ export function Operaciones() {
               </tbody>
             </table>
           </div>
+
+          <PaginationControls
+            page={assignmentPage}
+            totalPages={assignmentTotalPages}
+            rowsPerPage={rowsPerPage}
+            totalItems={sortedAssignments.length}
+            itemLabel="asignaciones filtradas"
+            onPageChange={setAssignmentPage}
+            onRowsPerPageChange={setRowsPerPage}
+          />
         </div>
       )}
 
@@ -1232,8 +1545,8 @@ export function Operaciones() {
               </div>
 
               <div className="flex gap-2 sm:justify-end 2xl:shrink-0">
-                <button onClick={() => openProvider("create")} className="h-11 px-5 rounded-xl bg-[#0C2D6B] text-white font-bold text-sm inline-flex items-center justify-center gap-2 shadow-sm hover:bg-[#10357D] transition-colors whitespace-nowrap">
-                  <Plus className="w-4 h-4" /> Nuevo Proveedor
+                <button onClick={() => openProvider("create")} className="h-12 px-6 rounded-xl bg-[#0C2D6B] text-white font-bold text-base inline-flex items-center justify-center gap-2.5 shadow-sm hover:bg-[#10357D] transition-colors whitespace-nowrap">
+                  <Plus className="w-5 h-5" /> Nuevo Proveedor
                 </button>
                 <button onClick={exportProvidersExcel} className="h-11 px-5 rounded-xl bg-[#22C55E] text-white font-bold text-sm inline-flex items-center justify-center gap-2 shadow-sm hover:bg-[#1fb455] transition-colors whitespace-nowrap">
                   <Download className="w-4 h-4" /> Excel
@@ -1262,7 +1575,7 @@ export function Operaciones() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sortedProviders.map((item, index) => {
+                {paginatedProviders.map((item, index) => {
                   const nivel = item.performance || item.desempeno || "Amarillo";
                   const sat = item.estado_sat || (String(item.satStatus || "").toLowerCase().includes("solvente") ? "vigente" : "pendiente");
                   const estado = estadoProveedorNombre(item.estado_id);
@@ -1313,6 +1626,16 @@ export function Operaciones() {
               </tbody>
             </table>
           </div>
+
+          <PaginationControls
+            page={providerPage}
+            totalPages={providerTotalPages}
+            rowsPerPage={rowsPerPage}
+            totalItems={sortedProviders.length}
+            itemLabel="proveedores filtrados"
+            onPageChange={setProviderPage}
+            onRowsPerPageChange={setRowsPerPage}
+          />
         </div>
       )}
 
@@ -1333,6 +1656,18 @@ export function Operaciones() {
           estadosAsignacion={estadosAsignacion}
           rutaLabel={rutaLabel}
           patchMoney={patchAssignmentMoney}
+          onCreateClient={openQuickClient}
+          onCreateProvider={openProviderFromAssignment}
+        />
+      )}
+
+      {quickClientOpen && (
+        <QuickClientModal
+          form={quickClientForm}
+          setForm={setQuickClientForm}
+          errors={quickClientErrors}
+          onClose={() => setQuickClientOpen(false)}
+          onSave={saveQuickClient}
         />
       )}
 
@@ -1342,7 +1677,10 @@ export function Operaciones() {
           form={providerForm}
           setForm={setProviderForm}
           errors={providerErrors}
-          onClose={() => setProviderModal({ open: false, mode: "create" })}
+          onClose={() => {
+            setProviderModal({ open: false, mode: "create" });
+            setProviderReturnToAssignment(false);
+          }}
           onSave={saveProvider}
           estadosProveedor={estadosProveedor}
         />
@@ -1528,6 +1866,66 @@ function SearchableSelect({
   );
 }
 
+function QuickClientModal({ form, setForm, errors, onClose, onSave }: AnyRow) {
+  return (
+    <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4">
+      <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between bg-[#0C2D6B] px-6 py-4 text-white">
+          <div>
+            <p className="text-[11px] uppercase tracking-widest text-white/70">Alta rápida desde Operaciones</p>
+            <h2 className="text-xl font-bold">Nuevo Cliente</h2>
+          </div>
+          <button type="button" onClick={onClose} className="text-white/70 hover:text-white"><X className="h-5 w-5" /></button>
+        </div>
+
+        <div className="space-y-4 p-6">
+          {errors.general && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{errors.general}</div>}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Código">
+              <input readOnly value={form.codigo_cliente || ""} className={`${input} mt-1 bg-gray-100`} />
+            </Field>
+            <Field label="NIT *">
+              <input
+                autoFocus
+                value={form.nit || ""}
+                onChange={(event) => setForm({ ...form, nit: event.target.value.replace(/[^0-9A-Za-zKk-]/g, "").slice(0, 20) })}
+                className={`${input} mt-1 ${errors.nit ? errorInput : ""}`}
+                placeholder="5487963-2"
+              />
+              <ErrorText text={errors.nit} />
+            </Field>
+            <Field label="Nombre de empresa / razón social *" className="sm:col-span-2">
+              <input
+                value={form.nombre_empresa || ""}
+                onChange={(event) => setForm({ ...form, nombre_empresa: cleanCommercialTyping(event.target.value, 120) })}
+                onBlur={() => setForm({ ...form, nombre_empresa: titleCaseCompany(form.nombre_empresa || "") })}
+                className={`${input} mt-1 ${errors.nombre_empresa ? errorInput : ""}`}
+                placeholder="Distribuidora Maya del Norte, S.A."
+              />
+              <ErrorText text={errors.nombre_empresa} />
+            </Field>
+            <Field label="Dirección" className="sm:col-span-2">
+              <input
+                value={form.direccion || ""}
+                onChange={(event) => setForm({ ...form, direccion: cleanCommercialTyping(event.target.value, 180) })}
+                onBlur={() => setForm({ ...form, direccion: titleCaseCompany(form.direccion || "") })}
+                className={`${input} mt-1`}
+                placeholder="5a Avenida 3-42 Zona 1, Cobán"
+              />
+            </Field>
+          </div>
+          <p className="text-xs text-gray-500">Al guardar, el cliente se seleccionará automáticamente en la asignación que estás creando.</p>
+        </div>
+
+        <div className="flex justify-end gap-2 border-t bg-gray-50 px-6 py-4">
+          <button type="button" onClick={onClose} className="h-11 rounded-xl border border-gray-200 bg-white px-5 font-bold text-gray-600">Cancelar</button>
+          <button type="button" onClick={onSave} className="h-11 rounded-xl bg-[#FF6A00] px-6 font-bold text-white shadow-sm">Guardar cliente</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AssignmentDrawer({
   mode,
   form,
@@ -1544,6 +1942,8 @@ function AssignmentDrawer({
   estadosAsignacion,
   rutaLabel,
   patchMoney,
+  onCreateClient,
+  onCreateProvider,
 }: AnyRow) {
   const readonly = mode === "view";
   const [creatingRoute, setCreatingRoute] = useState(Boolean(form.nueva_ruta));
@@ -1574,10 +1974,21 @@ function AssignmentDrawer({
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <Field label="Código"><input readOnly value={form.codigo_asignacion || ""} className={`${input} bg-gray-100 mt-1`} /></Field>
               <Field label="Cliente *" className="md:col-span-2">
-                <select disabled={readonly} value={form.cliente_id || ""} onChange={(event) => setForm({ ...form, cliente_id: event.target.value })} className={`${input} mt-1 ${errors.cliente_id ? errorInput : ""}`}>
-                  <option value="">Seleccionar cliente...</option>
-                  {clientes.map((item: AnyRow) => <option key={item.id} value={item.id}>{item.codigo_cliente} · {item.nombre_empresa}</option>)}
-                </select><ErrorText text={errors.cliente_id} />
+                <SearchableSelect
+                  disabled={readonly}
+                  value={form.cliente_id || ""}
+                  options={clientes.filter((item: AnyRow) => Number(item.estado_cliente_id || 1) === 1)}
+                  placeholder="Buscar cliente por código, empresa o NIT..."
+                  error={errors.cliente_id}
+                  getLabel={(item: AnyRow) => `${item.codigo_cliente || "CLI"} · ${item.nombre_empresa || "Cliente"}`}
+                  getSubLabel={(item: AnyRow) => `NIT: ${item.nit || "Sin NIT"}`}
+                  onSelect={(item: AnyRow) =>
+                    setForm({ ...form, cliente_id: item.id })
+                  }
+                  onCreate={(term: string) => onCreateClient(term)}
+                  createLabel="Registrar cliente"
+                />
+                <ErrorText text={errors.cliente_id} />
               </Field>
               <Field label="Estado *">
                 <select disabled={readonly} value={form.estado_asignacion_id || ""} onChange={(event) => setForm({ ...form, estado_asignacion_id: event.target.value })} className={`${input} mt-1`}>
@@ -1653,7 +2064,8 @@ function AssignmentDrawer({
                         <label className="text-xs font-bold text-gray-600">Origen</label>
                         <input
                           value={form.origen || ""}
-                          onChange={(event) => setForm({ ...form, origen: event.target.value })}
+                          onChange={(event) => setForm({ ...form, origen: cleanCommercialTyping(event.target.value, 100) })}
+                          onBlur={() => setForm({ ...form, origen: titleCaseCompany(form.origen || "") })}
                           className={`${input} mt-1`}
                           placeholder="Ej. Ciudad de Guatemala"
                         />
@@ -1662,7 +2074,8 @@ function AssignmentDrawer({
                         <label className="text-xs font-bold text-gray-600">Destino</label>
                         <input
                           value={form.destino || ""}
-                          onChange={(event) => setForm({ ...form, destino: event.target.value })}
+                          onChange={(event) => setForm({ ...form, destino: cleanCommercialTyping(event.target.value, 100) })}
+                          onBlur={() => setForm({ ...form, destino: titleCaseCompany(form.destino || "") })}
                           className={`${input} mt-1`}
                           placeholder="Ej. San Salvador"
                         />
@@ -1751,7 +2164,21 @@ function AssignmentDrawer({
           <section className="bg-white rounded-xl border p-4">
             <div className="flex justify-between border-b pb-3 mb-4"><h3 className="font-bold text-[#0C2D6B]">Proveedor asignado y pago</h3><span className="text-xs bg-blue-50 text-[#0C2D6B] px-3 py-1 rounded-full font-bold">proveedor_asignacion</span></div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <Field label="Proveedor *" className="lg:col-span-3"><select disabled={readonly} value={form.proveedor_id || ""} onChange={(event) => setForm({ ...form, proveedor_id: event.target.value })} className={`${input} mt-1 ${errors.proveedor_id ? errorInput : ""}`}><option value="">Seleccionar proveedor...</option>{proveedores.map((item: AnyRow) => <option key={item.id} value={item.id}>{item.codigo_proveedor} · {item.nombre_comercial || item.razon_social || item.name} · {item.performance || item.desempeno || "Amarillo"}</option>)}</select><ErrorText text={errors.proveedor_id} /></Field>
+              <Field label="Proveedor *" className="lg:col-span-3">
+                <SearchableSelect
+                  disabled={readonly}
+                  value={form.proveedor_id || ""}
+                  options={proveedores}
+                  placeholder="Buscar proveedor por código, nombre o NIT..."
+                  error={errors.proveedor_id}
+                  getLabel={(item: AnyRow) => `${item.codigo_proveedor || "PROV"} · ${item.nombre_comercial || item.razon_social || item.name || "Proveedor"}`}
+                  getSubLabel={(item: AnyRow) => `NIT: ${item.nit || "-"} · ${item.performance || item.desempeno || "Amarillo"}`}
+                  onSelect={(item: AnyRow) => setForm({ ...form, proveedor_id: item.id })}
+                  onCreate={(term: string) => onCreateProvider(term)}
+                  createLabel="Registrar proveedor"
+                />
+                <ErrorText text={errors.proveedor_id} />
+              </Field>
               <Field label="Fecha factura proveedor"><input type="date" disabled={readonly} value={form.fechaProveedor || ""} onChange={(event) => setForm({ ...form, fechaProveedor: event.target.value })} className={`${input} mt-1`} /></Field>
               <Field label="Serie"><input disabled={readonly} value={form.serieProveedor || ""} onChange={(event) => setForm({ ...form, serieProveedor: event.target.value.toUpperCase() })} className={`${input} mt-1`} /></Field>
               <Field label="Número"><input disabled={readonly} value={form.numeroProveedor || ""} onChange={(event) => setForm({ ...form, numeroProveedor: event.target.value })} className={`${input} mt-1`} /></Field>
@@ -1806,8 +2233,8 @@ function ProviderDrawer({ mode, form, setForm, errors, onClose, onSave, estadosP
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Código"><input readOnly value={form.codigo_proveedor || ""} className={`${input} mt-1 bg-gray-100`} /></Field>
               <Field label="Estado"><select disabled={readonly} value={form.estado_id || 1} onChange={(event) => setForm({ ...form, estado_id: event.target.value })} className={`${input} mt-1`}>{estadosProveedor.map((item: AnyRow) => <option key={item.id} value={item.id}>{item.nombre_estado_proveedor}</option>)}</select></Field>
-              <Field label="Razón social *" className="md:col-span-2"><input disabled={readonly} value={form.razon_social || ""} onChange={(event) => setForm({ ...form, razon_social: event.target.value })} className={`${input} mt-1 ${errors.razon_social ? errorInput : ""}`} /><ErrorText text={errors.razon_social} /></Field>
-              <Field label="Nombre comercial"><input disabled={readonly} value={form.nombre_comercial || ""} onChange={(event) => setForm({ ...form, nombre_comercial: event.target.value })} className={`${input} mt-1`} /></Field>
+              <Field label="Razón social *" className="md:col-span-2"><input disabled={readonly} value={form.razon_social || ""} onChange={(event) => setForm({ ...form, razon_social: cleanCommercialTyping(event.target.value, 120) })} onBlur={() => setForm({ ...form, razon_social: titleCaseCompany(form.razon_social || "") })} className={`${input} mt-1 ${errors.razon_social ? errorInput : ""}`} /><ErrorText text={errors.razon_social} /></Field>
+              <Field label="Nombre comercial"><input disabled={readonly} value={form.nombre_comercial || ""} onChange={(event) => setForm({ ...form, nombre_comercial: cleanCommercialTyping(event.target.value, 100) })} onBlur={() => setForm({ ...form, nombre_comercial: titleCaseCompany(form.nombre_comercial || "") })} className={`${input} mt-1`} /></Field>
               <Field label="NIT *"><input disabled={readonly} value={form.nit || ""} onChange={(event) => setForm({ ...form, nit: event.target.value.replace(/[^0-9A-Za-zKk-]/g, "").slice(0, 20) })} className={`${input} mt-1 ${errors.nit ? errorInput : ""}`} /><ErrorText text={errors.nit} /></Field>
               <Field label="Correo">
                 <input
@@ -1837,7 +2264,7 @@ function ProviderDrawer({ mode, form, setForm, errors, onClose, onSave, estadosP
           <section className="bg-white rounded-xl border p-4">
             <div className="flex justify-between border-b pb-3 mb-4"><h3 className="font-bold text-[#0C2D6B]">Servicio y cumplimiento</h3><span className="text-xs bg-blue-50 text-[#0C2D6B] px-3 py-1 rounded-full font-bold">cumplimiento_proveedor</span></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Field label="Servicio principal"><input disabled={readonly} value={form.service || ""} onChange={(event) => setForm({ ...form, service: event.target.value })} className={`${input} mt-1`} /></Field>
+              <Field label="Servicio principal"><input disabled={readonly} value={form.service || ""} onChange={(event) => setForm({ ...form, service: cleanCommercialTyping(event.target.value, 100) })} onBlur={() => setForm({ ...form, service: titleCaseCompany(form.service || "") })} className={`${input} mt-1`} /></Field>
               <Field label="Estado SAT"><select disabled={readonly} value={form.estado_sat || "pendiente"} onChange={(event) => setForm({ ...form, estado_sat: event.target.value })} className={`${input} mt-1`}><option value="vigente">Vigente</option><option value="no_vigente">No vigente</option><option value="pendiente">Pendiente</option></select></Field>
               <Field label="Desempeño"><select disabled={readonly} value={form.performance || "Amarillo"} onChange={(event) => setForm({ ...form, performance: event.target.value })} className={`${input} mt-1`}><option>Verde</option><option>Amarillo</option><option>Rojo</option></select></Field>
               <div className="grid grid-cols-2 gap-2 pt-6">
