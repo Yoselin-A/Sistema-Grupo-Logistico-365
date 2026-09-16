@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import type { DragEvent, KeyboardEvent, ReactNode } from "react";
 import {
   Plus,
@@ -25,6 +26,10 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
+  Building2,
+  Star,
+  Save,
+  Route,
 } from "lucide-react";
 import { generarPDFCotizacion } from "../services/pdfGenerator";
 import jsPDF from "jspdf";
@@ -49,11 +54,11 @@ import logoEmpresa from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.p
 // - ubicaciones
 //
 // NOTA IMPORTANTE:
-// La BD normalizada actual de cotizaciones no contiene fecha, estado,
-// moneda, peso, volumen u observaciones. Esos datos se conservan aquí
-// como metadata visual del PROTOTIPO para no perder el diseño comercial.
-// Los campos que sí representan la tabla cotizaciones son las FK y el
-// codigo_cotizacion.
+// La tabla física actual todavía no incluye todos los campos visuales
+// del documento comercial. Las relaciones y detalles se guardan por API/MySQL
+// y los campos UI faltantes se conservan por código de cotización para que
+// peso, volumen, estado, moneda, fecha, observaciones y días no se pierdan
+// después de recargar la pantalla.
 // ============================================================
 
 type Stage = "prospecto" | "cotizado" | "negociacion" | "ganado" | "perdido";
@@ -71,10 +76,29 @@ interface ClienteRow {
   nit: string;
   direccion: string;
   estado_cliente_id: number;
+  motivo_inactivacion?: string | null;
+  fecha_inactivacion?: string | null;
   created_at: string;
   updated_at: string;
   // Campo de presentación equivalente a JOIN con estados_cliente.
   nombre_estado_cliente?: string;
+
+  // Se utilizan en Crear / Editar para administrar
+  // el contacto principal desde el mismo formulario del cliente.
+  contacto_primer_nombre?: string;
+  contacto_segundo_nombre?: string;
+  contacto_primer_apellido?: string;
+  contacto_segundo_apellido?: string;
+  contacto_cargo?: string;
+  contacto_correo?: string;
+  contacto_prefijo_telefonico_id?: number | null;
+  contacto_telefono?: string;
+  contacto_tipo_telefono?:
+    | "Oficina"
+    | "Móvil"
+    | "WhatsApp"
+    | "Emergencia"
+    | "Otro";
 }
 
 interface ContactoClienteRow {
@@ -185,6 +209,10 @@ interface CotizacionRow {
   peso_ui: string;
   volumen_ui: string;
   observaciones_ui: string;
+
+  // Condiciones comerciales editables de esta cotización.
+  no_incluye_ui: string[];
+  notas_importantes_ui: string[];
 }
 
 interface CotizacionDetalleRow {
@@ -242,6 +270,8 @@ interface QuoteView {
   weight: string;
   volume: string;
   observations: string;
+  noIncluye: string[];
+  notasImportantes: string[];
   services: QuoteServiceView[];
   subtotal: number;
   iva: number;
@@ -255,6 +285,80 @@ interface QuoteServiceView {
   unitPrice: number;
   subtotal: number;
   days: number;
+}
+
+
+type ProviderLevel = "Verde" | "Amarillo" | "Rojo";
+type ProviderSat = "vigente" | "no_vigente" | "pendiente";
+
+interface ProviderRow {
+  id: number;
+  codigo_proveedor: string;
+  razon_social: string;
+  nombre_comercial?: string | null;
+  nit: string;
+  estado_id: number;
+  correo?: string | null;
+  telefono?: string | null;
+  estado?: string;
+  nombre_estado_proveedor?: string;
+  servicio_principal?: string;
+  desempeno?: ProviderLevel;
+  estado_sat?: ProviderSat;
+}
+
+interface ProviderContactRow {
+  id: number;
+  proveedor_id: number;
+  primer_nombre: string;
+  segundo_nombre?: string | null;
+  primer_apellido: string;
+  segundo_apellido?: string | null;
+  cargo?: string | null;
+  correo?: string | null;
+  telefono?: string | null;
+  es_principal: boolean;
+  estado: boolean;
+}
+
+interface ProviderServiceRow {
+  id: number;
+  codigo_servicio: string;
+  es_principal: boolean;
+  nombre_servicio_proveedor: string;
+  proveedor_id: number;
+}
+
+interface ProviderComplianceRow {
+  id?: number;
+  proveedor_id?: number;
+  estado_sat: ProviderSat;
+  lista_clinton: boolean;
+  rtu_validado: boolean;
+  licencia_validada: boolean;
+  cuenta_validada: boolean;
+}
+
+interface ProviderPerformanceRow {
+  id?: number;
+  proveedor_id?: number;
+  nivel: ProviderLevel;
+  historial?: string | null;
+  hallazgos?: string | null;
+  fecha?: string | null;
+}
+
+interface CrmRouteRow {
+  id: number;
+  codigo_ruta: string;
+  nombre_ruta: string;
+  origen_id: number;
+  destino_id: number;
+  distancia_km?: number | null;
+  origen?: string;
+  destino?: string;
+  pais_origen?: string;
+  pais_destino?: string;
 }
 
 // ============================================================
@@ -274,6 +378,7 @@ const K = {
   roles: "gl365_roles_normalizado",
   usuarios: "gl365_usuarios_normalizado",
   seedVersion: "gl365_crm_seed_version_20260816_v8",
+  quoteUiMeta: "gl365_cotizacion_ui_metadata_v1",
 };
 
 const API_BASE_URL =
@@ -331,6 +436,25 @@ const FORMAS_PAGO_DEFAULT: FormaPagoRow[] = [
   { id: 1, codigo_forma_pago: "CON", nombre_forma_pago: "CONTADO" },
   { id: 2, codigo_forma_pago: "CR15", nombre_forma_pago: "15 DÍAS" },
   { id: 3, codigo_forma_pago: "CR30", nombre_forma_pago: "30 DÍAS" },
+];
+
+
+const QUOTE_NO_INCLUYE_DEFAULT = [
+  "Maniobras (carga y descarga)",
+  "Seguro de cargas",
+  "Custodios y/o patrullas para unidades en modalidad FTL (cotizado por aparte)",
+  "Estadías",
+  "Selectivos rojos",
+  "Gastos por cuenta ajena",
+];
+
+const QUOTE_NOTAS_IMPORTANTES_DEFAULT = [
+  "Cotización basada en datos proporcionados.",
+  "Para movimientos locales deberán reservar las unidades con 24 Hrs de anticipación.",
+  "En temporada alta las unidades deberán ser reservadas con un promedio de 48 Hrs antes del posicionamiento.",
+  "Logistics Group 365 no asume penalizaciones por atrasos, conflictos sociales, clima, etc.",
+  "Todo movimiento en falso se cobrará el flete.",
+  "Los custodios se cotizan por evento dependiendo la ruta.",
 ];
 
 const UBICACIONES_DEFAULT: UbicacionRow[] = [
@@ -468,6 +592,114 @@ function readArray<T>(key: string, fallback: T[]): T[] {
 
 function writeArray<T>(key: string, data: T[]) {
   localStorage.setItem(key, JSON.stringify(data));
+}
+
+interface QuoteUiMetadata {
+  fecha_ui?: string;
+  estado_ui?: QuoteStatus;
+  moneda_ui?: "USD" | "GTQ";
+  tipo_carga_ui?: string;
+  peso_ui?: string;
+  volumen_ui?: string;
+  observaciones_ui?: string;
+  no_incluye_ui?: string[];
+  notas_importantes_ui?: string[];
+  dias_ui_por_linea?: Array<number | string>;
+  updated_at?: string;
+}
+
+type QuoteUiMetadataMap = Record<string, QuoteUiMetadata>;
+
+function readQuoteUiMetadata(): QuoteUiMetadataMap {
+  try {
+    const raw = localStorage.getItem(K.quoteUiMeta);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeQuoteUiMetadata(data: QuoteUiMetadataMap) {
+  localStorage.setItem(K.quoteUiMeta, JSON.stringify(data));
+}
+
+function quoteUiIdKey(id?: number | null) {
+  const numericId = Number(id || 0);
+  return numericId > 0 ? `id:${numericId}` : "";
+}
+
+function quoteUiCodeKey(code?: string | null) {
+  const cleanCode = String(code || "").trim();
+  return cleanCode ? `code:${cleanCode}` : "";
+}
+
+function getQuoteUiMetadata(
+  id?: number | null,
+  code?: string | null
+): QuoteUiMetadata {
+  const current = readQuoteUiMetadata();
+  const idKey = quoteUiIdKey(id);
+  const codeKey = quoteUiCodeKey(code);
+  const legacyCode = String(code || "").trim();
+
+  return (
+    (idKey && current[idKey]) ||
+    (codeKey && current[codeKey]) ||
+    (legacyCode && current[legacyCode]) ||
+    {}
+  );
+}
+
+function saveQuoteUiMetadata(
+  id: number | null | undefined,
+  code: string | null | undefined,
+  meta: QuoteUiMetadata
+) {
+  const current = readQuoteUiMetadata();
+  const idKey = quoteUiIdKey(id);
+  const codeKey = quoteUiCodeKey(code);
+  const previous = getQuoteUiMetadata(id, code);
+
+  const next: QuoteUiMetadata = {
+    ...previous,
+    ...meta,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (idKey) current[idKey] = next;
+  if (codeKey) current[codeKey] = next;
+
+  writeQuoteUiMetadata(current);
+}
+
+function removeQuoteUiMetadata(
+  id?: number | null,
+  code?: string | null
+) {
+  const current = readQuoteUiMetadata();
+  const idKey = quoteUiIdKey(id);
+  const codeKey = quoteUiCodeKey(code);
+  const legacyCode = String(code || "").trim();
+
+  if (idKey) delete current[idKey];
+  if (codeKey) delete current[codeKey];
+  if (legacyCode) delete current[legacyCode];
+
+  writeQuoteUiMetadata(current);
+}
+
+function firstNonBlank(...values: unknown[]) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text !== "") return text;
+  }
+  return "";
 }
 
 function nextId(items: Array<{ id: number }>) {
@@ -705,6 +937,28 @@ const capitalizePersonTyping = (value: string, max = 35) =>
 const cleanRoleTyping = (value: string, max = 60) =>
   keepSingleSpaces(cleanName(value)).slice(0, max);
 
+const uppercaseFirstLetter = (value: string) =>
+  value.replace(
+    /(^\s*)([a-záéíóúüñ])/,
+    (_match, spaces, letter) =>
+      `${spaces}${String(letter).toLocaleUpperCase("es-GT")}`
+  );
+
+const capitalizeCommercialTyping = (value: string, max = 120) =>
+  uppercaseFirstLetter(
+    keepSingleSpaces(cleanCompany(value)).slice(0, max)
+  );
+
+const capitalizeRoleTyping = (value: string, max = 60) =>
+  uppercaseFirstLetter(
+    keepSingleSpaces(cleanName(value)).slice(0, max)
+  );
+
+const capitalizeAddressTyping = (value: string, max = 180) =>
+  uppercaseFirstLetter(
+    keepSingleSpaces(cleanAddress(value)).slice(0, max)
+  );
+
 const cleanCommercialTyping = (value: string, max = 120) =>
   keepSingleSpaces(cleanCompany(value)).slice(0, max);
 
@@ -935,6 +1189,512 @@ function SearchableLocationSelect({
   );
 }
 
+
+function normalizeCrmSearch(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function SearchableClientSelect({
+  id,
+  valueId,
+  clients,
+  disabled,
+  error,
+  placeholder = "Buscar por código, empresa o NIT...",
+  onChange,
+}: {
+  id: string;
+  valueId?: number | null;
+  clients: ClienteRow[];
+  disabled?: boolean;
+  error?: string;
+  placeholder?: string;
+  onChange: (id: number | null) => void;
+}) {
+  const selected = clients.find(
+    (client) => Number(client.id) === Number(valueId)
+  );
+
+  const options = useMemo(
+    () =>
+      clients
+        .filter(
+          (client) =>
+            Number(client.estado_cliente_id) === 1 ||
+            Number(client.id) === Number(valueId)
+        )
+        .sort((a, b) =>
+          String(a.nombre_empresa || "").localeCompare(
+            String(b.nombre_empresa || ""),
+            "es"
+          )
+        ),
+    [clients, valueId]
+  );
+
+  const clientLabel = (client: ClienteRow) =>
+    `${client.codigo_cliente} · ${client.nombre_empresa} · ${client.nit}`;
+
+  const [text, setText] = useState(
+    selected ? clientLabel(selected) : ""
+  );
+  const [open, setOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Solo sincroniza el texto con el valor seleccionado cuando el usuario
+  // NO está escribiendo. Así no se borra cada tecla.
+  useEffect(() => {
+    if (!isEditing) {
+      setText(selected ? clientLabel(selected) : "");
+    }
+  }, [
+    isEditing,
+    selected?.id,
+    selected?.codigo_cliente,
+    selected?.nombre_empresa,
+    selected?.nit,
+  ]);
+
+  const filtered = useMemo(() => {
+    const query = normalizeCrmSearch(text);
+    if (!query) return options.slice(0, 10);
+
+    const terms = query.split(" ").filter(Boolean);
+
+    return options
+      .filter((client) => {
+        const haystack = normalizeCrmSearch(
+          [
+            client.codigo_cliente,
+            client.nombre_empresa,
+            client.nit,
+          ].join(" ")
+        );
+
+        return terms.every((term) => haystack.includes(term));
+      })
+      .slice(0, 10);
+  }, [options, text]);
+
+  const selectClient = (client: ClienteRow) => {
+    setText(clientLabel(client));
+    setOpen(false);
+    setIsEditing(false);
+    onChange(Number(client.id));
+  };
+
+  const clearClient = () => {
+    setText("");
+    setOpen(false);
+    setIsEditing(false);
+    onChange(null);
+  };
+
+  const resolveTypedValue = () => {
+    const typed = normalizeCrmSearch(text);
+
+    if (!typed) {
+      clearClient();
+      return null;
+    }
+
+    const exact = options.find(
+      (client) =>
+        normalizeCrmSearch(clientLabel(client)) === typed
+    );
+
+    if (exact) {
+      selectClient(exact);
+      return exact;
+    }
+
+    if (filtered.length === 1) {
+      selectClient(filtered[0]);
+      return filtered[0];
+    }
+
+    return null;
+  };
+
+  return (
+    <div className="relative min-w-0 w-full">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+
+        <input
+          id={id}
+          disabled={disabled}
+          data-enter-item="true"
+          autoComplete="off"
+          value={text}
+          onFocus={() => {
+            setIsEditing(true);
+            setOpen(true);
+          }}
+          onChange={(e) => {
+            const value = e.target.value;
+            setText(value);
+            setIsEditing(true);
+            setOpen(true);
+
+            if (!value.trim()) {
+              onChange(null);
+            }
+          }}
+          onBlur={() => {
+            // Se deja un pequeño margen para poder hacer clic en una opción.
+            window.setTimeout(() => {
+              resolveTypedValue();
+              setOpen(false);
+              setIsEditing(false);
+            }, 120);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setOpen(false);
+              return;
+            }
+
+            if (e.key === "Enter") {
+              e.preventDefault();
+
+              const resolved = resolveTypedValue();
+
+              if (!resolved && filtered.length > 0) {
+                selectClient(filtered[0]);
+              }
+
+              window.setTimeout(() => moveWithEnter(e), 0);
+            }
+          }}
+          placeholder={placeholder}
+          className={`h-8 w-full rounded border bg-white pl-8 pr-8 font-semibold text-[#0C2D6B] outline-none ${
+            error
+              ? "border-red-400"
+              : "border-blue-300 focus:border-[#FF6A00]"
+          }`}
+        />
+
+        {!disabled && text && (
+          <button
+            type="button"
+            tabIndex={-1}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={clearClient}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-[#FF6A00]"
+            title="Limpiar cliente"
+            aria-label="Limpiar cliente"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {!disabled && open && (
+        <div className="absolute left-0 right-0 top-[36px] z-[140] max-h-60 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl">
+          {filtered.length > 0 ? (
+            filtered.map((client) => (
+              <button
+                key={`${id}-${client.id}`}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => selectClient(client)}
+                className={`w-full border-b border-gray-100 px-3 py-2 text-left last:border-b-0 hover:bg-blue-50 ${
+                  Number(valueId) === Number(client.id)
+                    ? "bg-blue-50"
+                    : "bg-white"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-bold text-[#0C2D6B]">
+                      {client.nombre_empresa}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-gray-500">
+                      {client.codigo_cliente} · NIT {client.nit}
+                    </p>
+                  </div>
+
+                  {Number(valueId) === Number(client.id) && (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+                  )}
+                </div>
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-3 text-[11px] text-gray-500">
+              No se encontraron clientes con esa búsqueda.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SearchableContactSelect({
+  id,
+  valueId,
+  contacts,
+  disabled,
+  error,
+  placeholder = "Buscar contacto por nombre, correo o cargo...",
+  onChange,
+}: {
+  id: string;
+  valueId?: number | null;
+  contacts: ContactoClienteRow[];
+  disabled?: boolean;
+  error?: string;
+  placeholder?: string;
+  onChange: (id: number | null) => void;
+}) {
+  const selected = contacts.find(
+    (contact) => Number(contact.id) === Number(valueId)
+  );
+
+  const options = useMemo(
+    () =>
+      contacts
+        .filter(
+          (contact) =>
+            contact.estado !== false ||
+            Number(contact.id) === Number(valueId)
+        )
+        .sort((a, b) => {
+          if (Boolean(a.es_principal) !== Boolean(b.es_principal)) {
+            return a.es_principal ? -1 : 1;
+          }
+
+          return fullContactName(a).localeCompare(
+            fullContactName(b),
+            "es"
+          );
+        }),
+    [contacts, valueId]
+  );
+
+  const contactLabel = (contact: ContactoClienteRow) => {
+    const principal = contact.es_principal ? " · Principal" : "";
+    const correo = contact.correo ? ` · ${contact.correo}` : "";
+
+    return `${fullContactName(contact)}${principal}${correo}`;
+  };
+
+  const [text, setText] = useState(
+    selected ? contactLabel(selected) : ""
+  );
+  const [open, setOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setText(selected ? contactLabel(selected) : "");
+    }
+  }, [
+    isEditing,
+    selected?.id,
+    selected?.primer_nombre,
+    selected?.segundo_nombre,
+    selected?.primer_apellido,
+    selected?.segundo_apellido,
+    selected?.cargo,
+    selected?.correo,
+    selected?.es_principal,
+  ]);
+
+  const filtered = useMemo(() => {
+    const query = normalizeCrmSearch(text);
+    if (!query) return options.slice(0, 10);
+
+    const terms = query.split(" ").filter(Boolean);
+
+    return options
+      .filter((contact) => {
+        const haystack = normalizeCrmSearch(
+          [
+            fullContactName(contact),
+            contact.cargo,
+            contact.correo,
+            contact.es_principal ? "principal" : "",
+          ].join(" ")
+        );
+
+        return terms.every((term) => haystack.includes(term));
+      })
+      .slice(0, 10);
+  }, [options, text]);
+
+  const selectContact = (contact: ContactoClienteRow) => {
+    setText(contactLabel(contact));
+    setOpen(false);
+    setIsEditing(false);
+    onChange(Number(contact.id));
+  };
+
+  const clearContact = () => {
+    setText("");
+    setOpen(false);
+    setIsEditing(false);
+    onChange(null);
+  };
+
+  const resolveTypedValue = () => {
+    const typed = normalizeCrmSearch(text);
+
+    if (!typed) {
+      clearContact();
+      return null;
+    }
+
+    const exact = options.find(
+      (contact) =>
+        normalizeCrmSearch(contactLabel(contact)) === typed
+    );
+
+    if (exact) {
+      selectContact(exact);
+      return exact;
+    }
+
+    if (filtered.length === 1) {
+      selectContact(filtered[0]);
+      return filtered[0];
+    }
+
+    return null;
+  };
+
+  return (
+    <div className="relative min-w-0 w-full">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+
+        <input
+          id={id}
+          disabled={disabled}
+          data-enter-item="true"
+          autoComplete="off"
+          value={text}
+          onFocus={() => {
+            setIsEditing(true);
+            setOpen(true);
+          }}
+          onChange={(e) => {
+            const value = e.target.value;
+            setText(value);
+            setIsEditing(true);
+            setOpen(true);
+
+            if (!value.trim()) {
+              onChange(null);
+            }
+          }}
+          onBlur={() => {
+            window.setTimeout(() => {
+              resolveTypedValue();
+              setOpen(false);
+              setIsEditing(false);
+            }, 120);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setOpen(false);
+              return;
+            }
+
+            if (e.key === "Enter") {
+              e.preventDefault();
+
+              const resolved = resolveTypedValue();
+
+              if (!resolved && filtered.length > 0) {
+                selectContact(filtered[0]);
+              }
+
+              window.setTimeout(() => moveWithEnter(e), 0);
+            }
+          }}
+          placeholder={placeholder}
+          className={`h-8 w-full rounded border bg-white pl-8 pr-8 font-semibold text-[#0C2D6B] outline-none ${
+            error
+              ? "border-red-400"
+              : "border-blue-300 focus:border-[#FF6A00]"
+          }`}
+        />
+
+        {!disabled && text && (
+          <button
+            type="button"
+            tabIndex={-1}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={clearContact}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-[#FF6A00]"
+            title="Limpiar contacto"
+            aria-label="Limpiar contacto"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {!disabled && open && (
+        <div className="absolute left-0 right-0 top-[36px] z-[140] max-h-60 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl">
+          {filtered.length > 0 ? (
+            filtered.map((contact) => (
+              <button
+                key={`${id}-${contact.id}`}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => selectContact(contact)}
+                className={`w-full border-b border-gray-100 px-3 py-2 text-left last:border-b-0 hover:bg-blue-50 ${
+                  Number(valueId) === Number(contact.id)
+                    ? "bg-blue-50"
+                    : "bg-white"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="text-[12px] font-bold text-[#0C2D6B]">
+                        {fullContactName(contact)}
+                      </p>
+
+                      {contact.es_principal && (
+                        <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-bold text-green-700">
+                          Principal
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="mt-0.5 text-[10px] text-gray-500">
+                      {contact.cargo || "Sin cargo"}
+                      {contact.correo ? ` · ${contact.correo}` : ""}
+                    </p>
+                  </div>
+
+                  {Number(valueId) === Number(contact.id) && (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+                  )}
+                </div>
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-3 text-[11px] text-gray-500">
+              No se encontraron contactos con esa búsqueda.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function KpiCard({ title, value, icon: Icon, color }: { title: string; value: string | number; icon: any; color: "blue" | "green" | "orange" }) {
   const bar = color === "green" ? "bg-[#22C55E]" : color === "orange" ? "bg-[#FF6A00]" : "bg-[#0C2D6B]";
   const icon = color === "green" ? "bg-green-50 text-[#22C55E]" : color === "orange" ? "bg-orange-50 text-[#FF6A00]" : "bg-blue-50 text-[#0C2D6B]";
@@ -1159,7 +1919,34 @@ async function generarPDFCliente(
 // ============================================================
 
 export function CRM() {
-  const [activeTab, setActiveTab] = useState<"seguimiento" | "clientes" | "cotizaciones">("seguimiento");
+  const [searchParams] = useSearchParams();
+
+  const [activeTab, setActiveTab] = useState<"seguimiento" | "clientes" | "cotizaciones" | "proveedores">("seguimiento");
+
+  useEffect(() => {
+    const requestedTab = String(searchParams.get("tab") || "").toLowerCase();
+
+    const tabMap: Record<
+      string,
+      "seguimiento" | "clientes" | "cotizaciones" | "proveedores"
+    > = {
+      oportunidades: "seguimiento",
+      oportunidad: "seguimiento",
+      seguimiento: "seguimiento",
+      clientes: "clientes",
+      cliente: "clientes",
+      cotizaciones: "cotizaciones",
+      cotizacion: "cotizaciones",
+      proveedores: "proveedores",
+      proveedor: "proveedores",
+    };
+
+    const nextTab = tabMap[requestedTab];
+
+    if (nextTab) {
+      setActiveTab(nextTab);
+    }
+  }, [searchParams]);
 
   const [clients, setClients] = useState<ClienteRow[]>([]);
   const [contacts, setContacts] = useState<ContactoClienteRow[]>([]);
@@ -1175,22 +1962,50 @@ export function CRM() {
   const [usuarios, setUsuarios] = useState<UsuarioRow[]>([]);
   const [prefijos, setPrefijos] = useState<PrefijoTelefonicoRow[]>([]);
 
+
+  // Directorio de proveedores: movido desde Operaciones al CRM.
+  const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [providerContacts, setProviderContacts] = useState<ProviderContactRow[]>([]);
+  const [providerServices, setProviderServices] = useState<ProviderServiceRow[]>([]);
+  const [providerCompliance, setProviderCompliance] = useState<ProviderComplianceRow[]>([]);
+  const [providerPerformance, setProviderPerformance] = useState<ProviderPerformanceRow[]>([]);
+  const [providerStates, setProviderStates] = useState<any[]>([]);
+  const [crmRoutes, setCrmRoutes] = useState<CrmRouteRow[]>([]);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("Todos");
   const [leadStageFilter, setLeadStageFilter] = useState("Todos");
-  const [sortField, setSortField] = useState("date");
-  const [crmSortDirection, setCrmSortDirection] = useState<CrmSortDirection>("desc");
+  const [providerStatusFilter, setProviderStatusFilter] = useState("Todos");
+  const [providerLevelFilter, setProviderLevelFilter] = useState("Todos");
+  const [providerSatFilter, setProviderSatFilter] = useState("Todos");
+  // Sin columna activa al entrar.
+  // Cuando sortField está vacío, el CRM usa ID DESC:
+  // el registro ingresado más recientemente aparece primero.
+  const [sortField, setSortField] = useState("");
+  const [crmSortDirection, setCrmSortDirection] =
+    useState<CrmSortDirection>("desc");
 
   // Paginación independiente para los tres submódulos del CRM.
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [leadPage, setLeadPage] = useState(1);
   const [clientPage, setClientPage] = useState(1);
   const [quotePage, setQuotePage] = useState(1);
+  const [providerPage, setProviderPage] = useState(1);
 
   const [clientModal, setClientModal] = useState<{ open: boolean; mode: ModalMode; value: Partial<ClienteRow> }>({ open: false, mode: "create", value: {} });
   const [clientErrors, setClientErrors] = useState<FieldErrors>({});
 
   const [contactModal, setContactModal] = useState<{ open: boolean; mode: ModalMode; value: Partial<ContactoClienteRow>; clientId: number | null }>({ open: false, mode: "create", value: {}, clientId: null });
+
+  // Contactos y teléfonos temporales del formulario "Nuevo cliente".
+  // Se usan IDs negativos para diferenciarlos de los registros de MySQL.
+  const [newClientContacts, setNewClientContacts] =
+    useState<ContactoClienteRow[]>([]);
+  const [newClientPhones, setNewClientPhones] =
+    useState<TelefonoContactoRow[]>([]);
+  const draftContactIdRef = useRef(-1);
+  const draftPhoneIdRef = useRef(-1);
+
   const [contactErrors, setContactErrors] = useState<FieldErrors>({});
 
   const [phoneModal, setPhoneModal] = useState<{ open: boolean; mode: ModalMode; value: Partial<TelefonoContactoRow>; contactId: number | null }>({ open: false, mode: "create", value: {}, contactId: null });
@@ -1202,10 +2017,58 @@ export function CRM() {
   const [quoteModal, setQuoteModal] = useState<{ open: boolean; mode: ModalMode; value: Partial<CotizacionRow>; details: CotizacionDetalleRow[] }>({ open: false, mode: "create", value: {}, details: [] });
   const [quoteErrors, setQuoteErrors] = useState<FieldErrors>({});
 
-  const [deleteModal, setDeleteModal] = useState<{ open: boolean; type: "client" | "contact" | "phone" | "lead" | "quote" | null; id: number | null }>({ open: false, type: null, id: null });
+
+  const [providerModal, setProviderModal] = useState<{
+    open: boolean;
+    mode: ModalMode;
+    value: Partial<ProviderRow>;
+  }>({ open: false, mode: "create", value: {} });
+  const [providerContactDraft, setProviderContactDraft] = useState<ProviderContactRow[]>([]);
+  const [providerServiceDraft, setProviderServiceDraft] = useState<ProviderServiceRow[]>([]);
+  const [providerComplianceDraft, setProviderComplianceDraft] = useState<ProviderComplianceRow>({
+    estado_sat: "pendiente",
+    lista_clinton: false,
+    rtu_validado: false,
+    licencia_validada: false,
+    cuenta_validada: false,
+  });
+  const [providerPerformanceDraft, setProviderPerformanceDraft] = useState<ProviderPerformanceRow>({
+    nivel: "Amarillo",
+    historial: "",
+    hallazgos: "",
+    fecha: todayISO(),
+  });
+  const [providerErrors, setProviderErrors] = useState<FieldErrors>({});
+  const [providerDeleteId, setProviderDeleteId] = useState<number | null>(null);
+
+  // Modal de nueva ruta desde Cotizaciones.
+  const [routeModalOpen, setRouteModalOpen] = useState(false);
+  const [routeDraft, setRouteDraft] = useState({
+    codigo_ruta: "",
+    nombre_ruta: "",
+    origen: "",
+    pais_origen: "Guatemala",
+    destino: "",
+    pais_destino: "Guatemala",
+    distancia_km: "",
+  });
+  const [routeErrors, setRouteErrors] = useState<FieldErrors>({});
+
+  const [deleteModal, setDeleteModal] = useState<{
+    open: boolean;
+    type:
+      | "client"
+      | "clientPermanent"
+      | "contact"
+      | "phone"
+      | "lead"
+      | "quote"
+      | null;
+    id: number | null;
+  }>({ open: false, type: null, id: null });
+  const [clientInactiveReason, setClientInactiveReason] = useState("");
 
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const firstQuoteFieldRef = useRef<HTMLSelectElement | null>(null);
 
   // Cuando un cliente se crea desde Oportunidad o Cotización,
   // se regresa al formulario que lo solicitó y se selecciona automáticamente.
@@ -1231,11 +2094,21 @@ export function CRM() {
         : [];
       const prefijosBD = Array.isArray(data?.prefijos) ? data.prefijos : PREFIJOS_DEFAULT;
 
+      const proveedoresBD = Array.isArray(data?.proveedores) ? data.proveedores : [];
+      const contactosProveedorBD = Array.isArray(data?.contactosProveedor) ? data.contactosProveedor : [];
+      const serviciosProveedorBD = Array.isArray(data?.serviciosProveedor) ? data.serviciosProveedor : [];
+      const cumplimientosProveedorBD = Array.isArray(data?.cumplimientosProveedor) ? data.cumplimientosProveedor : [];
+      const desempenosProveedorBD = Array.isArray(data?.desempenosProveedor) ? data.desempenosProveedor : [];
+      const estadosProveedorBD = Array.isArray(data?.estadosProveedor) ? data.estadosProveedor : [];
+      const rutasBD = Array.isArray(data?.rutas) ? data.rutas : [];
+
       setClients(
         clientesBD.map((c: any) => ({
           ...c,
           id: Number(c.id),
           estado_cliente_id: Number(c.estado_cliente_id || 1),
+          motivo_inactivacion: c.motivo_inactivacion || null,
+          fecha_inactivacion: c.fecha_inactivacion || null,
           nombre_estado_cliente: c.nombre_estado_cliente || estadoClienteNombre(Number(c.estado_cliente_id || 1)),
           created_at: c.created_at || new Date().toISOString(),
           updated_at: c.updated_at || new Date().toISOString(),
@@ -1288,35 +2161,75 @@ export function CRM() {
       );
 
       setQuotes(
-        cotizacionesBD.map((q: any, index: number) => ({
-          id: Number(q.id) || index + 1,
-          codigo_cotizacion: q.codigo_cotizacion || q.numero_cotizacion || `COT-${String(index + 1).padStart(3, "0")}`,
-          cliente_id: q.cliente_id ? Number(q.cliente_id) : null,
-          contacto_id: q.contacto_id ? Number(q.contacto_id) : null,
-          ejecutivo_id: q.ejecutivo_id ? Number(q.ejecutivo_id) : null,
-          modalidad_id: q.modalidad_id ? Number(q.modalidad_id) : null,
-          forma_pago_id: q.forma_pago_id ? Number(q.forma_pago_id) : null,
-          origen_id: q.origen_id ? Number(q.origen_id) : null,
-          destino_id: q.destino_id ? Number(q.destino_id) : null,
-          fecha_ui: String(q.fecha_ui || q.fecha || q.created_at || todayISO()).slice(0, 10),
-          estado_ui: (q.estado_ui || q.estado || "Borrador") as QuoteStatus,
-          moneda_ui: q.moneda_ui === "USD" || q.moneda === "USD" ? "USD" : "GTQ",
-          tipo_carga_ui: q.tipo_carga_ui || q.tipo_carga || q.nombre_modalidad || "",
-          peso_ui: q.peso_ui || q.peso || "",
-          volumen_ui: q.volumen_ui || q.volumen || "",
-          observaciones_ui: q.observaciones_ui || q.observaciones || "",
-        }))
+        cotizacionesBD.map((q: any, index: number) => {
+          const codigo = q.codigo_cotizacion || q.numero_cotizacion || `COT-${String(index + 1).padStart(3, "0")}`;
+          const meta = getQuoteUiMetadata(
+            Number(q.id) || index + 1,
+            codigo
+          );
+
+          return {
+            id: Number(q.id) || index + 1,
+            codigo_cotizacion: codigo,
+            cliente_id: q.cliente_id ? Number(q.cliente_id) : null,
+            contacto_id: q.contacto_id ? Number(q.contacto_id) : null,
+            ejecutivo_id: q.ejecutivo_id ? Number(q.ejecutivo_id) : null,
+            modalidad_id: q.modalidad_id ? Number(q.modalidad_id) : null,
+            forma_pago_id: q.forma_pago_id ? Number(q.forma_pago_id) : null,
+            origen_id: q.origen_id ? Number(q.origen_id) : null,
+            destino_id: q.destino_id ? Number(q.destino_id) : null,
+            fecha_ui: firstNonBlank(q.fecha_ui, meta.fecha_ui, q.fecha, q.created_at, todayISO()).slice(0, 10),
+            estado_ui: (firstNonBlank(q.estado_ui, meta.estado_ui, q.estado, "Borrador") || "Borrador") as QuoteStatus,
+            moneda_ui: firstNonBlank(q.moneda_ui, meta.moneda_ui, q.moneda, "GTQ").toUpperCase() === "USD" ? "USD" : "GTQ",
+            tipo_carga_ui: firstNonBlank(q.tipo_carga_ui, meta.tipo_carga_ui, q.tipo_carga, q.nombre_modalidad),
+            peso_ui: firstNonBlank(q.peso_ui, meta.peso_ui, q.peso),
+            volumen_ui: firstNonBlank(q.volumen_ui, meta.volumen_ui, q.volumen),
+            observaciones_ui: firstNonBlank(
+              meta.observaciones_ui,
+              q.observaciones_ui,
+              q.observaciones
+            ),
+            no_incluye_ui:
+              Array.isArray(meta.no_incluye_ui) && meta.no_incluye_ui.length
+                ? meta.no_incluye_ui
+                : [...QUOTE_NO_INCLUYE_DEFAULT],
+            notas_importantes_ui:
+              Array.isArray(meta.notas_importantes_ui) && meta.notas_importantes_ui.length
+                ? meta.notas_importantes_ui
+                : [...QUOTE_NOTAS_IMPORTANTES_DEFAULT],
+          };
+        })
       );
 
+      const quoteCodeById = new Map<number, string>(
+        cotizacionesBD.map((q: any, index: number) => [
+          Number(q.id) || index + 1,
+          q.codigo_cotizacion || q.numero_cotizacion || `COT-${String(index + 1).padStart(3, "0")}`,
+        ])
+      );
+      const detailPositionByQuote = new Map<number, number>();
+
       setQuoteDetails(
-        detallesBD.map((d: any, index: number) => ({
-          id: Number(d.id) || index + 1,
-          cotizacion_id: Number(d.cotizacion_id),
-          descripcion: d.descripcion || "",
-          cantidad: Number(d.cantidad ?? 1),
-          precio_unitario: Number(d.precio_unitario ?? 0),
-          dias_ui: Number(d.dias_ui ?? d.dias ?? 1),
-        }))
+        detallesBD.map((d: any, index: number) => {
+          const cotizacionId = Number(d.cotizacion_id);
+          const position = detailPositionByQuote.get(cotizacionId) || 0;
+          detailPositionByQuote.set(cotizacionId, position + 1);
+          const quoteCode = quoteCodeById.get(cotizacionId) || "";
+          const meta = getQuoteUiMetadata(
+            cotizacionId,
+            quoteCode
+          );
+          const savedDays = meta.dias_ui_por_linea?.[position];
+
+          return {
+            id: Number(d.id) || index + 1,
+            cotizacion_id: cotizacionId,
+            descripcion: d.descripcion || "",
+            cantidad: Number(d.cantidad ?? 1),
+            precio_unitario: Number(d.precio_unitario ?? 0),
+            dias_ui: Number(firstNonBlank(d.dias_ui, d.dias, savedDays, 1)),
+          };
+        })
       );
 
       setModalidades(Array.isArray(data?.modalidades) ? data.modalidades : []);
@@ -1332,6 +2245,64 @@ export function CRM() {
           prefijo: String(p.prefijo || "+502"),
           ejemplo: p.ejemplo || null,
           activo: p.activo === 0 || p.activo === false ? false : true,
+        }))
+      );
+
+
+      setProviders(
+        proveedoresBD.map((p: any) => ({
+          ...p,
+          id: Number(p.id),
+          estado_id: Number(p.estado_id || 1),
+          desempeno: (p.desempeno || "Amarillo") as ProviderLevel,
+          estado_sat: (p.estado_sat || "pendiente") as ProviderSat,
+        }))
+      );
+      setProviderContacts(
+        contactosProveedorBD.map((c: any) => ({
+          ...c,
+          id: Number(c.id),
+          proveedor_id: Number(c.proveedor_id),
+          es_principal: Boolean(c.es_principal),
+          estado: c.estado === 0 || c.estado === false ? false : true,
+        }))
+      );
+      setProviderServices(
+        serviciosProveedorBD.map((s: any) => ({
+          ...s,
+          id: Number(s.id),
+          proveedor_id: Number(s.proveedor_id),
+          es_principal: Boolean(s.es_principal),
+        }))
+      );
+      setProviderCompliance(
+        cumplimientosProveedorBD.map((c: any) => ({
+          ...c,
+          id: Number(c.id),
+          proveedor_id: Number(c.proveedor_id),
+          estado_sat: (c.estado_sat || "pendiente") as ProviderSat,
+          lista_clinton: Boolean(c.lista_clinton),
+          rtu_validado: Boolean(c.rtu_validado),
+          licencia_validada: Boolean(c.licencia_validada),
+          cuenta_validada: Boolean(c.cuenta_validada),
+        }))
+      );
+      setProviderPerformance(
+        desempenosProveedorBD.map((d: any) => ({
+          ...d,
+          id: Number(d.id),
+          proveedor_id: Number(d.proveedor_id),
+          nivel: (d.nivel || "Amarillo") as ProviderLevel,
+        }))
+      );
+      setProviderStates(estadosProveedorBD);
+      setCrmRoutes(
+        rutasBD.map((r: any) => ({
+          ...r,
+          id: Number(r.id),
+          origen_id: Number(r.origen_id),
+          destino_id: Number(r.destino_id),
+          distancia_km: r.distancia_km == null ? null : Number(r.distancia_km),
         }))
       );
 
@@ -1360,6 +2331,13 @@ export function CRM() {
       setRoles([]);
       setUsuarios([]);
       setPrefijos([]);
+      setProviders([]);
+      setProviderContacts([]);
+      setProviderServices([]);
+      setProviderCompliance([]);
+      setProviderPerformance([]);
+      setProviderStates([]);
+      setCrmRoutes([]);
     }
   };
 
@@ -1371,17 +2349,19 @@ export function CRM() {
     setSearchQuery("");
     setStatusFilter("Todos");
     setLeadStageFilter("Todos");
+    setProviderStatusFilter("Todos");
+    setProviderLevelFilter("Todos");
+    setProviderSatFilter("Todos");
 
-    if (activeTab === "seguimiento") {
-      setSortField("date");
-      setCrmSortDirection("desc");
-    } else if (activeTab === "clientes") {
-      setSortField("nombre_empresa");
-      setCrmSortDirection("asc");
-    } else {
-      setSortField("date");
-      setCrmSortDirection("desc");
-    }
+    // Orden natural del sistema: último ingresado primero,
+    // sin mostrar ninguna columna como filtro/orden activo.
+    setSortField("");
+    setCrmSortDirection("desc");
+
+    setLeadPage(1);
+    setClientPage(1);
+    setQuotePage(1);
+    setProviderPage(1);
   }, [activeTab]);
 
   const showNotice = (type: "success" | "error", text: string) => {
@@ -1474,6 +2454,14 @@ export function CRM() {
           weight: q.peso_ui,
           volume: q.volumen_ui,
           observations: q.observaciones_ui,
+          noIncluye:
+            Array.isArray(q.no_incluye_ui) && q.no_incluye_ui.length
+              ? q.no_incluye_ui
+              : [...QUOTE_NO_INCLUYE_DEFAULT],
+          notasImportantes:
+            Array.isArray(q.notas_importantes_ui) && q.notas_importantes_ui.length
+              ? q.notas_importantes_ui
+              : [...QUOTE_NOTAS_IMPORTANTES_DEFAULT],
           services,
           subtotal,
           iva,
@@ -1529,6 +2517,95 @@ export function CRM() {
     return crmSortDirection === "asc" ? diff : -diff;
   };
 
+
+  const providerMainContact = (providerId: number) => {
+    const rows = providerContacts.filter(
+      (c) => Number(c.proveedor_id) === Number(providerId) && c.estado !== false
+    );
+    return rows.find((c) => c.es_principal) || rows[0];
+  };
+
+  const providerMainService = (providerId: number) => {
+    const rows = providerServices.filter(
+      (s) => Number(s.proveedor_id) === Number(providerId)
+    );
+    return rows.find((s) => s.es_principal) || rows[0];
+  };
+
+  const providerComplianceFor = (providerId: number) =>
+    providerCompliance.find((c) => Number(c.proveedor_id) === Number(providerId));
+
+  const providerPerformanceFor = (providerId: number) =>
+    [...providerPerformance]
+      .filter((d) => Number(d.proveedor_id) === Number(providerId))
+      .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")))[0];
+
+  const providerStatusName = (p: ProviderRow) =>
+    p.nombre_estado_proveedor || p.estado || (Number(p.estado_id) === 2 ? "Inactivo" : "Activo");
+
+  const filteredProviders = useMemo(() => {
+    const s = searchQuery.trim().toLowerCase();
+    return providers.filter((p) => {
+      const contact = providerMainContact(p.id);
+      const service = providerMainService(p.id);
+      const perf = providerPerformanceFor(p.id)?.nivel || p.desempeno || "Amarillo";
+      const sat = providerComplianceFor(p.id)?.estado_sat || p.estado_sat || "pendiente";
+      const status = providerStatusName(p);
+      const contactName = fullContactName(contact as any);
+
+      return (
+        (!s ||
+          p.codigo_proveedor.toLowerCase().includes(s) ||
+          p.razon_social.toLowerCase().includes(s) ||
+          String(p.nombre_comercial || "").toLowerCase().includes(s) ||
+          p.nit.toLowerCase().includes(s) ||
+          contactName.toLowerCase().includes(s) ||
+          String(service?.nombre_servicio_proveedor || "").toLowerCase().includes(s)) &&
+        (providerStatusFilter === "Todos" || status === providerStatusFilter) &&
+        (providerLevelFilter === "Todos" || perf === providerLevelFilter) &&
+        (providerSatFilter === "Todos" || sat === providerSatFilter)
+      );
+    });
+  }, [providers, providerContacts, providerServices, providerCompliance, providerPerformance, searchQuery, providerStatusFilter, providerLevelFilter, providerSatFilter]);
+
+  const sortedProviders = useMemo(() => {
+    const rows = [...filteredProviders];
+    rows.sort((a, b) => {
+      if (!sortField) return b.id - a.id;
+      const aContact = providerMainContact(a.id);
+      const bContact = providerMainContact(b.id);
+      const aService = providerMainService(a.id);
+      const bService = providerMainService(b.id);
+      const aPerf = providerPerformanceFor(a.id)?.nivel || a.desempeno || "Amarillo";
+      const bPerf = providerPerformanceFor(b.id)?.nivel || b.desempeno || "Amarillo";
+      const aSat = providerComplianceFor(a.id)?.estado_sat || a.estado_sat || "pendiente";
+      const bSat = providerComplianceFor(b.id)?.estado_sat || b.estado_sat || "pendiente";
+
+      const av =
+        sortField === "providerCode" ? a.codigo_proveedor :
+        sortField === "providerName" ? a.razon_social :
+        sortField === "providerNit" ? a.nit :
+        sortField === "providerService" ? aService?.nombre_servicio_proveedor || "" :
+        sortField === "providerContact" ? fullContactName(aContact as any) :
+        sortField === "providerPerformance" ? aPerf :
+        sortField === "providerSat" ? aSat :
+        sortField === "providerStatus" ? providerStatusName(a) : a.id;
+
+      const bv =
+        sortField === "providerCode" ? b.codigo_proveedor :
+        sortField === "providerName" ? b.razon_social :
+        sortField === "providerNit" ? b.nit :
+        sortField === "providerService" ? bService?.nombre_servicio_proveedor || "" :
+        sortField === "providerContact" ? fullContactName(bContact as any) :
+        sortField === "providerPerformance" ? bPerf :
+        sortField === "providerSat" ? bSat :
+        sortField === "providerStatus" ? providerStatusName(b) : b.id;
+
+      return compareValues(av, bv);
+    });
+    return rows;
+  }, [filteredProviders, sortField, crmSortDirection, providerContacts, providerServices, providerCompliance, providerPerformance]);
+
   const filteredClients = useMemo(() => {
     const s = searchQuery.trim().toLowerCase();
     return clients.filter((c) => {
@@ -1548,6 +2625,9 @@ export function CRM() {
   const sortedClients = useMemo(() => {
     const rows = [...filteredClients];
     rows.sort((a, b) => {
+      // Sin columna seleccionada: nuevo -> antiguo.
+      if (!sortField) return b.id - a.id;
+
       const ac = principalContact(a.id);
       const bc = principalContact(b.id);
 
@@ -1556,14 +2636,16 @@ export function CRM() {
         sortField === "nit" ? a.nit :
         sortField === "estado" ? estadoClienteNombre(a.estado_cliente_id) :
         sortField === "contacto" ? fullContactName(ac) :
-        a.nombre_empresa;
+        sortField === "nombre_empresa" ? a.nombre_empresa :
+        a.id;
 
       const bv =
         sortField === "codigo_cliente" ? b.codigo_cliente :
         sortField === "nit" ? b.nit :
         sortField === "estado" ? estadoClienteNombre(b.estado_cliente_id) :
         sortField === "contacto" ? fullContactName(bc) :
-        b.nombre_empresa;
+        sortField === "nombre_empresa" ? b.nombre_empresa :
+        b.id;
 
       return compareValues(av, bv);
     });
@@ -1571,17 +2653,53 @@ export function CRM() {
   }, [filteredClients, contacts, sortField, crmSortDirection]);
 
   const filteredLeads = useMemo(() => {
-    const s = searchQuery.trim().toLowerCase();
-    return leads.filter((l) => {
-      const matches =
-        !s ||
-        l.code.toLowerCase().includes(s) ||
-        l.clientName.toLowerCase().includes(s) ||
-        l.opportunityName.toLowerCase().includes(s) ||
-        l.type.toLowerCase().includes(s) ||
-        l.executive.toLowerCase().includes(s);
+    const normalizeSearch = (value: any) =>
+      String(value ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
 
-      const stageMatches = leadStageFilter === "Todos" || l.stage === leadStageFilter;
+    const searchTerms = normalizeSearch(searchQuery)
+      .split(" ")
+      .filter(Boolean);
+
+    const stageNames: Record<Stage, string> = {
+      prospecto: "Prospecto",
+      cotizado: "Cotizado",
+      negociacion: "Negociación",
+      ganado: "Ganado",
+      perdido: "Perdido",
+    };
+
+    return leads.filter((lead) => {
+      const haystack = normalizeSearch(
+        [
+          lead.code,
+          lead.opportunityName,
+          lead.clientName,
+          lead.type,
+          lead.executive,
+          lead.date,
+          lead.closeDate,
+          lead.probability,
+          lead.amount,
+          lead.stage,
+          stageNames[lead.stage],
+        ].join(" ")
+      );
+
+      // Permite escribir varias palabras en cualquier orden.
+      // Ej.: "Hidra exportación", "OPO 25", "Melissa FTL".
+      const matches =
+        searchTerms.length === 0 ||
+        searchTerms.every((term) => haystack.includes(term));
+
+      const stageMatches =
+        leadStageFilter === "Todos" ||
+        lead.stage === leadStageFilter;
+
       return matches && stageMatches;
     });
   }, [leads, searchQuery, leadStageFilter]);
@@ -1591,6 +2709,9 @@ export function CRM() {
     const rows = [...filteredLeads];
 
     rows.sort((a, b) => {
+      // Sin columna seleccionada: nuevo -> antiguo.
+      if (!sortField) return b.id - a.id;
+
       const av =
         sortField === "amount" ? a.amount :
         sortField === "probability" ? a.probability :
@@ -1609,7 +2730,12 @@ export function CRM() {
         sortField === "stage" ? stageOrder[b.stage] :
         b.date;
 
-      return compareValues(av, bv);
+      const compared = compareValues(av, bv);
+      if (compared !== 0) return compared;
+
+      return crmSortDirection === "asc"
+        ? a.id - b.id
+        : b.id - a.id;
     });
 
     return rows;
@@ -1631,13 +2757,16 @@ export function CRM() {
   const sortedQuotes = useMemo(() => {
     const rows = [...filteredQuotes];
     rows.sort((a, b) => {
+      // Sin columna seleccionada: nuevo -> antiguo.
+      if (!sortField) return b.id - a.id;
+
       const av =
         sortField === "quoteNumber" ? a.quoteNumber :
         sortField === "clientName" ? a.clientName :
         sortField === "status" ? a.status :
         sortField === "total" ? a.total :
         sortField === "contact" ? a.contact :
-        a.date;
+        a.id;
 
       const bv =
         sortField === "quoteNumber" ? b.quoteNumber :
@@ -1645,7 +2774,7 @@ export function CRM() {
         sortField === "status" ? b.status :
         sortField === "total" ? b.total :
         sortField === "contact" ? b.contact :
-        b.date;
+        b.id;
 
       return compareValues(av, bv);
     });
@@ -1657,6 +2786,7 @@ export function CRM() {
   const leadTotalPages = Math.max(1, Math.ceil(sortedLeads.length / rowsPerPage));
   const clientTotalPages = Math.max(1, Math.ceil(sortedClients.length / rowsPerPage));
   const quoteTotalPages = Math.max(1, Math.ceil(sortedQuotes.length / rowsPerPage));
+  const providerTotalPages = Math.max(1, Math.ceil(sortedProviders.length / rowsPerPage));
 
   const paginatedLeads = useMemo(() => {
     const start = (leadPage - 1) * rowsPerPage;
@@ -1673,6 +2803,11 @@ export function CRM() {
     return sortedQuotes.slice(start, start + rowsPerPage);
   }, [sortedQuotes, quotePage, rowsPerPage]);
 
+  const paginatedProviders = useMemo(() => {
+    const start = (providerPage - 1) * rowsPerPage;
+    return sortedProviders.slice(start, start + rowsPerPage);
+  }, [sortedProviders, providerPage, rowsPerPage]);
+
   // Cuando cambia una búsqueda, filtro, ordenamiento o cantidad por página,
   // regresamos a la primera página del listado activo.
   useEffect(() => {
@@ -1687,7 +2822,11 @@ export function CRM() {
     if (activeTab === "cotizaciones") {
       setQuotePage(1);
     }
-  }, [activeTab, searchQuery, statusFilter, leadStageFilter, sortField, crmSortDirection, rowsPerPage]);
+
+    if (activeTab === "proveedores") {
+      setProviderPage(1);
+    }
+  }, [activeTab, searchQuery, statusFilter, leadStageFilter, providerStatusFilter, providerLevelFilter, providerSatFilter, sortField, crmSortDirection, rowsPerPage]);
 
   // Protección adicional por si después de actualizar MySQL disminuye
   // la cantidad de registros y la página actual deja de existir.
@@ -1703,24 +2842,51 @@ export function CRM() {
     setQuotePage((page) => Math.min(page, quoteTotalPages));
   }, [quoteTotalPages]);
 
+  useEffect(() => {
+    setProviderPage((page) => Math.min(page, providerTotalPages));
+  }, [providerTotalPages]);
+
   // ----------------------------------------------------------
   // CLIENT CRUD
   // ----------------------------------------------------------
 
-  const openClient = (mode: ModalMode, client?: ClienteRow) => {
+  const openClient = (
+    mode: ModalMode,
+    client?: ClienteRow
+  ) => {
     setClientErrors({});
-    setClientModal({
-      open: true,
-      mode,
-      value:
-        client ||
-        ({
-          codigo_cliente: nextCode(clients, "codigo_cliente", "CLI"),
+
+    if (mode === "create") {
+      // Cada cliente nuevo inicia con su propio conjunto
+      // temporal de contactos y teléfonos.
+      setNewClientContacts([]);
+      setNewClientPhones([]);
+      draftContactIdRef.current = -1;
+      draftPhoneIdRef.current = -1;
+
+      setClientModal({
+        open: true,
+        mode,
+        value: {
+          codigo_cliente: nextCode(
+            clients,
+            "codigo_cliente",
+            "CLI"
+          ),
           nombre_empresa: "",
           nit: "",
           direccion: "",
           estado_cliente_id: 1,
-        } as Partial<ClienteRow>),
+        } as Partial<ClienteRow>,
+      });
+
+      return;
+    }
+
+    setClientModal({
+      open: true,
+      mode,
+      value: client ? { ...client } : {},
     });
   };
 
@@ -1729,13 +2895,153 @@ export function CRM() {
     openClient("create");
   };
 
+  const newClientPhonesFor = (contactId: number) =>
+    newClientPhones
+      .filter(
+        (phone) =>
+          Number(phone.contacto_id) ===
+          Number(contactId)
+      )
+      .sort((a, b) => {
+        if (
+          Boolean(a.es_principal) !==
+          Boolean(b.es_principal)
+        ) {
+          return a.es_principal ? -1 : 1;
+        }
+
+        return Number(b.id) - Number(a.id);
+      });
+
+  const removeNewClientContact = (contactId: number) => {
+    setNewClientContacts((current) => {
+      const remaining = current.filter(
+        (contact) =>
+          Number(contact.id) !== Number(contactId)
+      );
+
+      // Si se eliminó el principal y todavía quedan contactos,
+      // el primero pasa a ser principal automáticamente.
+      if (
+        remaining.length > 0 &&
+        !remaining.some(
+          (contact) => contact.es_principal
+        )
+      ) {
+        return remaining.map((contact, index) => ({
+          ...contact,
+          es_principal: index === 0,
+        }));
+      }
+
+      return remaining;
+    });
+
+    setNewClientPhones((current) =>
+      current.filter(
+        (phone) =>
+          Number(phone.contacto_id) !==
+          Number(contactId)
+      )
+    );
+
+    showNotice(
+      "success",
+      "Contacto quitado del nuevo cliente."
+    );
+  };
+
+  const removeNewClientPhone = (phoneId: number) => {
+    const currentPhone = newClientPhones.find(
+      (phone) => Number(phone.id) === Number(phoneId)
+    );
+
+    setNewClientPhones((current) => {
+      const remaining = current.filter(
+        (phone) =>
+          Number(phone.id) !== Number(phoneId)
+      );
+
+      if (!currentPhone) return remaining;
+
+      const sameContact = remaining.filter(
+        (phone) =>
+          Number(phone.contacto_id) ===
+          Number(currentPhone.contacto_id)
+      );
+
+      if (
+        sameContact.length > 0 &&
+        !sameContact.some(
+          (phone) => phone.es_principal
+        )
+      ) {
+        const firstId = sameContact[0].id;
+
+        return remaining.map((phone) =>
+          Number(phone.id) === Number(firstId)
+            ? { ...phone, es_principal: true }
+            : phone
+        );
+      }
+
+      return remaining;
+    });
+
+    setPhoneModal({
+      open: false,
+      mode: "create",
+      value: {},
+      contactId: null,
+    });
+
+    showNotice(
+      "success",
+      "Teléfono quitado del contacto."
+    );
+  };
+
   const validateClient = () => {
     const v = clientModal.value;
     const e: FieldErrors = {};
-    if (!String(v.nombre_empresa || "").trim()) e.nombre_empresa = "El nombre de la empresa es obligatorio.";
-    if (!String(v.nit || "").trim()) e.nit = "El NIT es obligatorio.";
-    const duplicate = clients.some((c) => c.nit.trim().toLowerCase() === String(v.nit || "").trim().toLowerCase() && c.id !== Number(v.id));
-    if (duplicate) e.nit = "Ya existe un cliente registrado con ese NIT.";
+
+    if (!String(v.nombre_empresa || "").trim()) {
+      e.nombre_empresa =
+        "El nombre de la empresa es obligatorio.";
+    }
+
+    if (!String(v.nit || "").trim()) {
+      e.nit = "El NIT es obligatorio.";
+    }
+
+    if (clientModal.mode === "create") {
+      if (newClientContacts.length === 0) {
+        e.contactos =
+          "Agrega por lo menos un contacto del cliente.";
+      } else if (
+        !newClientContacts.some(
+          (contact) => contact.es_principal
+        )
+      ) {
+        e.contactos =
+          "Debe existir un contacto principal.";
+      }
+    }
+
+    const duplicate = clients.some(
+      (client) =>
+        client.nit.trim().toLowerCase() ===
+          String(v.nit || "")
+            .trim()
+            .toLowerCase() &&
+        client.id !== Number(v.id)
+    );
+
+    if (duplicate) {
+      e.nit =
+        "Ya existe un cliente registrado con ese NIT.";
+    }
+
     setClientErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -1743,71 +3049,416 @@ export function CRM() {
   const saveClientData = async () => {
     if (!validateClient()) return;
 
+    // El cliente se guarda independiente de sus contactos.
+    // Los contactos y teléfonos se registran después usando
+    // sus endpoints normales, lo cual permite N contactos y
+    // N teléfonos por contacto.
     const payload = {
-      codigo_cliente: clientModal.value.codigo_cliente,
-      nombre_empresa: cleanCommercialText(String(clientModal.value.nombre_empresa || ""), 120),
-      nit: String(clientModal.value.nit || "").trim(),
-      direccion: cleanAddressText(String(clientModal.value.direccion || ""), 180),
-      estado_cliente_id: Number(clientModal.value.estado_cliente_id || 1),
+      codigo_cliente:
+        clientModal.value.codigo_cliente,
+      nombre_empresa: cleanCommercialText(
+        String(
+          clientModal.value.nombre_empresa || ""
+        ),
+        120
+      ),
+      nit: String(
+        clientModal.value.nit || ""
+      ).trim(),
+      direccion: cleanAddressText(
+        String(
+          clientModal.value.direccion || ""
+        ),
+        180
+      ),
+      estado_cliente_id: Number(
+        clientModal.value.estado_cliente_id || 1
+      ),
     };
 
     try {
       let createdClientId: number | null = null;
+      let createdPrincipalContactId:
+        | number
+        | null = null;
 
       if (clientModal.mode === "create") {
-        const created = await apiSendCRM("/clientes", "POST", payload);
-        createdClientId = Number(created?.id || created?.cliente_id || created?.insertId || 0) || null;
+        const created = await apiSendCRM(
+          "/clientes",
+          "POST",
+          payload
+        );
 
-        // Algunos endpoints solo devuelven { ok: true }. En ese caso
-        // recuperamos el cliente recién creado por NIT desde el bootstrap.
-        if (!createdClientId && clientReturnTarget) {
-          const fresh = await apiRequestCRM("/crm/bootstrap");
-          const found = (Array.isArray(fresh?.clientes) ? fresh.clientes : []).find(
-            (c: any) => String(c.nit || "").trim().toLowerCase() === payload.nit.toLowerCase()
+        createdClientId =
+          Number(
+            created?.id ||
+              created?.cliente_id ||
+              created?.insertId ||
+              0
+          ) || null;
+
+        // Recuperación por NIT si el endpoint no devolviera ID.
+        if (!createdClientId) {
+          const fresh =
+            await apiRequestCRM(
+              "/crm/bootstrap"
+            );
+
+          const found = (
+            Array.isArray(fresh?.clientes)
+              ? fresh.clientes
+              : []
+          ).find(
+            (client: any) =>
+              String(client.nit || "")
+                .trim()
+                .toLowerCase() ===
+              payload.nit.toLowerCase()
           );
-          createdClientId = Number(found?.id || 0) || null;
+
+          createdClientId =
+            Number(found?.id || 0) || null;
         }
-      } else if (clientModal.mode === "edit" && clientModal.value.id) {
-        await apiSendCRM(`/clientes/${clientModal.value.id}`, "PUT", payload);
+
+        if (!createdClientId) {
+          throw new Error(
+            "El cliente se guardó, pero no fue posible recuperar su ID para registrar los contactos."
+          );
+        }
+
+        // Guardar los no principales primero y el principal al final.
+        // Así queda exactamente un principal en MySQL.
+        const orderedContacts = [
+          ...newClientContacts,
+        ].sort(
+          (a, b) =>
+            Number(a.es_principal) -
+            Number(b.es_principal)
+        );
+
+        for (const draftContact of orderedContacts) {
+          const contactPayload = {
+            cliente_id: createdClientId,
+            primer_nombre:
+              cleanPersonName(
+                String(
+                  draftContact.primer_nombre ||
+                    ""
+                ),
+                35
+              ),
+            segundo_nombre:
+              cleanPersonName(
+                String(
+                  draftContact.segundo_nombre ||
+                    ""
+                ),
+                35
+              ),
+            primer_apellido:
+              cleanPersonName(
+                String(
+                  draftContact.primer_apellido ||
+                    ""
+                ),
+                35
+              ),
+            segundo_apellido:
+              cleanPersonName(
+                String(
+                  draftContact.segundo_apellido ||
+                    ""
+                ),
+                35
+              ),
+            cargo: cleanRoleText(
+              String(
+                draftContact.cargo || ""
+              ),
+              60
+            ),
+            correo: cleanEmail(
+              String(
+                draftContact.correo || ""
+              )
+            ),
+            es_principal: Boolean(
+              draftContact.es_principal
+            ),
+            estado:
+              draftContact.estado !== false,
+          };
+
+          const createdContact =
+            await apiSendCRM(
+              "/contactos-cliente",
+              "POST",
+              contactPayload
+            );
+
+          let realContactId =
+            Number(
+              createdContact?.id ||
+                createdContact
+                  ?.contacto_id ||
+                createdContact
+                  ?.insertId ||
+                0
+            ) || null;
+
+          if (!realContactId) {
+            const fresh =
+              await apiRequestCRM(
+                "/crm/bootstrap"
+              );
+
+            const possibleContacts =
+              Array.isArray(
+                fresh?.contactos
+              )
+                ? fresh.contactos
+                : [];
+
+            const found = [
+              ...possibleContacts,
+            ]
+              .reverse()
+              .find(
+                (contact: any) =>
+                  Number(
+                    contact.cliente_id
+                  ) ===
+                    Number(
+                      createdClientId
+                    ) &&
+                  String(
+                    contact.primer_nombre ||
+                      ""
+                  )
+                    .trim()
+                    .toLowerCase() ===
+                    String(
+                      contactPayload
+                        .primer_nombre || ""
+                    )
+                      .trim()
+                      .toLowerCase() &&
+                  String(
+                    contact.primer_apellido ||
+                      ""
+                  )
+                    .trim()
+                    .toLowerCase() ===
+                    String(
+                      contactPayload
+                        .primer_apellido || ""
+                    )
+                      .trim()
+                      .toLowerCase() &&
+                  String(
+                    contact.correo || ""
+                  )
+                    .trim()
+                    .toLowerCase() ===
+                    String(
+                      contactPayload.correo ||
+                        ""
+                    )
+                      .trim()
+                      .toLowerCase()
+              );
+
+            realContactId =
+              Number(found?.id || 0) ||
+              null;
+          }
+
+          if (!realContactId) {
+            throw new Error(
+              `No se pudo recuperar el contacto ${contactPayload.primer_nombre} ${contactPayload.primer_apellido}.`
+            );
+          }
+
+          if (draftContact.es_principal) {
+            createdPrincipalContactId =
+              realContactId;
+          }
+
+          const draftPhones =
+            newClientPhones
+              .filter(
+                (phone) =>
+                  Number(
+                    phone.contacto_id
+                  ) ===
+                  Number(
+                    draftContact.id
+                  )
+              )
+              .sort(
+                (a, b) =>
+                  Number(a.es_principal) -
+                  Number(b.es_principal)
+              );
+
+          for (const draftPhone of draftPhones) {
+            const limit =
+              phoneDigitsLimit(
+                draftPhone
+                  .prefijo_telefonico_id
+              );
+
+            await apiSendCRM(
+              "/telefonos-contacto",
+              "POST",
+              {
+                contacto_id:
+                  realContactId,
+                prefijo_telefonico_id:
+                  Number(
+                    draftPhone
+                      .prefijo_telefonico_id ||
+                      getPhonePrefix().id
+                  ),
+                telefono: cleanPhone(
+                  String(
+                    draftPhone.telefono ||
+                      ""
+                  ),
+                  limit
+                ),
+                tipo_telefono: String(
+                  draftPhone.tipo_telefono ||
+                    "Móvil"
+                ),
+                es_principal: Boolean(
+                  draftPhone.es_principal
+                ),
+              }
+            );
+          }
+        }
+      } else if (
+        clientModal.mode === "edit" &&
+        clientModal.value.id
+      ) {
+        // En edición, contactos y teléfonos se administran
+        // desde sus propios botones/modal. Aquí solo se
+        // actualiza la información de la empresa.
+        await apiSendCRM(
+          `/clientes/${clientModal.value.id}`,
+          "PUT",
+          payload
+        );
       }
 
       await reload();
 
-      if (clientModal.mode === "create" && clientReturnTarget && createdClientId) {
+      if (
+        clientModal.mode === "create" &&
+        clientReturnTarget &&
+        createdClientId
+      ) {
         if (clientReturnTarget === "lead") {
-          setLeadErrors((x) => ({ ...x, cliente_id: "" }));
-          setLeadModal((p) => ({
-            ...p,
-            value: { ...p.value, cliente_id: createdClientId },
+          setLeadErrors((current) => ({
+            ...current,
+            cliente_id: "",
+          }));
+
+          setLeadModal((current) => ({
+            ...current,
+            value: {
+              ...current.value,
+              cliente_id:
+                createdClientId,
+            },
           }));
         } else {
-          setQuoteErrors((x) => ({ ...x, cliente_id: "", contacto_id: "" }));
-          setQuoteModal((p) => ({
-            ...p,
-            value: { ...p.value, cliente_id: createdClientId, contacto_id: null },
+          setQuoteErrors((current) => ({
+            ...current,
+            cliente_id: "",
+            contacto_id: "",
+          }));
+
+          setQuoteModal((current) => ({
+            ...current,
+            value: {
+              ...current.value,
+              cliente_id:
+                createdClientId,
+              contacto_id:
+                createdPrincipalContactId,
+            },
           }));
         }
 
-        setClientModal({ open: false, mode: "create", value: {} });
+        setClientModal({
+          open: false,
+          mode: "create",
+          value: {},
+        });
+        setNewClientContacts([]);
+        setNewClientPhones([]);
         setClientReturnTarget(null);
+
         showNotice(
           "success",
           clientReturnTarget === "quote"
-            ? "Cliente creado y seleccionado. Ahora agrega o selecciona un contacto para completar la cotización."
-            : "Cliente creado y seleccionado en la oportunidad."
+            ? "Cliente creado con sus contactos y teléfonos. El contacto principal quedó seleccionado en la cotización."
+            : "Cliente creado con sus contactos y seleccionado en la oportunidad."
         );
+
         return;
       }
 
       setSearchQuery("");
       setStatusFilter("Todos");
+      setSortField("");
+      setCrmSortDirection("desc");
+      setClientPage(1);
       setActiveTab("clientes");
-      setClientModal({ open: false, mode: "create", value: {} });
+
+      setClientModal({
+        open: false,
+        mode: "create",
+        value: {},
+      });
+
+      setNewClientContacts([]);
+      setNewClientPhones([]);
       setClientReturnTarget(null);
-      showNotice("success", clientModal.mode === "create" ? "Cliente guardado correctamente en MySQL." : "Cliente actualizado correctamente en MySQL.");
+
+      showNotice(
+        "success",
+        clientModal.mode === "create"
+          ? "Cliente, contactos y teléfonos guardados correctamente en MySQL."
+          : "Cliente actualizado correctamente en MySQL."
+      );
     } catch (error: any) {
-      showNotice("error", error.message || "No se pudo guardar el cliente en MySQL.");
+      showNotice(
+        "error",
+        error.message ||
+          "No se pudo guardar el cliente en MySQL."
+      );
     }
+  };
+
+  const openClientStatusAction = (client: ClienteRow) => {
+    setClientInactiveReason("");
+    setDeleteModal({
+      open: true,
+      type: "client",
+      id: client.id,
+    });
+  };
+
+  const openClientPermanentDelete = (client: ClienteRow) => {
+    setClientInactiveReason("");
+    setDeleteModal({
+      open: true,
+      type: "clientPermanent",
+      id: client.id,
+    });
   };
 
   const syncLegacyClients = (rows: ClienteRow[]) => {
@@ -1827,8 +3478,25 @@ export function CRM() {
   // CONTACT CRUD
   // ----------------------------------------------------------
 
-  const openContact = (mode: ModalMode, clientId: number, contact?: ContactoClienteRow) => {
+  const openContact = (
+    mode: ModalMode,
+    clientId: number,
+    contact?: ContactoClienteRow
+  ) => {
     setContactErrors({});
+
+    const isDraftClient =
+      Number(clientId) === -1;
+
+    const currentContacts =
+      isDraftClient
+        ? newClientContacts
+        : contacts.filter(
+            (item) =>
+              Number(item.cliente_id) ===
+              Number(clientId)
+          );
+
     setContactModal({
       open: true,
       mode,
@@ -1836,14 +3504,18 @@ export function CRM() {
       value:
         contact ||
         ({
-          cliente_id: clientId,
+          cliente_id:
+            isDraftClient
+              ? 0
+              : clientId,
           primer_nombre: "",
           segundo_nombre: "",
           primer_apellido: "",
           segundo_apellido: "",
           cargo: "",
           correo: "",
-          es_principal: !contacts.some((c) => c.cliente_id === clientId),
+          es_principal:
+            currentContacts.length === 0,
           estado: true,
         } as Partial<ContactoClienteRow>),
     });
@@ -1852,61 +3524,350 @@ export function CRM() {
   const validateContact = () => {
     const v = contactModal.value;
     const e: FieldErrors = {};
-    if (!String(v.primer_nombre || "").trim()) e.primer_nombre = "El primer nombre es obligatorio.";
-    if (!String(v.primer_apellido || "").trim()) e.primer_apellido = "El primer apellido es obligatorio.";
-    if (v.correo && !validEmail(String(v.correo))) e.correo = "Ingresa un correo electrónico válido.";
+
+    if (
+      !String(v.primer_nombre || "").trim()
+    ) {
+      e.primer_nombre =
+        "El primer nombre es obligatorio.";
+    }
+
+    if (
+      !String(v.primer_apellido || "").trim()
+    ) {
+      e.primer_apellido =
+        "El primer apellido es obligatorio.";
+    }
+
+    if (
+      v.correo &&
+      !validEmail(String(v.correo))
+    ) {
+      e.correo =
+        "Ingresa un correo electrónico válido.";
+    }
+
     setContactErrors(e);
     return Object.keys(e).length === 0;
   };
 
   const saveContactData = async () => {
-    if (!validateContact() || !contactModal.clientId) return;
+    if (!validateContact()) return;
+
+    const isDraftClient =
+      Number(contactModal.clientId) === -1;
+
+    if (isDraftClient) {
+      const isPrincipal = Boolean(
+        contactModal.value.es_principal
+      );
+
+      const cleanDraft = {
+        primer_nombre:
+          cleanPersonName(
+            String(
+              contactModal.value
+                .primer_nombre || ""
+            ),
+            35
+          ),
+        segundo_nombre:
+          cleanPersonName(
+            String(
+              contactModal.value
+                .segundo_nombre || ""
+            ),
+            35
+          ),
+        primer_apellido:
+          cleanPersonName(
+            String(
+              contactModal.value
+                .primer_apellido || ""
+            ),
+            35
+          ),
+        segundo_apellido:
+          cleanPersonName(
+            String(
+              contactModal.value
+                .segundo_apellido || ""
+            ),
+            35
+          ),
+        cargo: cleanRoleText(
+          String(
+            contactModal.value.cargo || ""
+          ),
+          60
+        ),
+        correo: cleanEmail(
+          String(
+            contactModal.value.correo || ""
+          )
+        ),
+        es_principal: isPrincipal,
+        estado:
+          contactModal.value.estado !==
+          false,
+      };
+
+      if (contactModal.mode === "create") {
+        const tempId =
+          draftContactIdRef.current--;
+
+        setNewClientContacts(
+          (current) => {
+            const normalized = isPrincipal
+              ? current.map((contact) => ({
+                  ...contact,
+                  es_principal: false,
+                }))
+              : current;
+
+            return [
+              ...normalized,
+              {
+                id: tempId,
+                cliente_id: 0,
+                ...cleanDraft,
+                created_at: "",
+                updated_at: "",
+              },
+            ];
+          }
+        );
+      } else if (
+        contactModal.value.id
+      ) {
+        const editId = Number(
+          contactModal.value.id
+        );
+
+        setNewClientContacts(
+          (current) =>
+            current.map((contact) => {
+              if (
+                isPrincipal &&
+                Number(contact.id) !==
+                  editId
+              ) {
+                return {
+                  ...contact,
+                  es_principal: false,
+                };
+              }
+
+              if (
+                Number(contact.id) === editId
+              ) {
+                return {
+                  ...contact,
+                  ...cleanDraft,
+                };
+              }
+
+              return contact;
+            })
+        );
+      }
+
+      setContactModal({
+        open: false,
+        mode: "create",
+        value: {},
+        clientId: null,
+      });
+
+      setClientErrors((current) => ({
+        ...current,
+        contactos: "",
+      }));
+
+      showNotice(
+        "success",
+        contactModal.mode === "create"
+          ? "Contacto agregado al nuevo cliente."
+          : "Contacto actualizado."
+      );
+
+      return;
+    }
+
+    if (!contactModal.clientId) return;
 
     const payload = {
       cliente_id: contactModal.clientId,
-      primer_nombre: cleanPersonName(String(contactModal.value.primer_nombre || ""), 35),
-      segundo_nombre: cleanPersonName(String(contactModal.value.segundo_nombre || ""), 35),
-      primer_apellido: cleanPersonName(String(contactModal.value.primer_apellido || ""), 35),
-      segundo_apellido: cleanPersonName(String(contactModal.value.segundo_apellido || ""), 35),
-      cargo: cleanRoleText(String(contactModal.value.cargo || ""), 60),
-      correo: cleanEmail(String(contactModal.value.correo || "")),
-      es_principal: Boolean(contactModal.value.es_principal),
-      estado: contactModal.value.estado !== false,
+      primer_nombre: cleanPersonName(
+        String(
+          contactModal.value.primer_nombre ||
+            ""
+        ),
+        35
+      ),
+      segundo_nombre: cleanPersonName(
+        String(
+          contactModal.value.segundo_nombre ||
+            ""
+        ),
+        35
+      ),
+      primer_apellido: cleanPersonName(
+        String(
+          contactModal.value
+            .primer_apellido || ""
+        ),
+        35
+      ),
+      segundo_apellido: cleanPersonName(
+        String(
+          contactModal.value
+            .segundo_apellido || ""
+        ),
+        35
+      ),
+      cargo: cleanRoleText(
+        String(
+          contactModal.value.cargo || ""
+        ),
+        60
+      ),
+      correo: cleanEmail(
+        String(
+          contactModal.value.correo || ""
+        )
+      ),
+      es_principal: Boolean(
+        contactModal.value.es_principal
+      ),
+      estado:
+        contactModal.value.estado !== false,
     };
 
     try {
-      let createdContactId: number | null = null;
+      let createdContactId:
+        | number
+        | null = null;
 
       if (contactModal.mode === "create") {
-        const created = await apiSendCRM("/contactos-cliente", "POST", payload);
-        createdContactId = Number(created?.id || created?.contacto_id || created?.insertId || 0) || null;
-
-        if (!createdContactId && quoteModal.open && Number(quoteModal.value.cliente_id) === Number(contactModal.clientId)) {
-          const fresh = await apiRequestCRM("/crm/bootstrap");
-          const freshContacts = Array.isArray(fresh?.contactos) ? fresh.contactos : [];
-          const found = [...freshContacts].reverse().find(
-            (c: any) =>
-              Number(c.cliente_id) === Number(contactModal.clientId) &&
-              String(c.correo || "").toLowerCase() === payload.correo.toLowerCase() &&
-              String(c.primer_nombre || "").toLowerCase() === payload.primer_nombre.toLowerCase()
+        const created =
+          await apiSendCRM(
+            "/contactos-cliente",
+            "POST",
+            payload
           );
-          createdContactId = Number(found?.id || 0) || null;
+
+        createdContactId =
+          Number(
+            created?.id ||
+              created?.contacto_id ||
+              created?.insertId ||
+              0
+          ) || null;
+
+        if (
+          !createdContactId &&
+          quoteModal.open &&
+          Number(
+            quoteModal.value.cliente_id
+          ) ===
+            Number(
+              contactModal.clientId
+            )
+        ) {
+          const fresh =
+            await apiRequestCRM(
+              "/crm/bootstrap"
+            );
+
+          const freshContacts =
+            Array.isArray(
+              fresh?.contactos
+            )
+              ? fresh.contactos
+              : [];
+
+          const found = [
+            ...freshContacts,
+          ]
+            .reverse()
+            .find(
+              (contact: any) =>
+                Number(
+                  contact.cliente_id
+                ) ===
+                  Number(
+                    contactModal.clientId
+                  ) &&
+                String(
+                  contact.correo || ""
+                ).toLowerCase() ===
+                  payload.correo.toLowerCase() &&
+                String(
+                  contact.primer_nombre ||
+                    ""
+                ).toLowerCase() ===
+                  payload.primer_nombre.toLowerCase()
+            );
+
+          createdContactId =
+            Number(found?.id || 0) ||
+            null;
         }
-      } else if (contactModal.value.id) {
-        await apiSendCRM(`/contactos-cliente/${contactModal.value.id}`, "PUT", payload);
+      } else if (
+        contactModal.value.id
+      ) {
+        await apiSendCRM(
+          `/contactos-cliente/${contactModal.value.id}`,
+          "PUT",
+          payload
+        );
       }
 
       await reload();
 
-      if (createdContactId && quoteModal.open && Number(quoteModal.value.cliente_id) === Number(contactModal.clientId)) {
-        setQuoteModal((p) => ({ ...p, value: { ...p.value, contacto_id: createdContactId } }));
-        setQuoteErrors((x) => ({ ...x, contacto_id: "" }));
+      if (
+        createdContactId &&
+        quoteModal.open &&
+        Number(
+          quoteModal.value.cliente_id
+        ) === Number(contactModal.clientId)
+      ) {
+        setQuoteModal((current) => ({
+          ...current,
+          value: {
+            ...current.value,
+            contacto_id:
+              createdContactId,
+          },
+        }));
+
+        setQuoteErrors((current) => ({
+          ...current,
+          contacto_id: "",
+        }));
       }
 
-      setContactModal({ open: false, mode: "create", value: {}, clientId: null });
-      showNotice("success", createdContactId && quoteModal.open ? "Contacto creado y seleccionado en la cotización." : "Contacto guardado correctamente en MySQL.");
+      setContactModal({
+        open: false,
+        mode: "create",
+        value: {},
+        clientId: null,
+      });
+
+      showNotice(
+        "success",
+        createdContactId &&
+          quoteModal.open
+          ? "Contacto creado y seleccionado en la cotización."
+          : "Contacto guardado correctamente en MySQL."
+      );
     } catch (error: any) {
-      showNotice("error", error.message || "No se pudo guardar el contacto en MySQL.");
+      showNotice(
+        "error",
+        error.message ||
+          "No se pudo guardar el contacto en MySQL."
+      );
     }
   };
 
@@ -1914,69 +3875,279 @@ export function CRM() {
   // PHONE CRUD
   // ----------------------------------------------------------
 
-  const openPhone = (mode: ModalMode, contactId: number, phone?: TelefonoContactoRow) => {
+  const openPhone = (
+    mode: ModalMode,
+    contactId: number,
+    phone?: TelefonoContactoRow
+  ) => {
     setPhoneErrors({});
-    const defaultPrefix = prefijos.find((p) => p.codigo_pais === "GT") || PREFIJOS_DEFAULT[0];
+
+    const defaultPrefix =
+      prefijos.find(
+        (prefix) =>
+          prefix.codigo_pais === "GT"
+      ) || PREFIJOS_DEFAULT[0];
+
+    const isDraftContact =
+      Number(contactId) < 0;
+
+    const sourcePhones =
+      isDraftContact
+        ? newClientPhones.filter(
+            (item) =>
+              Number(item.contacto_id) ===
+              Number(contactId)
+          )
+        : phones.filter(
+            (item) =>
+              Number(item.contacto_id) ===
+              Number(contactId)
+          );
+
     setPhoneModal({
       open: true,
       mode,
       contactId,
-      value:
-        phone
-          ? {
-              ...phone,
-              telefono: cleanPhone(String(phone.telefono || ""), phoneDigitsLimit(phone.prefijo_telefonico_id || defaultPrefix.id)),
-              prefijo_telefonico_id: phone.prefijo_telefonico_id || defaultPrefix.id,
-            }
-          : ({
-              contacto_id: contactId,
-              prefijo_telefonico_id: defaultPrefix.id,
-              telefono: "",
-              tipo_telefono: "Móvil",
-              es_principal: !phones.some((p) => p.contacto_id === contactId),
-            } as Partial<TelefonoContactoRow>),
+      value: phone
+        ? {
+            ...phone,
+            telefono: cleanPhone(
+              String(phone.telefono || ""),
+              phoneDigitsLimit(
+                phone.prefijo_telefonico_id ||
+                  defaultPrefix.id
+              )
+            ),
+            prefijo_telefonico_id:
+              phone.prefijo_telefonico_id ||
+              defaultPrefix.id,
+          }
+        : ({
+            contacto_id: contactId,
+            prefijo_telefonico_id:
+              defaultPrefix.id,
+            telefono: "",
+            tipo_telefono: "Móvil",
+            es_principal:
+              sourcePhones.length === 0,
+          } as Partial<TelefonoContactoRow>),
     });
   };
 
   const validatePhone = () => {
     const v = phoneModal.value;
     const e: FieldErrors = {};
-    const prefix = getPhonePrefix(v.prefijo_telefonico_id);
-    const limit = phoneDigitsLimit(v.prefijo_telefonico_id);
-    const digits = cleanPhone(String(v.telefono || ""), limit);
 
-    if (!v.prefijo_telefonico_id) e.prefijo = "Selecciona el prefijo del país.";
-    if (!digits) e.telefono = "El teléfono es obligatorio.";
-    else if (digits.length !== limit) e.telefono = `${prefix.prefijo} debe tener exactamente ${limit} dígitos.`;
+    const prefix =
+      getPhonePrefix(
+        v.prefijo_telefonico_id
+      );
+
+    const limit =
+      phoneDigitsLimit(
+        v.prefijo_telefonico_id
+      );
+
+    const digits =
+      cleanPhone(
+        String(v.telefono || ""),
+        limit
+      );
+
+    if (!v.prefijo_telefonico_id) {
+      e.prefijo =
+        "Selecciona el prefijo del país.";
+    }
+
+    if (!digits) {
+      e.telefono =
+        "El teléfono es obligatorio.";
+    } else if (
+      digits.length !== limit
+    ) {
+      e.telefono =
+        `${prefix.prefijo} debe tener exactamente ${limit} dígitos.`;
+    }
 
     setPhoneErrors(e);
     return Object.keys(e).length === 0;
   };
 
   const savePhoneData = async () => {
-    if (!validatePhone() || !phoneModal.contactId) return;
+    if (!validatePhone()) return;
 
-    const limit = phoneDigitsLimit(phoneModal.value.prefijo_telefonico_id);
+    const contactId =
+      Number(phoneModal.contactId);
+
+    if (!contactId) return;
+
+    const limit =
+      phoneDigitsLimit(
+        phoneModal.value
+          .prefijo_telefonico_id
+      );
+
     const payload = {
-      contacto_id: phoneModal.contactId,
-      prefijo_telefonico_id: Number(phoneModal.value.prefijo_telefonico_id || 1),
-      telefono: cleanPhone(String(phoneModal.value.telefono || ""), limit),
-      tipo_telefono: String(phoneModal.value.tipo_telefono || "Otro"),
-      es_principal: Boolean(phoneModal.value.es_principal),
+      contacto_id: contactId,
+      prefijo_telefonico_id:
+        Number(
+          phoneModal.value
+            .prefijo_telefonico_id || 1
+        ),
+      telefono: cleanPhone(
+        String(
+          phoneModal.value.telefono || ""
+        ),
+        limit
+      ),
+      tipo_telefono: String(
+        phoneModal.value.tipo_telefono ||
+          "Otro"
+      ),
+      es_principal: Boolean(
+        phoneModal.value.es_principal
+      ),
     };
+
+    const isDraftContact =
+      contactId < 0;
+
+    if (isDraftContact) {
+      const isPrincipal =
+        Boolean(payload.es_principal);
+
+      if (phoneModal.mode === "create") {
+        const tempPhoneId =
+          draftPhoneIdRef.current--;
+
+        setNewClientPhones(
+          (current) => {
+            const normalized = isPrincipal
+              ? current.map((phone) =>
+                  Number(
+                    phone.contacto_id
+                  ) === contactId
+                    ? {
+                        ...phone,
+                        es_principal:
+                          false,
+                      }
+                    : phone
+                )
+              : current;
+
+            return [
+              ...normalized,
+              {
+                id: tempPhoneId,
+                contacto_id:
+                  contactId,
+                prefijo_telefonico_id:
+                  payload.prefijo_telefonico_id,
+                telefono:
+                  payload.telefono,
+                tipo_telefono:
+                  payload.tipo_telefono,
+                es_principal:
+                  payload.es_principal,
+              },
+            ];
+          }
+        );
+      } else if (
+        phoneModal.value.id
+      ) {
+        const editPhoneId =
+          Number(
+            phoneModal.value.id
+          );
+
+        setNewClientPhones(
+          (current) =>
+            current.map((phone) => {
+              if (
+                isPrincipal &&
+                Number(
+                  phone.contacto_id
+                ) === contactId &&
+                Number(phone.id) !==
+                  editPhoneId
+              ) {
+                return {
+                  ...phone,
+                  es_principal: false,
+                };
+              }
+
+              if (
+                Number(phone.id) ===
+                editPhoneId
+              ) {
+                return {
+                  ...phone,
+                  ...payload,
+                  id: editPhoneId,
+                };
+              }
+
+              return phone;
+            })
+        );
+      }
+
+      setPhoneModal({
+        open: false,
+        mode: "create",
+        value: {},
+        contactId: null,
+      });
+
+      showNotice(
+        "success",
+        phoneModal.mode === "create"
+          ? "Teléfono agregado al contacto."
+          : "Teléfono actualizado."
+      );
+
+      return;
+    }
 
     try {
       if (phoneModal.mode === "create") {
-        await apiSendCRM("/telefonos-contacto", "POST", payload);
-      } else if (phoneModal.value.id) {
-        await apiSendCRM(`/telefonos-contacto/${phoneModal.value.id}`, "PUT", payload);
+        await apiSendCRM(
+          "/telefonos-contacto",
+          "POST",
+          payload
+        );
+      } else if (
+        phoneModal.value.id
+      ) {
+        await apiSendCRM(
+          `/telefonos-contacto/${phoneModal.value.id}`,
+          "PUT",
+          payload
+        );
       }
 
       await reload();
-      setPhoneModal({ open: false, mode: "create", value: {}, contactId: null });
-      showNotice("success", "Teléfono guardado correctamente en MySQL.");
+
+      setPhoneModal({
+        open: false,
+        mode: "create",
+        value: {},
+        contactId: null,
+      });
+
+      showNotice(
+        "success",
+        "Teléfono guardado correctamente en MySQL."
+      );
     } catch (error: any) {
-      showNotice("error", error.message || "No se pudo guardar el teléfono en MySQL.");
+      showNotice(
+        "error",
+        error.message ||
+          "No se pudo guardar el teléfono en MySQL."
+      );
     }
   };
 
@@ -2050,6 +4221,9 @@ export function CRM() {
       }
 
       await reload();
+      setSortField("");
+      setCrmSortDirection("desc");
+      setLeadPage(1);
       setLeadModal({ open: false, mode: "create", value: {} });
       showNotice("success", "Oportunidad guardada correctamente en MySQL.");
     } catch (error: any) {
@@ -2145,6 +4319,8 @@ export function CRM() {
         peso_ui: "",
         volumen_ui: "",
         observaciones_ui: fromLead ? `Cotización generada desde ${fromLead.code}.` : "",
+        no_incluye_ui: [...QUOTE_NO_INCLUYE_DEFAULT],
+        notas_importantes_ui: [...QUOTE_NOTAS_IMPORTANTES_DEFAULT],
       },
       details: [
         {
@@ -2237,15 +4413,67 @@ export function CRM() {
     };
 
     try {
+      let savedQuoteId =
+        Number(quoteModal.value.id || 0) || null;
+
       if (quoteModal.mode === "create") {
-        await apiSendCRM("/cotizaciones", "POST", payload);
+        const created = await apiSendCRM(
+          "/cotizaciones",
+          "POST",
+          payload
+        );
+
+        savedQuoteId =
+          Number(
+            created?.id ||
+              created?.cotizacion_id ||
+              created?.insertId ||
+              0
+          ) || null;
       } else if (quoteModal.value.id) {
-        await apiSendCRM(`/cotizaciones/${quoteModal.value.id}`, "PUT", payload);
+        await apiSendCRM(
+          `/cotizaciones/${quoteModal.value.id}`,
+          "PUT",
+          payload
+        );
       }
 
+      saveQuoteUiMetadata(
+        savedQuoteId,
+        String(payload.codigo_cotizacion || ""),
+        {
+        fecha_ui: String(payload.fecha_ui || todayISO()),
+        estado_ui: (payload.estado_ui || "Borrador") as QuoteStatus,
+        moneda_ui: payload.moneda_ui === "USD" ? "USD" : "GTQ",
+        tipo_carga_ui: String(payload.tipo_carga_ui || ""),
+        peso_ui: String(payload.peso_ui || ""),
+        volumen_ui: String(payload.volumen_ui || ""),
+        observaciones_ui: String(payload.observaciones_ui || ""),
+        no_incluye_ui:
+          Array.isArray(quoteModal.value.no_incluye_ui) &&
+          quoteModal.value.no_incluye_ui.length
+            ? quoteModal.value.no_incluye_ui.map((item) => String(item || "").trim()).filter(Boolean)
+            : [...QUOTE_NO_INCLUYE_DEFAULT],
+        notas_importantes_ui:
+          Array.isArray(quoteModal.value.notas_importantes_ui) &&
+          quoteModal.value.notas_importantes_ui.length
+            ? quoteModal.value.notas_importantes_ui.map((item) => String(item || "").trim()).filter(Boolean)
+            : [...QUOTE_NOTAS_IMPORTANTES_DEFAULT],
+          dias_ui_por_linea: services.map(
+            (service) => service.dias_ui
+          ),
+        }
+      );
+
       await reload();
+      setSortField("");
+      setCrmSortDirection("desc");
+      setQuotePage(1);
       setQuoteModal({ open: false, mode: "create", value: {}, details: [] });
-      showNotice("success", "Cotización guardada correctamente en MySQL.");
+      showNotice(
+        "success",
+        "Cotización guardada correctamente. Peso, volumen y observaciones quedaron asociados únicamente a esta cotización."
+      );
     } catch (error: any) {
       showNotice("error", error.message || "No se pudo guardar la cotización en MySQL.");
     }
@@ -2265,14 +4493,22 @@ export function CRM() {
     });
 
     try {
+      const currentQuote = quotes.find((q) => Number(q.id) === Number(id));
+      if (currentQuote?.codigo_cotizacion) {
+        saveQuoteUiMetadata(
+          currentQuote.id,
+          currentQuote.codigo_cotizacion,
+          { estado_ui: status }
+        );
+      }
+
       await apiSendCRM(`/cotizaciones/${id}/estado`, "PATCH", {
         estado: status,
         estado_ui: status,
       });
 
-      // Volvemos a leer MySQL para confirmar que el estado quedó persistido.
       await reload();
-      showNotice("success", `Estado actualizado a ${status} y guardado en MySQL.`);
+      showNotice("success", `Estado actualizado a ${status}.`);
     } catch (error: any) {
       showNotice("error", error.message || "No se pudo actualizar el estado.");
       await reload();
@@ -2339,8 +4575,52 @@ export function CRM() {
     const id = Number(deleteModal.id);
 
     try {
-      // Los clientes NO se eliminan físicamente.
-      // Se cambia estado_cliente_id:
+      // ------------------------------------------------------
+      // ELIMINACIÓN DEFINITIVA DE CLIENTE
+      // ------------------------------------------------------
+      if (deleteModal.type === "clientPermanent") {
+        const client = clients.find(
+          (c) => Number(c.id) === id
+        );
+
+        if (!client) {
+          throw new Error(
+            "No se encontró el cliente seleccionado."
+          );
+        }
+
+        await apiSendCRM(
+          `/clientes/${id}?definitivo=1`,
+          "DELETE"
+        );
+
+        await reload();
+
+        setClientModal({
+          open: false,
+          mode: "create",
+          value: {},
+        });
+        setDeleteModal({
+          open: false,
+          type: null,
+          id: null,
+        });
+        setClientPage(1);
+        setSortField("");
+        setCrmSortDirection("desc");
+
+        showNotice(
+          "success",
+          `Cliente ${client.nombre_empresa} eliminado definitivamente.`
+        );
+
+        return;
+      }
+
+      // ------------------------------------------------------
+      // BAJA / REACTIVACIÓN
+      // ------------------------------------------------------
       // 1 = Activo
       // 2 = Inactivo / De baja
       if (deleteModal.type === "client") {
@@ -2353,23 +4633,38 @@ export function CRM() {
         const estaActivo = Number(client.estado_cliente_id) === 1;
         const nuevoEstado = estaActivo ? 2 : 1;
 
+        const motivo = clientInactiveReason.trim();
+
+        if (estaActivo && motivo.length < 5) {
+          showNotice(
+            "error",
+            "Escribe el motivo de inactivación antes de dar de baja al cliente."
+          );
+          return;
+        }
+
         await apiSendCRM(`/clientes/${id}`, "PUT", {
           codigo_cliente: client.codigo_cliente,
           nombre_empresa: client.nombre_empresa,
           nit: client.nit,
           direccion: client.direccion,
           estado_cliente_id: nuevoEstado,
+
+          // Nuevos campos de trazabilidad.
+          motivo_inactivacion: estaActivo ? motivo : null,
+          fecha_inactivacion: estaActivo ? new Date().toISOString() : null,
         });
 
         await reload();
 
         setClientModal({ open: false, mode: "create", value: {} });
         setDeleteModal({ open: false, type: null, id: null });
+        setClientInactiveReason("");
 
         showNotice(
           "success",
           estaActivo
-            ? "Cliente dado de baja correctamente."
+            ? `Cliente dado de baja. Motivo: ${motivo}`
             : "Cliente reactivado correctamente."
         );
 
@@ -2388,6 +4683,16 @@ export function CRM() {
 
       if (!endpoint) {
         throw new Error("No se encontró la operación solicitada.");
+      }
+
+      if (deleteModal.type === "quote") {
+        const quoteToDelete = quotes.find((q) => Number(q.id) === id);
+        if (quoteToDelete?.codigo_cotizacion) {
+          removeQuoteUiMetadata(
+            quoteToDelete.id,
+            quoteToDelete.codigo_cotizacion
+          );
+        }
       }
 
       await apiSendCRM(endpoint, "DELETE");
@@ -2411,6 +4716,1214 @@ export function CRM() {
             ? "No se pudo cambiar el estado del cliente."
             : "No se pudo eliminar el registro en MySQL.")
       );
+    }
+  };
+
+
+  // ----------------------------------------------------------
+  // PROVEEDORES
+  // ----------------------------------------------------------
+
+  const openProvider = (mode: ModalMode, provider?: ProviderRow) => {
+    setProviderErrors({});
+    if (provider) {
+      setProviderModal({ open: true, mode, value: { ...provider } });
+      setProviderContactDraft(
+        providerContacts
+          .filter((c) => Number(c.proveedor_id) === Number(provider.id))
+          .map((c) => ({ ...c }))
+      );
+      setProviderServiceDraft(
+        providerServices
+          .filter((s) => Number(s.proveedor_id) === Number(provider.id))
+          .map((s) => ({ ...s }))
+      );
+      setProviderComplianceDraft({
+        ...(providerComplianceFor(provider.id) || {
+          proveedor_id: provider.id,
+          estado_sat: "pendiente",
+          lista_clinton: false,
+          rtu_validado: false,
+          licencia_validada: false,
+          cuenta_validada: false,
+        }),
+      });
+      setProviderPerformanceDraft({
+        ...(providerPerformanceFor(provider.id) || {
+          proveedor_id: provider.id,
+          nivel: "Amarillo",
+          historial: "",
+          hallazgos: "",
+          fecha: todayISO(),
+        }),
+      });
+      return;
+    }
+
+    setProviderModal({
+      open: true,
+      mode: "create",
+      value: {
+        codigo_proveedor: "",
+        razon_social: "",
+        nombre_comercial: "",
+        nit: "",
+        estado_id: 1,
+        correo: "",
+        telefono: "",
+      },
+    });
+    setProviderContactDraft([]);
+    setProviderServiceDraft([]);
+    setProviderComplianceDraft({
+      estado_sat: "pendiente",
+      lista_clinton: false,
+      rtu_validado: false,
+      licencia_validada: false,
+      cuenta_validada: false,
+    });
+    setProviderPerformanceDraft({
+      nivel: "Amarillo",
+      historial: "",
+      hallazgos: "",
+      fecha: todayISO(),
+    });
+  };
+
+  const addProviderContact = () => {
+    const id = -Date.now();
+    setProviderContactDraft((prev) => [
+      ...prev.map((c) => prev.length === 0 ? c : c),
+      {
+        id,
+        proveedor_id: Number(providerModal.value.id || 0),
+        primer_nombre: "",
+        segundo_nombre: "",
+        primer_apellido: "",
+        segundo_apellido: "",
+        cargo: "",
+        correo: "",
+        telefono: "",
+        es_principal: prev.length === 0,
+        estado: true,
+      },
+    ]);
+  };
+
+  const patchProviderContact = (id: number, patch: Partial<ProviderContactRow>) => {
+    setProviderContactDraft((prev) =>
+      prev.map((c) => {
+        if (patch.es_principal && c.id !== id) return { ...c, es_principal: false };
+        return c.id === id ? { ...c, ...patch } : c;
+      })
+    );
+  };
+
+  const addProviderService = () => {
+    const id = -Date.now();
+    setProviderServiceDraft((prev) => [
+      ...prev,
+      {
+        id,
+        proveedor_id: Number(providerModal.value.id || 0),
+        codigo_servicio: "",
+        nombre_servicio_proveedor: "",
+        es_principal: prev.length === 0,
+      },
+    ]);
+  };
+
+  const patchProviderService = (id: number, patch: Partial<ProviderServiceRow>) => {
+    setProviderServiceDraft((prev) =>
+      prev.map((s) => {
+        if (patch.es_principal && s.id !== id) return { ...s, es_principal: false };
+        return s.id === id ? { ...s, ...patch } : s;
+      })
+    );
+  };
+
+  const validateProvider = () => {
+    const e: FieldErrors = {};
+    if (!String(providerModal.value.razon_social || "").trim()) e.razon_social = "La razón social es obligatoria.";
+    if (!String(providerModal.value.nit || "").trim()) e.nit = "El NIT es obligatorio.";
+    if (providerModal.value.correo && !validEmail(String(providerModal.value.correo))) e.correo = "Correo no válido.";
+    providerContactDraft.forEach((c, index) => {
+      const started = c.primer_nombre || c.primer_apellido || c.cargo || c.correo || c.telefono;
+      if (started && (!c.primer_nombre.trim() || !c.primer_apellido.trim())) {
+        e[`contacto_${index}`] = `Completa nombre y apellido del contacto ${index + 1}.`;
+      }
+      if (c.correo && !validEmail(c.correo)) e[`correo_contacto_${index}`] = `Correo del contacto ${index + 1} no válido.`;
+    });
+    setProviderErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  const saveProvider = async () => {
+    if (!validateProvider()) return;
+    const payload = {
+      ...providerModal.value,
+      contactos: providerContactDraft,
+      servicios: providerServiceDraft,
+      cumplimiento: providerComplianceDraft,
+      desempeno: providerPerformanceDraft,
+    };
+
+    try {
+      if (providerModal.mode === "create") {
+        await apiSendCRM("/crm/proveedores", "POST", payload);
+      } else if (providerModal.value.id) {
+        await apiSendCRM(`/crm/proveedores/${providerModal.value.id}`, "PUT", payload);
+      }
+      await reload();
+      setProviderModal({ open: false, mode: "create", value: {} });
+      showNotice("success", providerModal.mode === "create" ? "Proveedor guardado correctamente." : "Proveedor actualizado correctamente.");
+    } catch (error: any) {
+      setProviderErrors({ general: error?.message || "No se pudo guardar el proveedor." });
+    }
+  };
+
+  const deleteProvider = async () => {
+    if (!providerDeleteId) return;
+    try {
+      const result = await apiSendCRM(`/crm/proveedores/${providerDeleteId}`, "DELETE");
+      await reload();
+      setProviderDeleteId(null);
+      showNotice("success", result?.inactivado ? "El proveedor tenía operaciones y fue marcado como Inactivo." : "Proveedor eliminado correctamente.");
+    } catch (error: any) {
+      setProviderDeleteId(null);
+      showNotice("error", error?.message || "No se pudo eliminar el proveedor.");
+    }
+  };
+
+  const providerPdf = async (p: ProviderRow) => {
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const NAVY = [12, 45, 107] as const;
+    const ORANGE = [255, 106, 0] as const;
+    const LIGHT_BLUE = [239, 246, 255] as const;
+    const LIGHT_GRAY = [248, 250, 252] as const;
+    const BORDER = [220, 226, 235] as const;
+    const TEXT = [31, 41, 55] as const;
+    const MUTED = [100, 116, 139] as const;
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 14;
+    const contentWidth = pageWidth - margin * 2;
+
+    const contactsRows = providerContacts
+      .filter(
+        (contact) =>
+          Number(contact.proveedor_id) === Number(p.id) &&
+          contact.estado !== false
+      )
+      .sort((a, b) => {
+        if (Boolean(a.es_principal) !== Boolean(b.es_principal)) {
+          return a.es_principal ? -1 : 1;
+        }
+
+        return fullContactName(a as any).localeCompare(
+          fullContactName(b as any),
+          "es"
+        );
+      });
+
+    const servicesRows = providerServices
+      .filter(
+        (service) =>
+          Number(service.proveedor_id) === Number(p.id)
+      )
+      .sort((a, b) => {
+        if (Boolean(a.es_principal) !== Boolean(b.es_principal)) {
+          return a.es_principal ? -1 : 1;
+        }
+
+        return String(a.nombre_servicio_proveedor || "").localeCompare(
+          String(b.nombre_servicio_proveedor || ""),
+          "es"
+        );
+      });
+
+    const compliance = providerComplianceFor(p.id);
+    const performance = providerPerformanceFor(p.id);
+    const mainContact = providerMainContact(p.id);
+    const mainService = providerMainService(p.id);
+
+    let logo: string | null = null;
+
+    try {
+      logo = await imageUrlToDataUrl(logoEmpresa);
+    } catch {
+      logo = null;
+    }
+
+    const satText =
+      compliance?.estado_sat === "vigente"
+        ? "Vigente"
+        : compliance?.estado_sat === "no_vigente"
+        ? "No vigente"
+        : "Pendiente";
+
+    const statusName = providerStatusName(p);
+
+    const performanceLevel =
+      performance?.nivel ||
+      p.desempeno ||
+      "Amarillo";
+
+    const drawHeader = (continuation = false) => {
+      doc.setFillColor(...NAVY);
+      doc.rect(0, 0, pageWidth, continuation ? 26 : 38, "F");
+
+      if (logo) {
+        try {
+          const logoX = margin;
+          const logoY = continuation ? 4 : 6;
+          const logoW = continuation ? 30 : 39;
+          const logoH = continuation ? 17 : 23;
+
+          doc.setFillColor(255, 255, 255);
+          doc.setDrawColor(255, 255, 255);
+          doc.roundedRect(
+            logoX - 1.5,
+            logoY - 1.5,
+            logoW + 3,
+            logoH + 3,
+            2,
+            2,
+            "FD"
+          );
+
+          doc.addImage(
+            logo,
+            "PNG",
+            logoX,
+            logoY,
+            logoW,
+            logoH,
+            undefined,
+            "FAST"
+          );
+        } catch {}
+      }
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+
+      if (continuation) {
+        doc.setFontSize(14);
+        doc.text(
+          "EXPEDIENTE DE PROVEEDOR",
+          pageWidth - margin,
+          11,
+          { align: "right" }
+        );
+
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "normal");
+        doc.text(
+          `${p.codigo_proveedor} · Continuación`,
+          pageWidth - margin,
+          17,
+          { align: "right" }
+        );
+      } else {
+        doc.setFontSize(20);
+        doc.text(
+          "EXPEDIENTE DE PROVEEDOR",
+          pageWidth - margin,
+          16,
+          { align: "right" }
+        );
+
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        doc.text(
+          "CRM y Ventas · Gestión de proveedores",
+          pageWidth - margin,
+          22,
+          { align: "right" }
+        );
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(...ORANGE);
+        doc.text(
+          p.codigo_proveedor,
+          pageWidth - margin,
+          29,
+          { align: "right" }
+        );
+      }
+    };
+
+    const drawFooter = () => {
+      const pages = doc.getNumberOfPages();
+
+      for (let page = 1; page <= pages; page += 1) {
+        doc.setPage(page);
+        doc.setDrawColor(...BORDER);
+        doc.line(
+          margin,
+          pageHeight - 12,
+          pageWidth - margin,
+          pageHeight - 12
+        );
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(...MUTED);
+        doc.text(
+          "Grupo Logístico 365 · Expediente de proveedor",
+          margin,
+          pageHeight - 7
+        );
+
+        doc.text(
+          `Página ${page} de ${pages}`,
+          pageWidth - margin,
+          pageHeight - 7,
+          { align: "right" }
+        );
+      }
+    };
+
+    drawHeader(false);
+
+    let y = 46;
+
+    const ensureSpace = (needed: number) => {
+      if (y + needed <= pageHeight - 18) return;
+
+      doc.addPage();
+      drawHeader(true);
+      y = 34;
+    };
+
+    const sectionTitle = (
+      title: string,
+      subtitle?: string
+    ) => {
+      ensureSpace(subtitle ? 17 : 12);
+
+      doc.setFillColor(...LIGHT_BLUE);
+      doc.roundedRect(
+        margin,
+        y,
+        contentWidth,
+        subtitle ? 14 : 10,
+        2,
+        2,
+        "F"
+      );
+
+      doc.setTextColor(...NAVY);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(title, margin + 4, y + 6);
+
+      if (subtitle) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(...MUTED);
+        doc.text(subtitle, margin + 4, y + 10.5);
+      }
+
+      y += subtitle ? 18 : 14;
+    };
+
+    const valueLines = (
+      value: any,
+      width: number
+    ) => {
+      const textValue =
+        value === null ||
+        value === undefined ||
+        String(value).trim() === ""
+          ? "-"
+          : String(value);
+
+      return doc.splitTextToSize(textValue, width);
+    };
+
+    const field = (
+      label: string,
+      value: any,
+      x: number,
+      top: number,
+      width: number
+    ) => {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(...MUTED);
+      doc.text(label, x, top);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(...TEXT);
+
+      const lines = valueLines(value, width);
+      doc.text(lines, x, top + 5);
+
+      return Math.max(11, 5 + lines.length * 4);
+    };
+
+    const statusBadge = (
+      textValue: string,
+      x: number,
+      top: number,
+      kind: "green" | "yellow" | "red" | "blue"
+    ) => {
+      const palette =
+        kind === "green"
+          ? {
+              bg: [220, 252, 231],
+              fg: [22, 101, 52],
+            }
+          : kind === "red"
+          ? {
+              bg: [254, 226, 226],
+              fg: [185, 28, 28],
+            }
+          : kind === "yellow"
+          ? {
+              bg: [254, 249, 195],
+              fg: [161, 98, 7],
+            }
+          : {
+              bg: [219, 234, 254],
+              fg: [30, 64, 175],
+            };
+
+      const badgeWidth = Math.max(
+        26,
+        doc.getTextWidth(textValue) + 8
+      );
+
+      doc.setFillColor(
+        palette.bg[0],
+        palette.bg[1],
+        palette.bg[2]
+      );
+
+      doc.roundedRect(
+        x,
+        top,
+        badgeWidth,
+        7,
+        2,
+        2,
+        "F"
+      );
+
+      doc.setTextColor(
+        palette.fg[0],
+        palette.fg[1],
+        palette.fg[2]
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.text(textValue, x + 4, top + 4.7);
+
+      return badgeWidth;
+    };
+
+    // --------------------------------------------------------
+    // RESUMEN GENERAL
+    // --------------------------------------------------------
+    sectionTitle(
+      "Información general",
+      "Datos principales y estado actual del proveedor."
+    );
+
+    ensureSpace(47);
+
+    doc.setFillColor(...LIGHT_GRAY);
+    doc.setDrawColor(...BORDER);
+    doc.roundedRect(
+      margin,
+      y,
+      contentWidth,
+      43,
+      2,
+      2,
+      "FD"
+    );
+
+    const leftX = margin + 5;
+    const rightX = margin + contentWidth / 2 + 4;
+    const halfWidth = contentWidth / 2 - 10;
+
+    field(
+      "Razón social",
+      p.razon_social,
+      leftX,
+      y + 7,
+      halfWidth
+    );
+
+    field(
+      "Nombre comercial",
+      p.nombre_comercial,
+      rightX,
+      y + 7,
+      halfWidth
+    );
+
+    field(
+      "NIT",
+      p.nit,
+      leftX,
+      y + 21,
+      halfWidth
+    );
+
+    field(
+      "Servicio principal",
+      mainService?.nombre_servicio_proveedor,
+      rightX,
+      y + 21,
+      halfWidth
+    );
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(...MUTED);
+    doc.text("Estado", leftX, y + 35);
+
+    statusBadge(
+      statusName,
+      leftX + 18,
+      y + 30.3,
+      String(statusName).toLowerCase().includes("activo")
+        ? "green"
+        : "red"
+    );
+
+    doc.text(
+      "Desempeño",
+      rightX,
+      y + 35
+    );
+
+    statusBadge(
+      performanceLevel,
+      rightX + 24,
+      y + 30.3,
+      performanceLevel === "Verde"
+        ? "green"
+        : performanceLevel === "Rojo"
+        ? "red"
+        : "yellow"
+    );
+
+    y += 49;
+
+    // --------------------------------------------------------
+    // CONTACTO GENERAL / PRINCIPAL
+    // --------------------------------------------------------
+    sectionTitle(
+      "Contacto principal",
+      "Información inmediata para comunicación con el proveedor."
+    );
+
+    ensureSpace(35);
+
+    doc.setDrawColor(...BORDER);
+    doc.roundedRect(
+      margin,
+      y,
+      contentWidth,
+      30,
+      2,
+      2,
+      "S"
+    );
+
+    field(
+      "Contacto",
+      fullContactName(mainContact as any),
+      leftX,
+      y + 7,
+      halfWidth
+    );
+
+    field(
+      "Cargo",
+      mainContact?.cargo,
+      rightX,
+      y + 7,
+      halfWidth
+    );
+
+    field(
+      "Correo",
+      mainContact?.correo || p.correo,
+      leftX,
+      y + 20,
+      halfWidth
+    );
+
+    field(
+      "Teléfono",
+      mainContact?.telefono || p.telefono,
+      rightX,
+      y + 20,
+      halfWidth
+    );
+
+    y += 36;
+
+    // --------------------------------------------------------
+    // TODOS LOS CONTACTOS
+    // --------------------------------------------------------
+    sectionTitle(
+      "Contactos registrados",
+      `${contactsRows.length} contacto(s) activo(s) asociado(s) al proveedor.`
+    );
+
+    if (!contactsRows.length) {
+      ensureSpace(16);
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(8.5);
+      doc.setTextColor(...MUTED);
+      doc.text(
+        "No hay contactos adicionales registrados.",
+        margin + 3,
+        y + 4
+      );
+      y += 12;
+    } else {
+      const widths = [8, 48, 29, 50, 28, 20];
+      const headers = [
+        "#",
+        "Nombre",
+        "Cargo",
+        "Correo",
+        "Teléfono",
+        "Tipo",
+      ];
+
+      ensureSpace(12);
+
+      doc.setFillColor(...NAVY);
+      doc.rect(
+        margin,
+        y,
+        contentWidth,
+        8,
+        "F"
+      );
+
+      let hx = margin;
+
+      headers.forEach((header, index) => {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6.8);
+        doc.setTextColor(255, 255, 255);
+        doc.text(
+          header,
+          hx + 2,
+          y + 5
+        );
+        hx += widths[index];
+      });
+
+      y += 8;
+
+      contactsRows.forEach((contact, index) => {
+        const name = fullContactName(contact as any) || "-";
+        const cargo = contact.cargo || "-";
+        const correo = contact.correo || "-";
+        const telefono = contact.telefono || "-";
+        const tipo = contact.es_principal ? "Principal" : "Adicional";
+
+        const cells = [
+          String(index + 1),
+          name,
+          cargo,
+          correo,
+          telefono,
+          tipo,
+        ];
+
+        const lineSets = cells.map((cell, cellIndex) =>
+          doc.splitTextToSize(
+            cell,
+            Math.max(5, widths[cellIndex] - 4)
+          )
+        );
+
+        const maxLines = Math.max(
+          ...lineSets.map((lines) => lines.length)
+        );
+
+        const rowHeight = Math.max(
+          9,
+          4 + maxLines * 3.2
+        );
+
+        ensureSpace(rowHeight + 2);
+
+        if (index % 2 === 0) {
+          doc.setFillColor(...LIGHT_GRAY);
+          doc.rect(
+            margin,
+            y,
+            contentWidth,
+            rowHeight,
+            "F"
+          );
+        }
+
+        doc.setDrawColor(...BORDER);
+        doc.rect(
+          margin,
+          y,
+          contentWidth,
+          rowHeight,
+          "S"
+        );
+
+        let cx = margin;
+
+        lineSets.forEach((lines, cellIndex) => {
+          doc.setFont(
+            "helvetica",
+            cellIndex === 1 ? "bold" : "normal"
+          );
+          doc.setFontSize(6.8);
+
+          if (
+            cellIndex === 5 &&
+            contact.es_principal
+          ) {
+            doc.setTextColor(22, 101, 52);
+          } else {
+            doc.setTextColor(...TEXT);
+          }
+
+          doc.text(
+            lines,
+            cx + 2,
+            y + 5
+          );
+
+          cx += widths[cellIndex];
+        });
+
+        y += rowHeight;
+      });
+
+      y += 5;
+    }
+
+    // --------------------------------------------------------
+    // SERVICIOS
+    // --------------------------------------------------------
+    sectionTitle(
+      "Servicios",
+      `${servicesRows.length} servicio(s) registrado(s).`
+    );
+
+    if (!servicesRows.length) {
+      ensureSpace(14);
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(8.5);
+      doc.setTextColor(...MUTED);
+      doc.text(
+        "No hay servicios registrados.",
+        margin + 3,
+        y + 4
+      );
+      y += 12;
+    } else {
+      servicesRows.forEach((service, index) => {
+        const lines = doc.splitTextToSize(
+          service.nombre_servicio_proveedor || "-",
+          contentWidth - 43
+        );
+
+        const rowHeight = Math.max(
+          10,
+          5 + lines.length * 3.4
+        );
+
+        ensureSpace(rowHeight + 2);
+
+        doc.setFillColor(
+          index % 2 === 0 ? 248 : 255,
+          index % 2 === 0 ? 250 : 255,
+          index % 2 === 0 ? 252 : 255
+        );
+
+        doc.setDrawColor(...BORDER);
+        doc.roundedRect(
+          margin,
+          y,
+          contentWidth,
+          rowHeight,
+          1.5,
+          1.5,
+          "FD"
+        );
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.5);
+        doc.setTextColor(...NAVY);
+        doc.text(
+          service.codigo_servicio || `Servicio ${index + 1}`,
+          margin + 4,
+          y + 5
+        );
+
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(...TEXT);
+        doc.text(
+          lines,
+          margin + 34,
+          y + 5
+        );
+
+        if (service.es_principal) {
+          statusBadge(
+            "Principal",
+            pageWidth - margin - 27,
+            y + 1.5,
+            "blue"
+          );
+        }
+
+        y += rowHeight + 2;
+      });
+
+      y += 3;
+    }
+
+    // --------------------------------------------------------
+    // CUMPLIMIENTO
+    // --------------------------------------------------------
+    sectionTitle(
+      "Cumplimiento documental",
+      "Estado de las validaciones utilizadas para el expediente del proveedor."
+    );
+
+    ensureSpace(33);
+
+    const checks = [
+      {
+        label: "SAT",
+        value: satText,
+        ok: compliance?.estado_sat === "vigente",
+        warning: compliance?.estado_sat === "pendiente",
+      },
+      {
+        label: "Lista Clinton",
+        value: compliance?.lista_clinton ? "Revisado" : "Pendiente",
+        ok: Boolean(compliance?.lista_clinton),
+      },
+      {
+        label: "RTU",
+        value: compliance?.rtu_validado ? "Validado" : "Pendiente",
+        ok: Boolean(compliance?.rtu_validado),
+      },
+      {
+        label: "Licencias",
+        value: compliance?.licencia_validada ? "Validado" : "Pendiente",
+        ok: Boolean(compliance?.licencia_validada),
+      },
+      {
+        label: "Cuenta bancaria",
+        value: compliance?.cuenta_validada ? "Validado" : "Pendiente",
+        ok: Boolean(compliance?.cuenta_validada),
+      },
+    ];
+
+    const cardGap = 3;
+    const cardWidth =
+      (contentWidth - cardGap * 4) / 5;
+
+    checks.forEach((item, index) => {
+      const x =
+        margin +
+        index * (cardWidth + cardGap);
+
+      doc.setFillColor(...LIGHT_GRAY);
+      doc.setDrawColor(...BORDER);
+      doc.roundedRect(
+        x,
+        y,
+        cardWidth,
+        25,
+        2,
+        2,
+        "FD"
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.setTextColor(...NAVY);
+
+      const labelLines = doc.splitTextToSize(
+        item.label,
+        cardWidth - 5
+      );
+
+      doc.text(
+        labelLines,
+        x + 2.5,
+        y + 5
+      );
+
+      const kind =
+        item.ok
+          ? "green"
+          : item.warning
+          ? "yellow"
+          : item.value === "No vigente"
+          ? "red"
+          : "yellow";
+
+      statusBadge(
+        item.value,
+        x + 2.5,
+        y + 15,
+        kind
+      );
+    });
+
+    y += 31;
+
+    // --------------------------------------------------------
+    // DESEMPEÑO
+    // --------------------------------------------------------
+    sectionTitle(
+      "Evaluación de desempeño",
+      "Última evaluación registrada para este proveedor."
+    );
+
+    ensureSpace(26);
+
+    doc.setDrawColor(...BORDER);
+    doc.roundedRect(
+      margin,
+      y,
+      contentWidth,
+      20,
+      2,
+      2,
+      "S"
+    );
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(...MUTED);
+    doc.text(
+      "Nivel",
+      margin + 4,
+      y + 6
+    );
+
+    statusBadge(
+      performanceLevel,
+      margin + 18,
+      y + 1.5,
+      performanceLevel === "Verde"
+        ? "green"
+        : performanceLevel === "Rojo"
+        ? "red"
+        : "yellow"
+    );
+
+    field(
+      "Fecha de evaluación",
+      performance?.fecha
+        ? formatDate(performance.fecha)
+        : "-",
+      margin + 75,
+      y + 6,
+      45
+    );
+
+    y += 25;
+
+    const longTextBox = (
+      title: string,
+      value: any
+    ) => {
+      const lines = doc.splitTextToSize(
+        value && String(value).trim()
+          ? String(value)
+          : "Sin información registrada.",
+        contentWidth - 10
+      );
+
+      const boxHeight = Math.max(
+        18,
+        12 + lines.length * 3.5
+      );
+
+      ensureSpace(boxHeight + 4);
+
+      doc.setFillColor(...LIGHT_GRAY);
+      doc.setDrawColor(...BORDER);
+      doc.roundedRect(
+        margin,
+        y,
+        contentWidth,
+        boxHeight,
+        2,
+        2,
+        "FD"
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(...NAVY);
+      doc.text(
+        title,
+        margin + 4,
+        y + 6
+      );
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(...TEXT);
+      doc.text(
+        lines,
+        margin + 4,
+        y + 11
+      );
+
+      y += boxHeight + 4;
+    };
+
+    longTextBox(
+      "Historial",
+      performance?.historial
+    );
+
+    longTextBox(
+      "Hallazgos",
+      performance?.hallazgos
+    );
+
+    // --------------------------------------------------------
+    // CIERRE
+    // --------------------------------------------------------
+    ensureSpace(18);
+
+    doc.setDrawColor(...ORANGE);
+    doc.setLineWidth(0.7);
+    doc.line(
+      margin,
+      y + 2,
+      margin + 42,
+      y + 2
+    );
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(...NAVY);
+    doc.text(
+      "Expediente generado desde GL365 ERP",
+      margin,
+      y + 8
+    );
+
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...MUTED);
+    doc.text(
+      `Fecha de generación: ${new Date().toLocaleDateString("es-GT")}`,
+      margin,
+      y + 13
+    );
+
+    drawFooter();
+
+    doc.save(
+      `Expediente_${p.codigo_proveedor}_${String(
+        p.razon_social || "Proveedor"
+      )
+        .replace(/[^\w\s-]/g, "")
+        .replace(/\s+/g, "_")}.pdf`
+    );
+  };
+
+  const exportProviders = () => {
+    const rows = sortedProviders.map((p) => {
+      const c = providerMainContact(p.id);
+      const s = providerMainService(p.id);
+      const comp = providerComplianceFor(p.id);
+      const perf = providerPerformanceFor(p.id);
+      return {
+        Código: p.codigo_proveedor,
+        Proveedor: p.razon_social,
+        "Nombre comercial": p.nombre_comercial || "",
+        NIT: p.nit,
+        "Servicio principal": s?.nombre_servicio_proveedor || "",
+        "Contacto principal": fullContactName(c as any),
+        Correo: c?.correo || p.correo || "",
+        Teléfono: c?.telefono || p.telefono || "",
+        Desempeño: perf?.nivel || "Amarillo",
+        SAT: comp?.estado_sat || "pendiente",
+        Estado: providerStatusName(p),
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Proveedores");
+    XLSX.writeFile(wb, `CRM_Proveedores_${Date.now()}.xlsx`);
+  };
+
+  const openNewRoute = () => {
+    const origin = ubicaciones.find((u) => Number(u.id) === Number(quoteModal.value.origen_id));
+    const destination = ubicaciones.find((u) => Number(u.id) === Number(quoteModal.value.destino_id));
+    setRouteErrors({});
+    setRouteDraft({
+      codigo_ruta: "",
+      nombre_ruta: "",
+      origen: origin?.nombre_ubicacion || "",
+      pais_origen: origin?.pais || "Guatemala",
+      destino: destination?.nombre_ubicacion || "",
+      pais_destino: destination?.pais || "Guatemala",
+      distancia_km: "",
+    });
+    setRouteModalOpen(true);
+  };
+
+  const saveNewRoute = async () => {
+    const e: FieldErrors = {};
+    if (!routeDraft.origen.trim()) e.origen = "Escribe el origen.";
+    if (!routeDraft.destino.trim()) e.destino = "Escribe el destino.";
+    if (normalizeLocationLabel(routeDraft.origen) === normalizeLocationLabel(routeDraft.destino)) e.destino = "Origen y destino deben ser diferentes.";
+    setRouteErrors(e);
+    if (Object.keys(e).length) return;
+
+    try {
+      const result = await apiSendCRM("/crm/rutas", "POST", {
+        ...routeDraft,
+        distancia_km: Number(routeDraft.distancia_km || 0),
+      });
+      setQuoteModal((prev) => ({
+        ...prev,
+        value: {
+          ...prev.value,
+          origen_id: Number(result.origen_id),
+          destino_id: Number(result.destino_id),
+        },
+      }));
+      setQuoteErrors((prev) => ({ ...prev, origen_id: "", destino_id: "" }));
+      setRouteModalOpen(false);
+      await reload();
+      showNotice("success", result?.existente ? "La ruta ya existía y fue seleccionada." : "Ruta creada y seleccionada en la cotización.");
+    } catch (error: any) {
+      setRouteErrors({ general: error?.message || "No se pudo guardar la ruta." });
     }
   };
 
@@ -2485,6 +5998,13 @@ export function CRM() {
           { title: "Clientes inactivos", value: clients.filter((c) => c.estado_cliente_id === 2).length, icon: FileText, color: "orange" as const },
           { title: "Contactos registrados", value: contacts.length, icon: UserPlus, color: "blue" as const },
         ]
+      : activeTab === "proveedores"
+      ? [
+          { title: "Proveedores", value: providers.length, icon: Building2, color: "blue" as const },
+          { title: "Activos", value: providers.filter((p) => providerStatusName(p) === "Activo").length, icon: CheckCircle2, color: "green" as const },
+          { title: "Riesgo alto", value: providers.filter((p) => (providerPerformanceFor(p.id)?.nivel || p.desempeno) === "Rojo").length, icon: AlertTriangle, color: "orange" as const },
+          { title: "SAT no vigente", value: providers.filter((p) => (providerComplianceFor(p.id)?.estado_sat || p.estado_sat) === "no_vigente").length, icon: AlertTriangle, color: "orange" as const },
+        ]
       : [
           { title: "Total cotizaciones", value: quoteViews.length, icon: Target, color: "blue" as const },
           { title: "Aprobadas", value: quoteViews.filter((q) => q.status === "Aprobada").length, icon: CheckCircle, color: "green" as const },
@@ -2497,11 +6017,16 @@ export function CRM() {
   // ----------------------------------------------------------
 
   const currentClient = clientModal.value.id ? clients.find((c) => c.id === Number(clientModal.value.id)) : undefined;
-  const currentClientContacts = currentClient ? contacts.filter((c) => c.cliente_id === currentClient.id) : [];
+  const currentClientContacts = currentClient ? contacts.filter((c) => c.cliente_id === currentClient.id).sort((a, b) => b.id - a.id) : [];
 
   const clientForStatusAction =
-    deleteModal.type === "client" && deleteModal.id
-      ? clients.find((c) => Number(c.id) === Number(deleteModal.id))
+    (deleteModal.type === "client" ||
+      deleteModal.type === "clientPermanent") &&
+    deleteModal.id
+      ? clients.find(
+          (c) =>
+            Number(c.id) === Number(deleteModal.id)
+        )
       : undefined;
 
   const clientStatusActionIsReactivate =
@@ -2545,17 +6070,32 @@ export function CRM() {
     volume: q.volume,
     paymentMethod: q.paymentMethod,
     currency: q.currency,
+
+    // IMPORTANTE:
+    // El PDF debe recibir el ejecutivo que actualmente está relacionado
+    // con la cotización, no un valor fijo ni el ejecutivo anterior.
+    salesExecutive: q.executive,
+    executive: q.executive,
+    ejecutivo: q.executive,
+    ejecutivo_ventas: q.executive,
+    executiveId: q.executiveId,
+
+    noIncluye: q.noIncluye,
+    notasImportantes: q.notasImportantes,
   });
 
 
-  const hasActiveCrmFilters = Boolean(searchQuery.trim()) || statusFilter !== "Todos" || leadStageFilter !== "Todos";
+  const hasActiveCrmFilters = Boolean(searchQuery.trim()) || statusFilter !== "Todos" || leadStageFilter !== "Todos" || providerStatusFilter !== "Todos" || providerLevelFilter !== "Todos" || providerSatFilter !== "Todos";
 
   const clearCrmFilters = () => {
     setSearchQuery("");
     setStatusFilter("Todos");
     setLeadStageFilter("Todos");
+    setProviderStatusFilter("Todos");
+    setProviderLevelFilter("Todos");
+    setProviderSatFilter("Todos");
     setSortField("");
-    setCrmSortDirection("asc");
+    setCrmSortDirection("desc");
   };
 
   const sortIcon = (field: string) => {
@@ -2563,12 +6103,113 @@ export function CRM() {
     return crmSortDirection === "asc" ? "↑" : "↓";
   };
 
+  const sortLabel = (field: string) => {
+    const labels: Record<string, string> = {
+      date: "Fecha",
+      amount: "Monto",
+      probability: "Probabilidad",
+      clientName: "Cliente",
+      opportunityName: "Oportunidad",
+      stage: "Etapa",
+      codigo_cliente: "Código",
+      nombre_empresa: "Empresa",
+      nit: "NIT",
+      contacto: "Contacto principal",
+      estado: "Estado",
+      quoteNumber: "No. Cotización",
+      contact: "Contacto",
+      status: "Estado",
+      total: "Total",
+      closeDate: "Cierre estimado",
+      providerCode: "Código",
+      providerName: "Proveedor",
+      providerNit: "NIT",
+      providerService: "Servicio",
+      providerContact: "Contacto",
+      providerPerformance: "Desempeño",
+      providerSat: "SAT",
+      providerStatus: "Estado",
+    };
+
+    return labels[field] || field;
+  };
+
+  const sortMeaning = (
+    field: string,
+    direction: CrmSortDirection
+  ) => {
+    const numericFields = new Set([
+      "amount",
+      "probability",
+      "total",
+    ]);
+
+    const dateFields = new Set([
+      "date",
+      "closeDate",
+    ]);
+
+    if (dateFields.has(field)) {
+      return direction === "asc"
+        ? "Más antiguo → más reciente"
+        : "Más reciente → más antiguo";
+    }
+
+    if (numericFields.has(field)) {
+      return direction === "asc"
+        ? "Menor → mayor"
+        : "Mayor → menor";
+    }
+
+    return direction === "asc"
+      ? "A → Z"
+      : "Z → A";
+  };
+
+  const sortShortMeaning = (
+    field: string,
+    direction: CrmSortDirection
+  ) => {
+    const numericFields = new Set([
+      "amount",
+      "probability",
+      "total",
+    ]);
+
+    const dateFields = new Set([
+      "date",
+      "closeDate",
+    ]);
+
+    if (dateFields.has(field)) {
+      return direction === "asc"
+        ? "Antiguo → reciente"
+        : "Reciente → antiguo";
+    }
+
+    if (numericFields.has(field)) {
+      return direction === "asc"
+        ? "Menor → mayor"
+        : "Mayor → menor";
+    }
+
+    return direction === "asc"
+      ? "A → Z"
+      : "Z → A";
+  };
+
   const handleColumnSort = (field: string) => {
     if (sortField === field) {
-      setCrmSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      // Segundo clic y siguientes:
+      // ascendente <-> descendente.
+      setCrmSortDirection((prev) =>
+        prev === "asc" ? "desc" : "asc"
+      );
       return;
     }
 
+    // Al tocar una columna por primera vez,
+    // empieza en ASCENDENTE.
     setSortField(field);
     setCrmSortDirection("asc");
   };
@@ -2581,30 +6222,116 @@ export function CRM() {
     field: string;
     children: ReactNode;
     className?: string;
-  }) => (
-    <th className={className}>
+  }) => {
+    const active = sortField === field;
+
+    const nextDirection: CrmSortDirection =
+      active && crmSortDirection === "asc"
+        ? "desc"
+        : "asc";
+
+    return (
+      <th className={className}>
+        <button
+          type="button"
+          onClick={() => handleColumnSort(field)}
+          className={`group inline-flex flex-col items-start gap-0.5 text-left transition-colors ${
+            active
+              ? "text-[#FF6A00]"
+              : "text-[#0C2D6B] hover:text-[#FF6A00]"
+          }`}
+          title={
+            active
+              ? `Orden ${crmSortDirection === "asc" ? "ascendente" : "descendente"}. Clic para cambiar a ${nextDirection === "asc" ? "ascendente" : "descendente"}.`
+              : `Clic para ordenar ${sortLabel(field)} de forma ascendente.`
+          }
+          aria-label={
+            active
+              ? `${sortLabel(field)} ordenado ${crmSortDirection === "asc" ? "ascendente" : "descendente"}. Presiona para invertir.`
+              : `${sortLabel(field)}. Presiona para ordenar ascendente.`
+          }
+        >
+          <span className="inline-flex items-center gap-1 text-[13px] font-bold">
+            {children}
+            <span
+              className={`text-[10px] ${
+                active
+                  ? "text-[#FF6A00]"
+                  : "text-gray-300 group-hover:text-[#FF6A00]"
+              }`}
+            >
+              {sortIcon(field)}
+            </span>
+          </span>
+
+          <span
+            className={`whitespace-nowrap text-[9px] font-semibold leading-none ${
+              active
+                ? "text-[#FF6A00]"
+                : "text-gray-400"
+            }`}
+          >
+            {active
+              ? `${
+                  crmSortDirection === "asc"
+                    ? "Ascendente"
+                    : "Descendente"
+                } · ${sortShortMeaning(
+                  field,
+                  crmSortDirection
+                )}`
+              : "Clic para ordenar"}
+          </span>
+        </button>
+      </th>
+    );
+  };
+
+  const SortChip = ({
+    field,
+    label,
+  }: {
+    field: string;
+    label: string;
+  }) => {
+    const active = sortField === field;
+
+    return (
       <button
         type="button"
         onClick={() => handleColumnSort(field)}
-        className={`inline-flex items-center gap-0.5 text-[13px] font-bold transition-colors hover:text-[#FF6A00] ${sortField === field ? "text-[#FF6A00]" : "text-[#0C2D6B]"}`}
-        title="Ordenar ascendente o descendente"
+        className={`min-h-9 rounded-full border px-3 py-1.5 text-[11px] font-bold transition-all ${
+          active
+            ? "border-orange-300 bg-orange-50 text-[#C85100] shadow-sm"
+            : "border-gray-200 bg-white text-[#0C2D6B] hover:border-blue-200 hover:bg-blue-50"
+        }`}
+        title={
+          active
+            ? `Orden ${crmSortDirection === "asc" ? "ascendente" : "descendente"}. Haz clic para invertir.`
+            : `Haz clic para ordenar ${label} ascendente.`
+        }
       >
-        <span>{children}</span>
-        <span className={`text-[9px] leading-none ${sortField === field ? "text-[#FF6A00]" : "text-gray-300"}`}>{sortIcon(field)}</span>
-      </button>
-    </th>
-  );
+        <span>{label}</span>
+        <span className="ml-1">
+          {sortIcon(field)}
+        </span>
 
-  const SortChip = ({ field, label }: { field: string; label: string }) => (
-    <button
-      type="button"
-      onClick={() => handleColumnSort(field)}
-      className={`h-8 rounded-full border px-3 text-[11px] font-bold transition-colors ${sortField === field ? "border-orange-200 bg-white text-[#FF6A00] shadow-sm" : "border-gray-200 bg-white text-[#0C2D6B] hover:bg-blue-50"}`}
-      title="Ordenar ascendente o descendente"
-    >
-      {label} <span className="ml-1 text-[9px] leading-none">{sortIcon(field)}</span>
-    </button>
-  );
+        <span
+          className={`ml-1 ${
+            active
+              ? "text-[#C85100]"
+              : "text-gray-400"
+          }`}
+        >
+          {active
+            ? crmSortDirection === "asc"
+              ? "Asc."
+              : "Desc."
+            : "Ordenar"}
+        </span>
+      </button>
+    );
+  };
 
   return (
     <div className="space-y-5 w-full max-w-full px-2 sm:px-3 lg:px-4">
@@ -2612,7 +6339,7 @@ export function CRM() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-[#0C2D6B]">CRM y Ventas</h1>
-          <p className="text-gray-500 mt-1">Gestión de clientes, contactos, oportunidades y cotizaciones</p>
+          <p className="text-gray-500 mt-1">Gestión de clientes, contactos, oportunidades, cotizaciones y proveedores</p>
         </div>
         <button onClick={reload} className="h-9 bg-[#0C2D6B] text-white px-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-[#143C8C] w-fit">
           <RefreshCw className="w-4 h-4" /> Actualizar
@@ -2633,6 +6360,7 @@ export function CRM() {
             ["seguimiento", "Seguimiento de Ventas"],
             ["clientes", "Clientes"],
             ["cotizaciones", "Cotizaciones"],
+            ["proveedores", "Proveedores"],
           ].map(([id, label]) => (
             <button
               key={id}
@@ -2659,7 +6387,7 @@ export function CRM() {
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative w-full max-w-[380px]">
               <Search className="w-5 h-5 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
-              <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Buscar oportunidad..." className="w-full h-11 pl-12 pr-4 bg-white border border-gray-200 rounded-xl text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20" />
+              <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Buscar código, oportunidad, cliente, modalidad o ejecutivo..." className="w-full h-11 pl-12 pr-4 bg-white border border-gray-200 rounded-xl text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20" />
             </div>
 
             <div className="relative w-[210px] max-w-full">
@@ -2680,7 +6408,7 @@ export function CRM() {
               className="h-11 rounded-xl border border-orange-200 bg-white px-4 text-sm font-bold text-[#FF6A00] shadow-sm transition hover:border-[#FF6A00] hover:bg-orange-50"
             >
               <X className="inline-block w-4 h-4 mr-1" />
-              Limpiar
+              Limpiar filtros y orden
             </button>
 
             <button onClick={() => openLead("create")} className="h-12 bg-[#0C2D6B] text-white px-6 rounded-xl text-base font-bold flex items-center gap-2.5 shadow-sm hover:bg-[#143C8C] ml-0 xl:ml-auto">
@@ -2696,13 +6424,24 @@ export function CRM() {
 
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-bold text-gray-400 uppercase tracking-wide">Ordenar por:</span>
+          <div className="mx-4 flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-bold text-gray-400 uppercase tracking-wide">
+              Ordenar por:
+            </span>
             <SortChip field="date" label="Fecha" />
             <SortChip field="amount" label="Monto" />
-            <SortChip field="probability" label="Probabilidad" />
-            <SortChip field="clientName" label="Cliente" />
-            <SortChip field="opportunityName" label="Oportunidad" />
+            <SortChip
+              field="probability"
+              label="Probabilidad"
+            />
+            <SortChip
+              field="clientName"
+              label="Cliente"
+            />
+            <SortChip
+              field="opportunityName"
+              label="Oportunidad"
+            />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 pb-3">
@@ -2800,7 +6539,7 @@ export function CRM() {
               className="h-11 rounded-xl border border-orange-200 bg-white px-4 text-sm font-bold text-[#FF6A00] shadow-sm transition hover:border-[#FF6A00] hover:bg-orange-50"
             >
               <X className="inline-block w-4 h-4 mr-1" />
-              Limpiar
+              Limpiar filtros y orden
             </button>
 
             <div className="flex gap-2 ml-0 xl:ml-auto">
@@ -2855,7 +6594,7 @@ export function CRM() {
                           <button onClick={() => openClient("view", c)} className="w-8 h-8 rounded-lg text-gray-500 hover:text-[#0C2D6B] hover:bg-blue-50 flex items-center justify-center" title="Ver cliente" aria-label="Ver cliente"><Eye className="w-4 h-4" /></button>
                           <button onClick={() => openClient("edit", c)} className="w-8 h-8 rounded-lg text-gray-500 hover:text-[#FF6A00] hover:bg-orange-50 flex items-center justify-center" title="Editar cliente" aria-label="Editar cliente"><Edit2 className="w-4 h-4" /></button>
                           <button
-                            onClick={() => setDeleteModal({ open: true, type: "client", id: c.id })}
+                            onClick={() => openClientStatusAction(c)}
                             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
                               c.estado_cliente_id === 2
                                 ? "text-green-600 hover:text-green-700 hover:bg-green-50"
@@ -2869,6 +6608,16 @@ export function CRM() {
                             ) : (
                               <UserX className="w-4 h-4" />
                             )}
+                          </button>
+                          <button
+                            onClick={() =>
+                              openClientPermanentDelete(c)
+                            }
+                            className="w-8 h-8 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 flex items-center justify-center transition-colors"
+                            title="Eliminar cliente definitivamente"
+                            aria-label="Eliminar cliente definitivamente"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -2887,6 +6636,148 @@ export function CRM() {
             totalItems={sortedClients.length}
             itemLabel="registros filtrados"
             onPageChange={setClientPage}
+            onRowsPerPageChange={setRowsPerPage}
+          />
+        </div>
+      )}
+
+
+      {/* ==================================================== */}
+      {/* PROVEEDORES */}
+      {/* ==================================================== */}
+      {activeTab === "proveedores" && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="border-b p-4">
+            {/* Barra compacta de proveedores: una sola línea y sin scroll horizontal */}
+            <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-hidden">
+              <div className="relative min-w-0 flex-1">
+                <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Código, proveedor, NIT, contacto..."
+                  className="h-11 w-full min-w-0 rounded-xl border border-gray-200 bg-white pl-10 pr-3 text-sm shadow-sm outline-none focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
+                />
+              </div>
+
+              <select
+                value={providerStatusFilter}
+                onChange={(e) => setProviderStatusFilter(e.target.value)}
+                className="h-11 w-[126px] shrink-0 rounded-xl border border-gray-200 bg-white px-2 text-[13px] shadow-sm outline-none focus:border-[#0C2D6B]"
+              >
+                <option value="Todos">Estado</option>
+                <option value="Activo">Activo</option>
+                <option value="Inactivo">Inactivo</option>
+              </select>
+
+              <select
+                value={providerLevelFilter}
+                onChange={(e) => setProviderLevelFilter(e.target.value)}
+                className="h-11 w-[138px] shrink-0 rounded-xl border border-gray-200 bg-white px-2 text-[13px] shadow-sm outline-none focus:border-[#0C2D6B]"
+              >
+                <option value="Todos">Desempeño</option>
+                <option value="Verde">Verde</option>
+                <option value="Amarillo">Amarillo</option>
+                <option value="Rojo">Rojo</option>
+              </select>
+
+              <select
+                value={providerSatFilter}
+                onChange={(e) => setProviderSatFilter(e.target.value)}
+                className="h-11 w-[138px] shrink-0 rounded-xl border border-gray-200 bg-white px-2 text-[13px] shadow-sm outline-none focus:border-[#0C2D6B]"
+              >
+                <option value="Todos">Estado SAT</option>
+                <option value="vigente">Vigente</option>
+                <option value="no_vigente">No vigente</option>
+                <option value="pendiente">Pendiente</option>
+              </select>
+
+              <button
+                type="button"
+                onClick={clearCrmFilters}
+                className="inline-flex h-11 w-[142px] shrink-0 items-center justify-center gap-1.5 rounded-xl border border-orange-200 bg-white px-3 text-[13px] font-bold text-[#FF6A00] shadow-sm transition hover:border-[#FF6A00] hover:bg-orange-50"
+              >
+                <X className="h-4 w-4" />
+                Limpiar filtros
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openProvider("create")}
+                className="inline-flex h-11 w-[176px] shrink-0 items-center justify-center gap-2 rounded-xl bg-[#0C2D6B] px-3 text-[13px] font-bold text-white shadow-sm hover:bg-[#143C8C]"
+              >
+                <Plus className="h-4 w-4" />
+                Nuevo Proveedor
+              </button>
+
+              <button
+                type="button"
+                onClick={exportProviders}
+                className="inline-flex h-11 w-[94px] shrink-0 items-center justify-center gap-1.5 rounded-xl bg-[#22C55E] px-3 text-[13px] font-bold text-white shadow-sm hover:bg-[#16A34A]"
+              >
+                <Download className="h-4 w-4" />
+                Excel
+              </button>
+            </div>
+          </div>
+
+          <div className="px-4 py-3 text-sm font-bold text-gray-400">
+            {sortedProviders.length} de {providers.length} proveedores visibles
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1180px] text-left text-sm">
+              <thead className="bg-[#F3F4F6] text-[#0C2D6B]">
+                <tr>
+                  <SortableTh field="providerCode" className="px-3 py-3">Código</SortableTh>
+                  <SortableTh field="providerName" className="px-3 py-3">Proveedor</SortableTh>
+                  <SortableTh field="providerNit" className="px-3 py-3">NIT</SortableTh>
+                  <SortableTh field="providerService" className="px-3 py-3">Servicio principal</SortableTh>
+                  <SortableTh field="providerContact" className="px-3 py-3">Contacto principal</SortableTh>
+                  <SortableTh field="providerPerformance" className="px-3 py-3">Desempeño</SortableTh>
+                  <SortableTh field="providerSat" className="px-3 py-3">SAT</SortableTh>
+                  <SortableTh field="providerStatus" className="px-3 py-3">Estado</SortableTh>
+                  <th className="px-3 py-3 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {paginatedProviders.map((p) => {
+                  const contact = providerMainContact(p.id);
+                  const service = providerMainService(p.id);
+                  const perf = providerPerformanceFor(p.id)?.nivel || p.desempeno || "Amarillo";
+                  const sat = providerComplianceFor(p.id)?.estado_sat || p.estado_sat || "pendiente";
+                  const status = providerStatusName(p);
+                  return (
+                    <tr key={p.id} className="hover:bg-gray-50 align-top">
+                      <td className="px-3 py-3 font-bold text-[#0C2D6B]">{p.codigo_proveedor}</td>
+                      <td className="px-3 py-3"><p className="font-bold text-[#0C2D6B]">{p.razon_social}</p>{p.nombre_comercial && <p className="text-xs text-gray-400 mt-0.5">{p.nombre_comercial}</p>}</td>
+                      <td className="px-3 py-3">{p.nit}</td>
+                      <td className="px-3 py-3">{service?.nombre_servicio_proveedor || "-"}</td>
+                      <td className="px-3 py-3"><p className="font-semibold">{fullContactName(contact as any) || "-"}</p><p className="text-xs text-gray-400 mt-0.5">{contact?.cargo || ""}</p></td>
+                      <td className="px-3 py-3"><span className="inline-flex items-center gap-1.5 font-bold"><span className={`w-2.5 h-2.5 rounded-full ${perf === "Verde" ? "bg-green-500" : perf === "Rojo" ? "bg-red-500" : "bg-yellow-400"}`} />{perf}</span></td>
+                      <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${sat === "vigente" ? "bg-green-100 text-green-700" : sat === "no_vigente" ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"}`}>{sat === "vigente" ? "Vigente" : sat === "no_vigente" ? "No vigente" : "Pendiente"}</span></td>
+                      <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${status === "Activo" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"}`}>{status}</span></td>
+                      <td className="px-3 py-3"><div className="flex justify-end gap-1">
+                        <button onClick={() => providerPdf(p)} className="h-8 w-8 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50" title="PDF"><Download className="w-4 h-4 mx-auto" /></button>
+                        <button onClick={() => openProvider("view", p)} className="h-8 w-8 rounded-lg border border-blue-100 bg-blue-50 text-[#0C2D6B]" title="Ver"><Eye className="w-4 h-4 mx-auto" /></button>
+                        <button onClick={() => openProvider("edit", p)} className="h-8 w-8 rounded-lg border border-orange-100 bg-orange-50 text-[#FF6A00]" title="Editar"><Edit2 className="w-4 h-4 mx-auto" /></button>
+                        <button onClick={() => setProviderDeleteId(p.id)} className="h-8 w-8 rounded-lg border border-red-100 bg-red-50 text-red-600" title="Eliminar"><Trash2 className="w-4 h-4 mx-auto" /></button>
+                      </div></td>
+                    </tr>
+                  );
+                })}
+                {!sortedProviders.length && <tr><td colSpan={9} className="px-6 py-10 text-center text-gray-500">No hay proveedores que coincidan con los filtros.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+
+          <PaginationControls
+            page={providerPage}
+            totalPages={providerTotalPages}
+            rowsPerPage={rowsPerPage}
+            totalItems={sortedProviders.length}
+            itemLabel="proveedores filtrados"
+            onPageChange={setProviderPage}
             onRowsPerPageChange={setRowsPerPage}
           />
         </div>
@@ -2915,7 +6806,7 @@ export function CRM() {
               className="h-11 rounded-xl border border-orange-200 bg-white px-4 text-sm font-bold text-[#FF6A00] shadow-sm transition hover:border-[#FF6A00] hover:bg-orange-50"
             >
               <X className="inline-block w-4 h-4 mr-1" />
-              Limpiar
+              Limpiar filtros y orden
             </button>
 
             <div className="flex gap-2 ml-0 xl:ml-auto">
@@ -3007,66 +6898,758 @@ export function CRM() {
                 <p className="text-xs text-white/60 uppercase tracking-widest">Expediente del cliente</p>
                 <h2 className="text-xl font-bold">{clientModal.mode === "create" ? "Nuevo Cliente" : clientModal.mode === "edit" ? "Editar Cliente" : "Detalle Cliente"}</h2>
               </div>
-              <button onClick={() => { setClientModal({ open: false, mode: "create", value: {} }); setClientReturnTarget(null); }}><X className="w-6 h-6" /></button>
+              <button
+                onClick={() => {
+                  setNewClientContacts([]);
+                  setNewClientPhones([]);
+                  setClientModal({
+                    open: false,
+                    mode: "create",
+                    value: {},
+                  });
+                  setClientReturnTarget(null);
+                }}
+              >
+                <X className="w-6 h-6" />
+              </button>
             </div>
 
             <div className="p-6 overflow-y-auto flex-1">
-              {clientModal.mode !== "view" ? (
-                <div className="space-y-5" data-enter-form>
-                  <ErrorSummary errors={clientErrors} title="Revisa los campos del cliente:" />
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Código</label>
-                      <input disabled value={clientModal.value.codigo_cliente || ""} className={baseInput} />
+              {clientModal.mode === "create" ? (
+                <div className="space-y-6" data-enter-form>
+                  <ErrorSummary
+                    errors={clientErrors}
+                    title="Revisa los campos del cliente:"
+                  />
+
+                  <div>
+                    <div className="mb-4 border-b pb-3">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[#0C2D6B]">
+                        Información de la empresa
+                      </h3>
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Estado *</label>
-                      <select data-enter-item="true" onKeyDown={moveWithEnter} value={Number(clientModal.value.estado_cliente_id || 1)} onChange={(e) => setClientModal((p) => ({ ...p, value: { ...p.value, estado_cliente_id: Number(e.target.value) } }))} className={inputClass()}>
-                        <option value={1}>Activo</option><option value={2}>Inactivo</option>
-                      </select>
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Nombre de empresa / razón social *</label>
-                      <input autoFocus data-enter-item="true" onKeyDown={moveWithEnter} maxLength={120} value={clientModal.value.nombre_empresa || ""} onChange={(e) => { setClientErrors((x) => ({ ...x, nombre_empresa: "" })); setClientModal((p) => ({ ...p, value: { ...p.value, nombre_empresa: cleanCommercialTyping(e.target.value, 120) } })); }} className={inputClass(clientErrors.nombre_empresa)} placeholder="Distribuidora Maya del Norte, S.A." />
-                      <ErrorText value={clientErrors.nombre_empresa} />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">NIT *</label>
-                      <input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={20} value={clientModal.value.nit || ""} onChange={(e) => { setClientErrors((x) => ({ ...x, nit: "" })); setClientModal((p) => ({ ...p, value: { ...p.value, nit: cleanNit(e.target.value) } })); }} className={inputClass(clientErrors.nit)} placeholder="5487963-2" />
-                      <ErrorText value={clientErrors.nit} />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Dirección</label>
-                      <input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={180} value={clientModal.value.direccion || ""} onChange={(e) => setClientModal((p) => ({ ...p, value: { ...p.value, direccion: cleanAddressTyping(e.target.value, 180) } }))} className={inputClass()} placeholder="5a. Avenida 3-42 Zona 1, Cobán" />
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-gray-700">
+                          Código
+                        </label>
+                        <input
+                          disabled
+                          value={
+                            clientModal.value
+                              .codigo_cliente || ""
+                          }
+                          className={baseInput}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-gray-700">
+                          Estado *
+                        </label>
+                        <select
+                          data-enter-item="true"
+                          onKeyDown={moveWithEnter}
+                          value={Number(
+                            clientModal.value
+                              .estado_cliente_id || 1
+                          )}
+                          onChange={(e) =>
+                            setClientModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                estado_cliente_id:
+                                  Number(e.target.value),
+                              },
+                            }))
+                          }
+                          className={inputClass()}
+                        >
+                          <option value={1}>Activo</option>
+                          <option value={2}>Inactivo</option>
+                        </select>
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-xs font-bold text-gray-700">
+                          Nombre de empresa / razón social *
+                        </label>
+                        <input
+                          autoFocus
+                          data-enter-item="true"
+                          onKeyDown={moveWithEnter}
+                          maxLength={120}
+                          value={
+                            clientModal.value
+                              .nombre_empresa || ""
+                          }
+                          onChange={(e) => {
+                            setClientErrors((current) => ({
+                              ...current,
+                              nombre_empresa: "",
+                            }));
+
+                            setClientModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                nombre_empresa:
+                                  capitalizeCommercialTyping(
+                                    e.target.value,
+                                    120
+                                  ),
+                              },
+                            }));
+                          }}
+                          className={inputClass(
+                            clientErrors.nombre_empresa
+                          )}
+                          placeholder="Distribuidora Maya del Norte, S.A."
+                        />
+                        <ErrorText
+                          value={
+                            clientErrors.nombre_empresa
+                          }
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-gray-700">
+                          NIT *
+                        </label>
+                        <input
+                          data-enter-item="true"
+                          onKeyDown={moveWithEnter}
+                          maxLength={20}
+                          value={
+                            clientModal.value.nit || ""
+                          }
+                          onChange={(e) => {
+                            setClientErrors((current) => ({
+                              ...current,
+                              nit: "",
+                            }));
+
+                            setClientModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                nit: cleanNit(
+                                  e.target.value
+                                ),
+                              },
+                            }));
+                          }}
+                          className={inputClass(
+                            clientErrors.nit
+                          )}
+                          placeholder="5487963-2"
+                        />
+                        <ErrorText
+                          value={clientErrors.nit}
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-xs font-bold text-gray-700">
+                          Dirección
+                        </label>
+                        <input
+                          data-enter-item="true"
+                          onKeyDown={moveWithEnter}
+                          maxLength={180}
+                          value={
+                            clientModal.value
+                              .direccion || ""
+                          }
+                          onChange={(e) =>
+                            setClientModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                direccion:
+                                  capitalizeAddressTyping(
+                                    e.target.value,
+                                    180
+                                  ),
+                              },
+                            }))
+                          }
+                          className={inputClass()}
+                          placeholder="5a. Avenida 3-42 Zona 1, Cobán"
+                        />
+                      </div>
                     </div>
                   </div>
-                  <p className="text-xs text-gray-400 italic">Los contactos y teléfonos se agregan después de guardar el cliente, de acuerdo con las tablas contactos_cliente y telefonos_contacto.</p>
+
+                  <div>
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0C2D6B]">
+                          Contactos del cliente
+                        </h3>
+                        <p className="mt-0.5 text-[11px] text-gray-400">
+                          Puedes agregar varios contactos y varios teléfonos por cada uno.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openContact("create", -1)
+                        }
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#FF6A00] px-3 text-xs font-bold text-white shadow-sm hover:bg-[#e95f00]"
+                      >
+                        <UserPlus className="h-3.5 w-3.5" />
+                        Nuevo contacto
+                      </button>
+                    </div>
+
+                    {clientErrors.contactos && (
+                      <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                        {clientErrors.contactos}
+                      </div>
+                    )}
+
+                    {!newClientContacts.length ? (
+                      <p className="py-5 text-sm italic text-gray-400">
+                        Sin contactos registrados.
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        {[...newClientContacts]
+                          .sort((a, b) => {
+                            if (
+                              Boolean(a.es_principal) !==
+                              Boolean(b.es_principal)
+                            ) {
+                              return a.es_principal ? -1 : 1;
+                            }
+
+                            return Number(b.id) - Number(a.id);
+                          })
+                          .map((contact) => {
+                            const contactPhones =
+                              newClientPhonesFor(
+                                contact.id
+                              );
+
+                            return (
+                              <div
+                                key={contact.id}
+                                className="rounded-xl border border-gray-200 bg-gray-50 p-4"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="font-bold text-gray-800">
+                                        {fullContactName(
+                                          contact
+                                        )}
+                                      </p>
+
+                                      {contact.es_principal && (
+                                        <span className="rounded bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700">
+                                          Principal
+                                        </span>
+                                      )}
+
+                                      {!contact.estado && (
+                                        <span className="rounded bg-gray-200 px-2 py-0.5 text-[10px] font-bold text-gray-600">
+                                          Inactivo
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <p className="mt-0.5 text-xs text-gray-500">
+                                      {contact.cargo ||
+                                        "Sin cargo"}
+                                      {contact.correo
+                                        ? ` · ${contact.correo}`
+                                        : ""}
+                                    </p>
+                                  </div>
+
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openContact(
+                                          "edit",
+                                          -1,
+                                          contact
+                                        )
+                                      }
+                                      className="rounded-lg p-2 text-gray-400 hover:bg-orange-50 hover:text-[#FF6A00]"
+                                      title="Editar contacto"
+                                    >
+                                      <Edit2 className="h-4 w-4" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openPhone(
+                                          "create",
+                                          contact.id
+                                        )
+                                      }
+                                      className="rounded-lg p-2 text-gray-400 hover:bg-blue-50 hover:text-[#0C2D6B]"
+                                      title="Agregar teléfono"
+                                    >
+                                      <Phone className="h-4 w-4" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        removeNewClientContact(
+                                          contact.id
+                                        )
+                                      }
+                                      className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                                      title="Quitar contacto"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {contactPhones.length ? (
+                                    contactPhones.map(
+                                      (phone) => (
+                                        <button
+                                          key={phone.id}
+                                          type="button"
+                                          onClick={() =>
+                                            openPhone(
+                                              "edit",
+                                              contact.id,
+                                              phone
+                                            )
+                                          }
+                                          className="rounded-lg border bg-white px-2.5 py-1.5 text-xs text-gray-600 hover:border-[#0C2D6B] hover:text-[#0C2D6B]"
+                                          title="Editar teléfono"
+                                        >
+                                          {formatPhone(
+                                            phone
+                                          )}{" "}
+                                          ·{" "}
+                                          {
+                                            phone.tipo_telefono
+                                          }
+                                          {phone.es_principal
+                                            ? " · Principal"
+                                            : ""}
+                                        </button>
+                                      )
+                                    )
+                                  ) : (
+                                    <span className="text-xs text-gray-400">
+                                      Sin teléfonos
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : clientModal.mode === "edit" && currentClient ? (
+                <div className="space-y-6" data-enter-form>
+                  <ErrorSummary
+                    errors={clientErrors}
+                    title="Revisa los campos del cliente:"
+                  />
+
+                  <div>
+                    <div className="mb-4 flex items-center justify-between border-b pb-3">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0C2D6B]">
+                          Información de la empresa
+                        </h3>
+                        <p className="mt-0.5 text-[11px] text-gray-400">
+                          Los datos del expediente pueden modificarse.
+                        </p>
+                      </div>
+
+                      <span className="rounded-full bg-orange-50 px-3 py-1 text-[11px] font-bold text-[#FF6A00]">
+                        Editable
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-gray-500">
+                          Código
+                        </label>
+                        <input
+                          disabled
+                          value={
+                            clientModal.value
+                              .codigo_cliente || ""
+                          }
+                          className={`${baseInput} bg-gray-50 font-bold text-[#0C2D6B]`}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-gray-500">
+                          Estado *
+                        </label>
+                        <select
+                          data-enter-item="true"
+                          onKeyDown={moveWithEnter}
+                          value={Number(
+                            clientModal.value
+                              .estado_cliente_id || 1
+                          )}
+                          onChange={(e) =>
+                            setClientModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                estado_cliente_id:
+                                  Number(e.target.value),
+                              },
+                            }))
+                          }
+                          className={inputClass()}
+                        >
+                          <option value={1}>Activo</option>
+                          <option value={2}>Inactivo</option>
+                        </select>
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-xs font-bold text-gray-500">
+                          Empresa *
+                        </label>
+                        <input
+                          autoFocus
+                          data-enter-item="true"
+                          onKeyDown={moveWithEnter}
+                          maxLength={120}
+                          value={
+                            clientModal.value
+                              .nombre_empresa || ""
+                          }
+                          onChange={(e) => {
+                            setClientErrors((current) => ({
+                              ...current,
+                              nombre_empresa: "",
+                            }));
+
+                            setClientModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                nombre_empresa:
+                                  capitalizeCommercialTyping(
+                                    e.target.value,
+                                    120
+                                  ),
+                              },
+                            }));
+                          }}
+                          className={inputClass(
+                            clientErrors.nombre_empresa
+                          )}
+                        />
+                        <ErrorText
+                          value={
+                            clientErrors.nombre_empresa
+                          }
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-gray-500">
+                          NIT *
+                        </label>
+                        <input
+                          data-enter-item="true"
+                          onKeyDown={moveWithEnter}
+                          maxLength={20}
+                          value={
+                            clientModal.value.nit || ""
+                          }
+                          onChange={(e) => {
+                            setClientErrors((current) => ({
+                              ...current,
+                              nit: "",
+                            }));
+
+                            setClientModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                nit: cleanNit(
+                                  e.target.value
+                                ),
+                              },
+                            }));
+                          }}
+                          className={inputClass(
+                            clientErrors.nit
+                          )}
+                        />
+                        <ErrorText
+                          value={clientErrors.nit}
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-xs font-bold text-gray-500">
+                          Dirección
+                        </label>
+                        <input
+                          data-enter-item="true"
+                          onKeyDown={moveWithEnter}
+                          maxLength={180}
+                          value={
+                            clientModal.value
+                              .direccion || ""
+                          }
+                          onChange={(e) =>
+                            setClientModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                direccion:
+                                  capitalizeAddressTyping(
+                                    e.target.value,
+                                    180
+                                  ),
+                              },
+                            }))
+                          }
+                          className={inputClass()}
+                        />
+                      </div>
+
+                      {currentClient.estado_cliente_id ===
+                        2 && (
+                        <div className="md:col-span-2 rounded-xl border border-orange-200 bg-orange-50 p-3">
+                          <p className="text-xs font-bold uppercase tracking-wide text-[#FF6A00]">
+                            Motivo de inactivación
+                          </p>
+                          <p className="mt-1 text-sm text-gray-700">
+                            {currentClient
+                              .motivo_inactivacion ||
+                              "Sin motivo registrado"}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0C2D6B]">
+                          Contactos del cliente
+                        </h3>
+                        <p className="mt-0.5 text-[11px] text-gray-400">
+                          Los teléfonos se administran por separado desde el ícono de teléfono.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openContact(
+                            "create",
+                            currentClient.id
+                          )
+                        }
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#FF6A00] px-3 text-xs font-bold text-white shadow-sm hover:bg-[#e95f00]"
+                      >
+                        <UserPlus className="h-3.5 w-3.5" />
+                        Nuevo contacto
+                      </button>
+                    </div>
+
+                    {!currentClientContacts.length ? (
+                      <p className="py-5 text-sm italic text-gray-400">
+                        Sin contactos registrados.
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        {currentClientContacts.map(
+                          (contact) => {
+                            const contactPhones =
+                              phones
+                                .filter(
+                                  (phone) =>
+                                    Number(
+                                      phone.contacto_id
+                                    ) ===
+                                    Number(contact.id)
+                                )
+                                .sort((a, b) => {
+                                  if (
+                                    Boolean(
+                                      a.es_principal
+                                    ) !==
+                                    Boolean(
+                                      b.es_principal
+                                    )
+                                  ) {
+                                    return a.es_principal
+                                      ? -1
+                                      : 1;
+                                  }
+
+                                  return (
+                                    Number(b.id) -
+                                    Number(a.id)
+                                  );
+                                });
+
+                            return (
+                              <div
+                                key={contact.id}
+                                className="rounded-xl border border-gray-200 bg-gray-50 p-4"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="font-bold text-gray-800">
+                                        {fullContactName(
+                                          contact
+                                        )}
+                                      </p>
+
+                                      {contact.es_principal && (
+                                        <span className="rounded bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700">
+                                          Principal
+                                        </span>
+                                      )}
+
+                                      {!contact.estado && (
+                                        <span className="rounded bg-gray-200 px-2 py-0.5 text-[10px] font-bold text-gray-600">
+                                          Inactivo
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <p className="mt-0.5 text-xs text-gray-500">
+                                      {contact.cargo ||
+                                        "Sin cargo"}
+                                      {contact.correo
+                                        ? ` · ${contact.correo}`
+                                        : ""}
+                                    </p>
+                                  </div>
+
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openContact(
+                                          "edit",
+                                          currentClient.id,
+                                          contact
+                                        )
+                                      }
+                                      className="rounded-lg p-2 text-gray-400 hover:bg-orange-50 hover:text-[#FF6A00]"
+                                      title="Editar contacto"
+                                    >
+                                      <Edit2 className="h-4 w-4" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openPhone(
+                                          "create",
+                                          contact.id
+                                        )
+                                      }
+                                      className="rounded-lg p-2 text-gray-400 hover:bg-blue-50 hover:text-[#0C2D6B]"
+                                      title="Agregar teléfono"
+                                    >
+                                      <Phone className="h-4 w-4" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setDeleteModal({
+                                          open: true,
+                                          type: "contact",
+                                          id: contact.id,
+                                        })
+                                      }
+                                      className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                                      title="Eliminar contacto"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {contactPhones.length ? (
+                                    contactPhones.map(
+                                      (phone) => (
+                                        <button
+                                          key={phone.id}
+                                          type="button"
+                                          onClick={() =>
+                                            openPhone(
+                                              "edit",
+                                              contact.id,
+                                              phone
+                                            )
+                                          }
+                                          className="rounded-lg border bg-white px-2.5 py-1.5 text-xs text-gray-600 hover:border-[#0C2D6B] hover:text-[#0C2D6B]"
+                                          title="Editar teléfono"
+                                        >
+                                          {formatPhone(
+                                            phone
+                                          )}{" "}
+                                          ·{" "}
+                                          {
+                                            phone.tipo_telefono
+                                          }
+                                          {phone.es_principal
+                                            ? " · Principal"
+                                            : ""}
+                                        </button>
+                                      )
+                                    )
+                                  ) : (
+                                    <span className="text-xs text-gray-400">
+                                      Sin teléfonos
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : currentClient ? (
                 <div className="space-y-6">
                   <div>
-                    <div className="flex items-center justify-between border-b pb-2 mb-3">
-                      <h3 className="text-xs font-bold text-[#0C2D6B] uppercase tracking-wider">Información de la empresa</h3>
-                      <div className="flex gap-2">
-                        <button onClick={() => openClient("edit", currentClient)} className="h-8 px-3 bg-orange-50 text-[#FF6A00] rounded-lg text-xs font-bold flex items-center gap-1"><Edit2 className="w-3.5 h-3.5" /> Editar</button>
-                        <button
-                          onClick={() => setDeleteModal({ open: true, type: "client", id: currentClient.id })}
-                          className={`h-8 px-3 rounded-lg text-xs font-bold flex items-center gap-1 ${
-                            currentClient.estado_cliente_id === 2
-                              ? "bg-green-50 text-green-700 hover:bg-green-100"
-                              : "bg-red-50 text-red-600 hover:bg-red-100"
-                          }`}
-                        >
-                          {currentClient.estado_cliente_id === 2 ? (
-                            <>
-                              <UserCheck className="w-3.5 h-3.5" /> Reactivar
-                            </>
-                          ) : (
-                            <>
-                              <UserX className="w-3.5 h-3.5" /> Dar de baja
-                            </>
-                          )}
-                        </button>
+                    <div className="mb-3 flex items-center justify-between border-b pb-2">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0C2D6B]">
+                          Información de la empresa
+                        </h3>
+                        <p className="mt-0.5 text-[11px] text-gray-400">
+                          Vista de consulta · solo lectura
+                        </p>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4 text-sm">
@@ -3075,19 +7658,36 @@ export function CRM() {
                       <div className="col-span-2"><p className="text-xs text-gray-400">Empresa</p><p className="font-bold text-lg">{currentClient.nombre_empresa}</p></div>
                       <div><p className="text-xs text-gray-400">NIT</p><p>{currentClient.nit}</p></div>
                       <div className="col-span-2"><p className="text-xs text-gray-400">Dirección</p><p>{currentClient.direccion || "-"}</p></div>
+
+                      {currentClient.estado_cliente_id === 2 && (
+                        <div className="col-span-2 rounded-xl border border-orange-200 bg-orange-50 p-3">
+                          <p className="text-xs font-bold uppercase tracking-wide text-[#FF6A00]">
+                            Motivo de inactivación
+                          </p>
+                          <p className="mt-1 text-sm font-medium text-gray-700">
+                            {currentClient.motivo_inactivacion || "Sin motivo registrado"}
+                          </p>
+                          {currentClient.fecha_inactivacion && (
+                            <p className="mt-1 text-xs text-gray-500">
+                              Fecha: {new Date(currentClient.fecha_inactivacion).toLocaleString("es-GT")}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between border-b pb-2 mb-3">
-                      <h3 className="text-xs font-bold text-[#0C2D6B] uppercase tracking-wider">Contactos del cliente</h3>
-                      <button onClick={() => openContact("create", currentClient.id)} className="h-8 px-3 bg-[#FF6A00] text-white rounded-lg text-xs font-bold flex items-center gap-1"><UserPlus className="w-3.5 h-3.5" /> Nuevo contacto</button>
+                    <div className="mb-3 border-b pb-2">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[#0C2D6B]">
+                        Contactos del cliente
+                      </h3>
                     </div>
 
                     {!currentClientContacts.length ? <p className="text-sm text-gray-400 italic py-4">Sin contactos registrados.</p> : (
                       <div className="space-y-3">
                         {currentClientContacts.map((ct) => {
-                          const ctPhones = phones.filter((p) => p.contacto_id === ct.id);
+                          const ctPhones = phones.filter((p) => p.contacto_id === ct.id).sort((a, b) => b.id - a.id);
                           return (
                             <div key={ct.id} className="border border-gray-200 rounded-xl p-4 bg-gray-50">
                               <div className="flex justify-between gap-3">
@@ -3099,17 +7699,19 @@ export function CRM() {
                                   </div>
                                   <p className="text-xs text-gray-500">{ct.cargo || "Sin cargo"}{ct.correo ? ` · ${ct.correo}` : ""}</p>
                                 </div>
-                                <div className="flex gap-1 h-fit">
-                                  <button onClick={() => openContact("edit", currentClient.id, ct)} className="p-1.5 text-gray-400 hover:text-[#FF6A00] hover:bg-orange-50 rounded" title="Editar contacto"><Edit2 className="w-4 h-4" /></button>
-                                  <button onClick={() => openPhone("create", ct.id)} className="p-1.5 text-gray-400 hover:text-[#0C2D6B] hover:bg-blue-50 rounded" title="Agregar teléfono"><Phone className="w-4 h-4" /></button>
-                                  <button onClick={() => setDeleteModal({ open: true, type: "contact", id: ct.id })} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded" title="Eliminar contacto"><Trash2 className="w-4 h-4" /></button>
-                                </div>
                               </div>
                               <div className="mt-3 flex flex-wrap gap-2">
                                 {ctPhones.map((p) => (
-                                  <button key={p.id} onClick={() => openPhone("edit", ct.id, p)} className="px-2.5 py-1.5 bg-white border rounded-lg text-xs text-gray-600 hover:border-[#0C2D6B]">
-                                    {formatPhone(p)} · {p.tipo_telefono}{p.es_principal ? " · Principal" : ""}
-                                  </button>
+                                  <span
+                                    key={p.id}
+                                    className="rounded-lg border bg-white px-2.5 py-1.5 text-xs text-gray-600"
+                                  >
+                                    {formatPhone(p)} ·{" "}
+                                    {p.tipo_telefono}
+                                    {p.es_principal
+                                      ? " · Principal"
+                                      : ""}
+                                  </span>
                                 ))}
                                 {!ctPhones.length && <span className="text-xs text-gray-400">Sin teléfonos</span>}
                               </div>
@@ -3124,7 +7726,23 @@ export function CRM() {
             </div>
 
             <div className="p-4 border-t bg-white flex justify-end gap-2">
-              <button onClick={() => { setClientModal({ open: false, mode: "create", value: {} }); setClientReturnTarget(null); }} className="h-10 px-4 rounded-lg font-bold text-gray-600 hover:bg-gray-100">{clientModal.mode === "view" ? "Cerrar" : "Cancelar"}</button>
+              <button
+                onClick={() => {
+                  setClientModal({
+                    open: false,
+                    mode: "create",
+                    value: {},
+                  });
+                  setNewClientContacts([]);
+                  setNewClientPhones([]);
+                  setClientReturnTarget(null);
+                }}
+                className="h-10 px-4 rounded-lg font-bold text-gray-600 hover:bg-gray-100"
+              >
+                {clientModal.mode === "view"
+                  ? "Cerrar"
+                  : "Cancelar"}
+              </button>
               {clientModal.mode !== "view" && <button data-enter-save="true" onClick={saveClientData} className="h-10 px-5 rounded-lg font-bold bg-[#0C2D6B] text-white hover:bg-[#143C8C]">Guardar cliente</button>}
             </div>
           </div>
@@ -3144,14 +7762,14 @@ export function CRM() {
             <div className="p-6 space-y-4" data-enter-form>
               <ErrorSummary errors={contactErrors} title="Revisa los datos del contacto:" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer nombre *</label><input autoFocus data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.primer_nombre || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_nombre: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_nombre: capitalizePersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_nombre)} /><ErrorText value={contactErrors.primer_nombre} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo nombre</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.segundo_nombre || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_nombre: capitalizePersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Primer apellido *</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.primer_apellido || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_apellido: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_apellido: capitalizePersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_apellido)} /><ErrorText value={contactErrors.primer_apellido} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Segundo apellido</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.segundo_apellido || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_apellido: capitalizePersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Cargo</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={60} value={contactModal.value.cargo || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, cargo: cleanRoleTyping(e.target.value, 60) } }))} className={inputClass()} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Correo</label><input data-enter-item="true" onKeyDown={moveWithEnter} type="email" maxLength={150} value={contactModal.value.correo || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, correo: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, correo: cleanEmail(e.target.value) } })); }} className={inputClass(contactErrors.correo)} placeholder="maria.lopez@empresa.com.gt" /><ErrorText value={contactErrors.correo} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Contacto principal</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={contactModal.value.es_principal ? "1" : "0"} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, es_principal: e.target.value === "1" } }))} className={inputClass()}><option value="1">Sí</option><option value="0">No</option></select></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Estado</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={contactModal.value.estado === false ? "0" : "1"} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, estado: e.target.value === "1" } }))} className={inputClass()}><option value="1">Activo</option><option value="0">Inactivo</option></select></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Primer nombre *</label><input autoFocus data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.primer_nombre || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_nombre: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_nombre: capitalizePersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_nombre)} /><ErrorText value={contactErrors.primer_nombre} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Segundo nombre</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={30} value={contactModal.value.segundo_nombre || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_nombre: capitalizePersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Primer apellido *</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.primer_apellido || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, primer_apellido: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, primer_apellido: capitalizePersonTyping(e.target.value, 35) } })); }} className={inputClass(contactErrors.primer_apellido)} /><ErrorText value={contactErrors.primer_apellido} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Segundo apellido</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={35} value={contactModal.value.segundo_apellido || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, segundo_apellido: capitalizePersonTyping(e.target.value, 35) } }))} className={inputClass()} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Cargo</label><input data-enter-item="true" onKeyDown={moveWithEnter} maxLength={60} value={contactModal.value.cargo || ""} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, cargo: capitalizeRoleTyping(e.target.value, 60) } }))} className={inputClass()} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Correo</label><input data-enter-item="true" onKeyDown={moveWithEnter} type="email" maxLength={150} value={contactModal.value.correo || ""} onChange={(e) => { setContactErrors((x) => ({ ...x, correo: "" })); setContactModal((p) => ({ ...p, value: { ...p.value, correo: cleanEmail(e.target.value) } })); }} className={inputClass(contactErrors.correo)} placeholder="maria.lopez@empresa.com.gt" /><ErrorText value={contactErrors.correo} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Contacto principal</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={contactModal.value.es_principal ? "1" : "0"} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, es_principal: e.target.value === "1" } }))} className={inputClass()}><option value="1">Sí</option><option value="0">No</option></select></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Estado</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={contactModal.value.estado === false ? "0" : "1"} onChange={(e) => setContactModal((p) => ({ ...p, value: { ...p.value, estado: e.target.value === "1" } }))} className={inputClass()}><option value="1">Activo</option><option value="0">Inactivo</option></select></div>
               </div>
             </div>
             <div className="px-6 pb-6 flex justify-end gap-2"><button onClick={() => setContactModal({ open: false, mode: "create", value: {}, clientId: null })} className="h-10 px-4 border rounded-lg text-sm font-bold">Cancelar</button><button data-enter-save="true" onClick={saveContactData} className="h-10 px-5 bg-[#FF6A00] text-white rounded-lg text-sm font-bold">Guardar contacto</button></div>
@@ -3170,7 +7788,7 @@ export function CRM() {
               <ErrorSummary errors={phoneErrors} title="Revisa el teléfono:" />
               <div className="grid grid-cols-[150px_1fr] gap-2">
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Prefijo *</label>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Prefijo *</label>
                   <select
                     autoFocus
                     data-enter-item="true"
@@ -3198,7 +7816,7 @@ export function CRM() {
                   <ErrorText value={phoneErrors.prefijo} />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Número *</label>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Número *</label>
                   <input
                     data-enter-item="true"
                     onKeyDown={moveWithEnter}
@@ -3218,11 +7836,44 @@ export function CRM() {
                   <ErrorText value={phoneErrors.telefono} />
                 </div>
               </div>
-              <div><label className="block text-xs font-bold text-gray-700 mb-1">Tipo de teléfono</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={phoneModal.value.tipo_telefono || "Móvil"} onChange={(e) => setPhoneModal((p) => ({ ...p, value: { ...p.value, tipo_telefono: e.target.value } }))} className={inputClass()}><option>Móvil</option><option>Oficina</option><option>WhatsApp</option><option>Emergencia</option><option>Otro</option></select></div>
-              <div><label className="block text-xs font-bold text-gray-700 mb-1">¿Es principal?</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={phoneModal.value.es_principal ? "1" : "0"} onChange={(e) => setPhoneModal((p) => ({ ...p, value: { ...p.value, es_principal: e.target.value === "1" } }))} className={inputClass()}><option value="1">Sí</option><option value="0">No</option></select></div>
+              <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Tipo de teléfono</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={phoneModal.value.tipo_telefono || "Móvil"} onChange={(e) => setPhoneModal((p) => ({ ...p, value: { ...p.value, tipo_telefono: e.target.value } }))} className={inputClass()}><option>Móvil</option><option>Oficina</option><option>WhatsApp</option><option>Emergencia</option><option>Otro</option></select></div>
+              <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">¿Es principal?</label><select data-enter-item="true" onKeyDown={moveWithEnter} value={phoneModal.value.es_principal ? "1" : "0"} onChange={(e) => setPhoneModal((p) => ({ ...p, value: { ...p.value, es_principal: e.target.value === "1" } }))} className={inputClass()}><option value="1">Sí</option><option value="0">No</option></select></div>
             </div>
             <div className="px-6 pb-6 flex justify-between gap-2">
-              {phoneModal.mode === "edit" && phoneModal.value.id ? <button onClick={() => setDeleteModal({ open: true, type: "phone", id: Number(phoneModal.value.id) })} className="h-10 px-4 text-red-600 font-bold text-sm hover:bg-red-50 rounded-lg">Eliminar</button> : <div />}
+              {phoneModal.mode === "edit" &&
+              phoneModal.value.id ? (
+                Number(phoneModal.contactId) < 0 ? (
+                  <button
+                    onClick={() =>
+                      removeNewClientPhone(
+                        Number(
+                          phoneModal.value.id
+                        )
+                      )
+                    }
+                    className="h-10 px-4 text-red-600 font-bold text-sm hover:bg-red-50 rounded-lg"
+                  >
+                    Eliminar
+                  </button>
+                ) : (
+                  <button
+                    onClick={() =>
+                      setDeleteModal({
+                        open: true,
+                        type: "phone",
+                        id: Number(
+                          phoneModal.value.id
+                        ),
+                      })
+                    }
+                    className="h-10 px-4 text-red-600 font-bold text-sm hover:bg-red-50 rounded-lg"
+                  >
+                    Eliminar
+                  </button>
+                )
+              ) : (
+                <div />
+              )}
               <div className="flex gap-2"><button onClick={() => setPhoneModal({ open: false, mode: "create", value: {}, contactId: null })} className="h-10 px-4 border rounded-lg text-sm font-bold">Cancelar</button><button data-enter-save="true" onClick={savePhoneData} className="h-10 px-5 bg-[#0C2D6B] text-white rounded-lg text-sm font-bold">Guardar</button></div>
             </div>
           </div>
@@ -3242,12 +7893,12 @@ export function CRM() {
             <div className="p-6 space-y-4" data-enter-form>
               {leadModal.mode !== "view" && <ErrorSummary errors={leadErrors} title="Revisa los campos de la oportunidad:" />}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Código</label><input disabled value={leadModal.value.codigo_oportunidad || ""} className={baseInput} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Etapa *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={Number(leadModal.value.estado_id || 1)} onChange={(e) => { setLeadErrors((x) => ({ ...x, estado_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, estado_id: Number(e.target.value) } })); }} className={inputClass(leadErrors.estado_id)}><option value={1}>Prospecto</option><option value={2}>Cotizado</option><option value={3}>Negociación</option><option value={4}>Ganado</option><option value={5}>Perdido</option></select><ErrorText value={leadErrors.estado_id} /></div>
-                <div className="sm:col-span-2"><label className="block text-xs font-bold text-gray-700 mb-1">Nombre de la oportunidad *</label><input autoFocus disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} maxLength={100} value={leadModal.value.nombre_oportunidad || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, nombre_oportunidad: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, nombre_oportunidad: cleanCommercialTyping(e.target.value, 100) } })); }} className={inputClass(leadErrors.nombre_oportunidad)} placeholder="Exportación terrestre de textiles a El Salvador" /><ErrorText value={leadErrors.nombre_oportunidad} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Código</label><input disabled value={leadModal.value.codigo_oportunidad || ""} className={baseInput} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Etapa *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={Number(leadModal.value.estado_id || 1)} onChange={(e) => { setLeadErrors((x) => ({ ...x, estado_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, estado_id: Number(e.target.value) } })); }} className={inputClass(leadErrors.estado_id)}><option value={1}>Prospecto</option><option value={2}>Cotizado</option><option value={3}>Negociación</option><option value={4}>Ganado</option><option value={5}>Perdido</option></select><ErrorText value={leadErrors.estado_id} /></div>
+                <div className="sm:col-span-2"><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Nombre de la oportunidad *</label><input autoFocus disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} maxLength={100} value={leadModal.value.nombre_oportunidad || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, nombre_oportunidad: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, nombre_oportunidad: capitalizeCommercialTyping(e.target.value, 100) } })); }} className={inputClass(leadErrors.nombre_oportunidad)} placeholder="Exportación terrestre de textiles a El Salvador" /><ErrorText value={leadErrors.nombre_oportunidad} /></div>
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <label className="block text-xs font-bold text-gray-700">Cliente *</label>
+                    <label className="block text-xs font-bold text-gray-700 first-letter:uppercase">Cliente *</label>
                     {leadModal.mode !== "view" && (
                       <button
                         type="button"
@@ -3258,15 +7909,36 @@ export function CRM() {
                       </button>
                     )}
                   </div>
-                  <select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.cliente_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, cliente_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, cliente_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.cliente_id)}><option value="">Seleccione...</option>{clients.filter((c) => c.estado_cliente_id === 1).map((c) => <option key={c.id} value={c.id}>{c.codigo_cliente} · {c.nombre_empresa}</option>)}</select>
+                  <SearchableClientSelect
+                    id="oportunidad-cliente"
+                    valueId={leadModal.value.cliente_id}
+                    clients={clients}
+                    disabled={leadModal.mode === "view"}
+                    error={leadErrors.cliente_id}
+                    placeholder="Buscar cliente por código, empresa o NIT..."
+                    onChange={(clientId) => {
+                      setLeadErrors((current) => ({
+                        ...current,
+                        cliente_id: "",
+                      }));
+
+                      setLeadModal((current) => ({
+                        ...current,
+                        value: {
+                          ...current.value,
+                          cliente_id: clientId,
+                        },
+                      }));
+                    }}
+                  />
                   <ErrorText value={leadErrors.cliente_id} />
                 </div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Ejecutivo *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.ejecutivo_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, ejecutivo_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, ejecutivo_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.ejecutivo_id)}><option value="">Seleccione...</option>{salesUsers.map((u) => <option key={u.id} value={u.id}>{fullUserName(u)} ({u.nombre_usuario})</option>)}</select><ErrorText value={leadErrors.ejecutivo_id} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Modalidad *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.modalidad_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, modalidad_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, modalidad_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.modalidad_id)}><option value="">Seleccione...</option>{modalidades.map((m) => <option key={m.id} value={m.id}>{m.nombre_modalidad}</option>)}</select><ErrorText value={leadErrors.modalidad_id} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Probabilidad (%) *</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="text" inputMode="numeric" value={leadModal.value.probabilidad ?? ""} onChange={(e) => { const limpio = cleanInteger(e.target.value, 3); const n = limpio === "" ? undefined : Math.min(100, Number(limpio)); setLeadErrors((x) => ({ ...x, probabilidad: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, probabilidad: n } })); }} className={inputClass(leadErrors.probabilidad)} /><ErrorText value={leadErrors.probabilidad} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Monto estimado (Q)</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="text" inputMode="decimal" value={Number(leadModal.value.monto_estimado || 0) === 0 ? "" : String(leadModal.value.monto_estimado)} placeholder="45000" onFocus={(e) => e.currentTarget.select()} onChange={(e) => { const limpio = cleanDecimal(e.target.value); setLeadErrors((x) => ({ ...x, monto_estimado: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, monto_estimado: limpio === "" ? undefined : Number(limpio) } })); }} className={inputClass(leadErrors.monto_estimado)} /><ErrorText value={leadErrors.monto_estimado} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Fecha creación *</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="date" value={leadModal.value.fecha_creacion || todayISO()} onChange={(e) => { setLeadErrors((x) => ({ ...x, fecha_creacion: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, fecha_creacion: e.target.value } })); }} className={inputClass(leadErrors.fecha_creacion)} /><ErrorText value={leadErrors.fecha_creacion} /></div>
-                <div><label className="block text-xs font-bold text-gray-700 mb-1">Cierre estimado</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="date" value={leadModal.value.fecha_cierre_estimada || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, fecha_cierre_estimada: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, fecha_cierre_estimada: e.target.value } })); }} className={inputClass(leadErrors.fecha_cierre_estimada)} /><ErrorText value={leadErrors.fecha_cierre_estimada} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Ejecutivo *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.ejecutivo_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, ejecutivo_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, ejecutivo_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.ejecutivo_id)}><option value="">Seleccione...</option>{salesUsers.map((u) => <option key={u.id} value={u.id}>{fullUserName(u)} ({u.nombre_usuario})</option>)}</select><ErrorText value={leadErrors.ejecutivo_id} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Modalidad *</label><select disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={leadModal.value.modalidad_id || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, modalidad_id: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, modalidad_id: Number(e.target.value) || null } })); }} className={inputClass(leadErrors.modalidad_id)}><option value="">Seleccione...</option>{modalidades.map((m) => <option key={m.id} value={m.id}>{m.nombre_modalidad}</option>)}</select><ErrorText value={leadErrors.modalidad_id} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Probabilidad (%) *</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="text" inputMode="numeric" value={leadModal.value.probabilidad ?? ""} onChange={(e) => { const limpio = cleanInteger(e.target.value, 3); const n = limpio === "" ? undefined : Math.min(100, Number(limpio)); setLeadErrors((x) => ({ ...x, probabilidad: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, probabilidad: n } })); }} className={inputClass(leadErrors.probabilidad)} /><ErrorText value={leadErrors.probabilidad} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Monto estimado (Q)</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="text" inputMode="decimal" value={Number(leadModal.value.monto_estimado || 0) === 0 ? "" : String(leadModal.value.monto_estimado)} placeholder="45000" onFocus={(e) => e.currentTarget.select()} onChange={(e) => { const limpio = cleanDecimal(e.target.value); setLeadErrors((x) => ({ ...x, monto_estimado: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, monto_estimado: limpio === "" ? undefined : Number(limpio) } })); }} className={inputClass(leadErrors.monto_estimado)} /><ErrorText value={leadErrors.monto_estimado} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Fecha creación *</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="date" value={leadModal.value.fecha_creacion || todayISO()} onChange={(e) => { setLeadErrors((x) => ({ ...x, fecha_creacion: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, fecha_creacion: e.target.value } })); }} className={inputClass(leadErrors.fecha_creacion)} /><ErrorText value={leadErrors.fecha_creacion} /></div>
+                <div><label className="block text-xs font-bold text-gray-700 mb-1 first-letter:uppercase">Cierre estimado</label><input disabled={leadModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} type="date" value={leadModal.value.fecha_cierre_estimada || ""} onChange={(e) => { setLeadErrors((x) => ({ ...x, fecha_cierre_estimada: "" })); setLeadModal((p) => ({ ...p, value: { ...p.value, fecha_cierre_estimada: e.target.value } })); }} className={inputClass(leadErrors.fecha_cierre_estimada)} /><ErrorText value={leadErrors.fecha_cierre_estimada} /></div>
               </div>
             </div>
             <div className="p-5 border-t bg-gray-50 flex flex-col sm:flex-row justify-between gap-2">
@@ -3315,7 +7987,7 @@ export function CRM() {
               <div className="min-w-[950px] max-w-6xl mx-auto space-y-3">
                 {quoteModal.mode !== "view" && (
                   <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-[#0C2D6B]">
-                    Selecciona los datos de la cotización. Presioná <b>Enter</b> para avanzar al siguiente campo. Los datos del cliente, contacto y ejecutivo se relacionan con la base normalizada.
+                    Selecciona los datos de la cotización. En <b>Razón social</b> y <b>Contacto</b> puedes escribir para buscar. Presioná <b>Enter</b> para seleccionar el primer resultado y avanzar al siguiente campo.
                   </div>
                 )}
 
@@ -3402,20 +8074,49 @@ export function CRM() {
                           </button>
                         )}
                       </div>
-                      <select
-                        disabled={quoteModal.mode === "view"}
-                        data-enter-item="true"
-                        onKeyDown={moveWithEnter}
-                        value={quoteModal.value.contacto_id || ""}
-                        onChange={(e) => {
-                          setQuoteErrors((x) => ({ ...x, contacto_id: "" }));
-                          setQuoteModal((p) => ({ ...p, value: { ...p.value, contacto_id: Number(e.target.value) || null } }));
-                        }}
-                        className={`h-8 flex-1 rounded border px-2 bg-white font-semibold outline-none ${quoteErrors.contacto_id ? "border-red-400" : "border-blue-300 focus:border-[#FF6A00]"}`}
-                      >
-                        <option value="">Seleccione contacto...</option>
-                        {quoteContacts.map((c) => <option key={c.id} value={c.id}>{fullContactName(c)}{c.es_principal ? " · Principal" : ""}</option>)}
-                      </select>
+                      <div className="flex-1 min-w-0">
+                        <SearchableContactSelect
+                          id="cotizacion-contacto"
+                          valueId={quoteModal.value.contacto_id}
+                          contacts={
+                            quoteModal.value.cliente_id
+                              ? quoteContacts
+                              : contacts.filter((contact) => contact.estado !== false)
+                          }
+                          disabled={quoteModal.mode === "view"}
+                          error={quoteErrors.contacto_id}
+                          placeholder={
+                            quoteModal.value.cliente_id
+                              ? "Buscar contacto del cliente..."
+                              : "Buscar contacto por nombre, correo o cargo..."
+                          }
+                          onChange={(contactId) => {
+                            const selectedContact = contacts.find(
+                              (contact) =>
+                                Number(contact.id) === Number(contactId)
+                            );
+
+                            setQuoteErrors((current) => ({
+                              ...current,
+                              contacto_id: "",
+                              cliente_id: "",
+                            }));
+
+                            setQuoteModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                contacto_id: contactId,
+                                // Si el contacto se buscó antes que el cliente,
+                                // relaciona automáticamente su empresa.
+                                cliente_id: selectedContact
+                                  ? Number(selectedContact.cliente_id)
+                                  : current.value.cliente_id,
+                              },
+                            }));
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -3434,23 +8135,38 @@ export function CRM() {
                           </button>
                         )}
                       </div>
-                      <select
-                        ref={firstQuoteFieldRef}
-                        disabled={quoteModal.mode === "view"}
-                        data-enter-item="true"
-                        onKeyDown={moveWithEnter}
-                        value={quoteModal.value.cliente_id || ""}
-                        onChange={(e) => {
-                          const id = Number(e.target.value) || null;
-                          const pc = id ? principalContact(id) : undefined;
-                          setQuoteErrors((x) => ({ ...x, cliente_id: "", contacto_id: "" }));
-                          setQuoteModal((p) => ({ ...p, value: { ...p.value, cliente_id: id, contacto_id: pc?.id || null } }));
-                        }}
-                        className={`h-8 flex-1 min-w-0 rounded border px-2 bg-white font-semibold outline-none ${quoteErrors.cliente_id ? "border-red-400" : "border-blue-300 focus:border-[#FF6A00]"}`}
-                      >
-                        <option value="">Seleccione cliente...</option>
-                        {clients.filter((c) => c.estado_cliente_id === 1).map((c) => <option key={c.id} value={c.id}>{c.codigo_cliente} · {c.nombre_empresa}</option>)}
-                      </select>
+                      <div className="flex-1 min-w-0">
+                        <SearchableClientSelect
+                          id="cotizacion-cliente"
+                          valueId={quoteModal.value.cliente_id}
+                          clients={clients}
+                          disabled={quoteModal.mode === "view"}
+                          error={quoteErrors.cliente_id}
+                          placeholder="Buscar cliente por código, empresa o NIT..."
+                          onChange={(clientId) => {
+                            const principal = clientId
+                              ? principalContact(clientId)
+                              : undefined;
+
+                            setQuoteErrors((current) => ({
+                              ...current,
+                              cliente_id: "",
+                              contacto_id: "",
+                            }));
+
+                            setQuoteModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                cliente_id: clientId,
+                                // Al escoger una empresa se propone su contacto
+                                // principal, pero el usuario puede buscar otro.
+                                contacto_id: principal?.id || null,
+                              },
+                            }));
+                          }}
+                        />
+                      </div>
                     </div>
                     <div className="p-2 flex items-center gap-2">
                       <span className="font-bold whitespace-nowrap">EMAIL:</span>
@@ -3531,9 +8247,11 @@ export function CRM() {
                         disabled={quoteModal.mode === "view"}
                         data-enter-item="true"
                         onKeyDown={moveWithEnter}
+                        type="text"
                         inputMode="decimal"
                         value={quoteModal.value.peso_ui || ""}
-                        onChange={(e) => setQuoteModal((p) => ({ ...p, value: { ...p.value, peso_ui: cleanDecimal(e.target.value) } }))}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onChange={(e) => setQuoteModal((p) => ({ ...p, value: { ...p.value, peso_ui: cleanDecimal(e.target.value, 8, 2) } }))}
                         placeholder="12.5"
                         className="w-full h-8 rounded border border-blue-300 bg-white px-2 text-center font-semibold outline-none focus:border-[#FF6A00]"
                       />
@@ -3544,9 +8262,11 @@ export function CRM() {
                         disabled={quoteModal.mode === "view"}
                         data-enter-item="true"
                         onKeyDown={moveWithEnter}
+                        type="text"
                         inputMode="decimal"
                         value={quoteModal.value.volumen_ui || ""}
-                        onChange={(e) => setQuoteModal((p) => ({ ...p, value: { ...p.value, volumen_ui: cleanDecimal(e.target.value) } }))}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onChange={(e) => setQuoteModal((p) => ({ ...p, value: { ...p.value, volumen_ui: cleanDecimal(e.target.value, 8, 2) } }))}
                         placeholder="35"
                         className="w-full h-8 rounded border border-blue-300 bg-white px-2 text-center font-semibold outline-none focus:border-[#FF6A00]"
                       />
@@ -3564,18 +8284,23 @@ export function CRM() {
                         {quoteModal.mode === "view" ? (
                           <span className="font-semibold">{quoteOrigin ? `${quoteOrigin.nombre_ubicacion}, ${quoteOrigin.pais}` : "-"}</span>
                         ) : (
-                          <SearchableLocationSelect
-                            id="origen-cotizacion"
-                            valueId={quoteModal.value.origen_id}
-                            locations={ubicaciones}
-                            disabled={quoteModal.mode === "view"}
-                            error={quoteErrors.origen_id}
-                            placeholder="Buscar origen..."
-                            onChange={(id) => {
-                              setQuoteErrors((x) => ({ ...x, origen_id: "" }));
-                              setQuoteModal((p) => ({ ...p, value: { ...p.value, origen_id: id } }));
-                            }}
-                          />
+                          <div className="flex flex-1 items-start gap-2">
+                            <SearchableLocationSelect
+                              id="origen-cotizacion"
+                              valueId={quoteModal.value.origen_id}
+                              locations={ubicaciones}
+                              disabled={quoteModal.mode === "view"}
+                              error={quoteErrors.origen_id}
+                              placeholder="Buscar origen..."
+                              onChange={(id) => {
+                                setQuoteErrors((x) => ({ ...x, origen_id: "" }));
+                                setQuoteModal((p) => ({ ...p, value: { ...p.value, origen_id: id } }));
+                              }}
+                            />
+                            <button type="button" onClick={openNewRoute} className="h-8 shrink-0 rounded-lg bg-[#FF6A00] px-3 text-xs font-bold text-white inline-flex items-center gap-1.5 hover:bg-[#e65f00]">
+                              <Route className="w-3.5 h-3.5" /> Nueva ruta
+                            </button>
+                          </div>
                         )}
                       </div>
 
@@ -3584,18 +8309,23 @@ export function CRM() {
                         {quoteModal.mode === "view" ? (
                           <span className="font-semibold">{quoteDestination ? `${quoteDestination.nombre_ubicacion}, ${quoteDestination.pais}` : "-"}</span>
                         ) : (
-                          <SearchableLocationSelect
-                            id="destino-cotizacion"
-                            valueId={quoteModal.value.destino_id}
-                            locations={ubicaciones}
-                            disabled={quoteModal.mode === "view"}
-                            error={quoteErrors.destino_id}
-                            placeholder="Buscar destino..."
-                            onChange={(id) => {
-                              setQuoteErrors((x) => ({ ...x, destino_id: "" }));
-                              setQuoteModal((p) => ({ ...p, value: { ...p.value, destino_id: id } }));
-                            }}
-                          />
+                          <div className="flex flex-1 items-start gap-2">
+                            <SearchableLocationSelect
+                              id="destino-cotizacion"
+                              valueId={quoteModal.value.destino_id}
+                              locations={ubicaciones}
+                              disabled={quoteModal.mode === "view"}
+                              error={quoteErrors.destino_id}
+                              placeholder="Buscar destino..."
+                              onChange={(id) => {
+                                setQuoteErrors((x) => ({ ...x, destino_id: "" }));
+                                setQuoteModal((p) => ({ ...p, value: { ...p.value, destino_id: id } }));
+                              }}
+                            />
+                            <button type="button" onClick={openNewRoute} className="h-8 shrink-0 rounded-lg bg-[#FF6A00] px-3 text-xs font-bold text-white inline-flex items-center gap-1.5 hover:bg-[#e65f00]">
+                              <Route className="w-3.5 h-3.5" /> Nueva ruta
+                            </button>
+                          </div>
                         )}
                       </div>
 
@@ -3606,7 +8336,7 @@ export function CRM() {
                           data-enter-item="true"
                           onKeyDown={moveWithEnter}
                           value={quoteModal.value.tipo_carga_ui || ""}
-                          onChange={(e) => setQuoteModal((p) => ({ ...p, value: { ...p.value, tipo_carga_ui: cleanCommercialTyping(e.target.value, 80) } }))}
+                          onChange={(e) => setQuoteModal((p) => ({ ...p, value: { ...p.value, tipo_carga_ui: capitalizeCommercialTyping(e.target.value, 80) } }))}
                           placeholder="Maquinaria industrial empacada"
                           className="h-8 flex-1 rounded border border-blue-300 bg-white px-2 font-semibold text-[#0C2D6B] outline-none focus:border-[#FF6A00]"
                         />
@@ -3678,7 +8408,7 @@ export function CRM() {
                               maxLength={50}
                               value={d.descripcion}
                               onChange={(e) => {
-                                updateQuoteDetail(d.id, "descripcion", cleanCommercialTyping(e.target.value, 50));
+                                updateQuoteDetail(d.id, "descripcion", capitalizeCommercialTyping(e.target.value, 50));
                                 setQuoteErrors((x) => ({ ...x, details: "" }));
                               }}
                               placeholder="Transporte FTL Guatemala - Puerto Barrios"
@@ -3751,24 +8481,169 @@ export function CRM() {
 
                   <div className="bg-blue-200 text-center border-x border-b border-black p-2 font-bold">NO INCLUYE ROJOS, SEGUROS, IMPUESTOS</div>
 
-                  <div className="border-x border-b border-black p-2 bg-white flex items-center gap-2">
-                    <span className="font-bold">DÍAS DE CRÉDITO:</span>
-                    <span className="font-semibold text-[#0C2D6B]">{quotePayment?.nombre_forma_pago || "Seleccione forma de pago"}</span>
+                  <div className="border-x border-b border-black p-2 bg-white">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="font-bold whitespace-nowrap">DÍAS DE CRÉDITO:</span>
+
+                      {quoteModal.mode === "view" ? (
+                        <span className="font-semibold text-[#0C2D6B]">
+                          {quotePayment?.nombre_forma_pago || "Sin seleccionar"}
+                        </span>
+                      ) : (
+                        <select
+                          data-enter-item="true"
+                          onKeyDown={moveWithEnter}
+                          value={quoteModal.value.forma_pago_id || ""}
+                          onChange={(e) => {
+                            setQuoteErrors((current) => ({
+                              ...current,
+                              forma_pago_id: "",
+                            }));
+
+                            setQuoteModal((current) => ({
+                              ...current,
+                              value: {
+                                ...current.value,
+                                forma_pago_id: Number(e.target.value) || null,
+                              },
+                            }));
+                          }}
+                          className={`h-9 min-w-[220px] rounded-lg border bg-white px-3 font-semibold text-[#0C2D6B] outline-none ${
+                            quoteErrors.forma_pago_id
+                              ? "border-red-400"
+                              : "border-blue-300 focus:border-[#FF6A00]"
+                          }`}
+                        >
+                          <option value="">Seleccione...</option>
+                          {formasPago.map((forma) => (
+                            <option key={forma.id} value={forma.id}>
+                              {forma.nombre_forma_pago}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      {quoteModal.mode !== "view" && (
+                        <span className="text-[10px] text-gray-500">
+                          Puedes elegir Contado, 15 días o 30 días según lo registrado en Formas de pago.
+                        </span>
+                      )}
+                    </div>
+
+                    {quoteErrors.forma_pago_id && (
+                      <p className="mt-1 text-xs font-semibold text-red-600">
+                        {quoteErrors.forma_pago_id}
+                      </p>
+                    )}
                   </div>
 
                   {/* NOTAS + FIRMA */}
                   <div className="p-4 text-[#d97706] text-[11px] bg-white border-x border-b border-black">
                     <div className="flex justify-between gap-8">
                       <div className="w-1/2">
-                        <p className="font-bold mb-2">Nuestra cotización NO incluye:</p>
-                        <ul className="list-disc ml-5 space-y-1">
-                          <li>Maniobras (carga y descarga)</li>
-                          <li>Seguro de cargas</li>
-                          <li>Custodios y/o patrullas para unidades en modalidad FTL (cotizado por aparte)</li>
-                          <li>Estadías</li>
-                          <li>Selectivos rojos</li>
-                          <li>Gastos por cuenta ajena</li>
-                        </ul>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <p className="font-bold">Nuestra cotización NO incluye:</p>
+
+                          {quoteModal.mode !== "view" && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setQuoteModal((current) => ({
+                                  ...current,
+                                  value: {
+                                    ...current.value,
+                                    no_incluye_ui: [
+                                      ...(
+                                        current.value.no_incluye_ui ||
+                                        QUOTE_NO_INCLUYE_DEFAULT
+                                      ),
+                                      "",
+                                    ],
+                                  },
+                                }))
+                              }
+                              className="inline-flex items-center gap-1 rounded-lg border border-orange-300 bg-orange-50 px-2 py-1 text-[10px] font-bold text-[#d97706] hover:bg-orange-100"
+                            >
+                              <Plus className="h-3 w-3" />
+                              Agregar
+                            </button>
+                          )}
+                        </div>
+
+                        {quoteModal.mode === "view" ? (
+                          <ul className="list-disc ml-5 space-y-1">
+                            {(quoteModal.value.no_incluye_ui || QUOTE_NO_INCLUYE_DEFAULT).map(
+                              (item, index) => (
+                                <li key={`no-incluye-view-${index}`}>
+                                  {item}
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        ) : (
+                          <div className="space-y-2">
+                            {(quoteModal.value.no_incluye_ui || QUOTE_NO_INCLUYE_DEFAULT).map(
+                              (item, index) => (
+                                <div
+                                  key={`no-incluye-edit-${index}`}
+                                  className="flex items-center gap-2"
+                                >
+                                  <span className="shrink-0 text-[#d97706]">•</span>
+
+                                  <input
+                                    data-enter-item="true"
+                                    onKeyDown={moveWithEnter}
+                                    value={item}
+                                    onChange={(e) => {
+                                      const value = e.target.value;
+
+                                      setQuoteModal((current) => {
+                                        const next = [
+                                          ...(
+                                            current.value.no_incluye_ui ||
+                                            QUOTE_NO_INCLUYE_DEFAULT
+                                          ),
+                                        ];
+
+                                        next[index] = value;
+
+                                        return {
+                                          ...current,
+                                          value: {
+                                            ...current.value,
+                                            no_incluye_ui: next,
+                                          },
+                                        };
+                                      });
+                                    }}
+                                    placeholder="Escribe una exclusión..."
+                                    className="h-8 flex-1 rounded-lg border border-orange-200 bg-orange-50/40 px-2 text-[11px] text-[#d97706] outline-none focus:border-[#FF6A00]"
+                                  />
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setQuoteModal((current) => ({
+                                        ...current,
+                                        value: {
+                                          ...current.value,
+                                          no_incluye_ui: (
+                                            current.value.no_incluye_ui ||
+                                            QUOTE_NO_INCLUYE_DEFAULT
+                                          ).filter((_, itemIndex) => itemIndex !== index),
+                                        },
+                                      }))
+                                    }
+                                    className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                                    title="Eliminar condición"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              )
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div className="text-center w-1/2">
                         <p className="text-blue-900 font-bold mb-8">FIRMA DE ACEPTACIÓN DE TARIFA:</p>
@@ -3777,15 +8652,107 @@ export function CRM() {
                     </div>
 
                     <div className="mt-6">
-                      <p className="font-bold mb-2">Notas importantes:</p>
-                      <ul className="list-disc ml-5 space-y-1">
-                        <li>Cotización basada en datos proporcionados.</li>
-                        <li>Para movimientos locales deberán reservar las unidades con 24 Hrs de anticipación.</li>
-                        <li>En temporada alta las unidades deberán ser reservadas con un promedio de 48 Hrs antes del posicionamiento.</li>
-                        <li>Logistics Group 365 no asume penalizaciones por atrasos, conflictos sociales, clima, etc.</li>
-                        <li>Todo movimiento en falso se cobrará el flete.</li>
-                        <li>Los custodios se cotizan por evento dependiendo la ruta.</li>
-                      </ul>
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="font-bold">Notas importantes:</p>
+
+                        {quoteModal.mode !== "view" && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setQuoteModal((current) => ({
+                                ...current,
+                                value: {
+                                  ...current.value,
+                                  notas_importantes_ui: [
+                                    ...(
+                                      current.value.notas_importantes_ui ||
+                                      QUOTE_NOTAS_IMPORTANTES_DEFAULT
+                                    ),
+                                    "",
+                                  ],
+                                },
+                              }))
+                            }
+                            className="inline-flex items-center gap-1 rounded-lg border border-orange-300 bg-orange-50 px-2 py-1 text-[10px] font-bold text-[#d97706] hover:bg-orange-100"
+                          >
+                            <Plus className="h-3 w-3" />
+                            Agregar nota
+                          </button>
+                        )}
+                      </div>
+
+                      {quoteModal.mode === "view" ? (
+                        <ul className="list-disc ml-5 space-y-1">
+                          {(quoteModal.value.notas_importantes_ui || QUOTE_NOTAS_IMPORTANTES_DEFAULT).map(
+                            (item, index) => (
+                              <li key={`nota-view-${index}`}>{item}</li>
+                            )
+                          )}
+                        </ul>
+                      ) : (
+                        <div className="space-y-2">
+                          {(quoteModal.value.notas_importantes_ui || QUOTE_NOTAS_IMPORTANTES_DEFAULT).map(
+                            (item, index) => (
+                              <div
+                                key={`nota-edit-${index}`}
+                                className="flex items-center gap-2"
+                              >
+                                <span className="shrink-0 text-[#d97706]">•</span>
+
+                                <input
+                                  data-enter-item="true"
+                                  onKeyDown={moveWithEnter}
+                                  value={item}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+
+                                    setQuoteModal((current) => {
+                                      const next = [
+                                        ...(
+                                          current.value.notas_importantes_ui ||
+                                          QUOTE_NOTAS_IMPORTANTES_DEFAULT
+                                        ),
+                                      ];
+
+                                      next[index] = value;
+
+                                      return {
+                                        ...current,
+                                        value: {
+                                          ...current.value,
+                                          notas_importantes_ui: next,
+                                        },
+                                      };
+                                    });
+                                  }}
+                                  placeholder="Escribe una nota importante..."
+                                  className="h-8 flex-1 rounded-lg border border-orange-200 bg-orange-50/40 px-2 text-[11px] text-[#d97706] outline-none focus:border-[#FF6A00]"
+                                />
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setQuoteModal((current) => ({
+                                      ...current,
+                                      value: {
+                                        ...current.value,
+                                        notas_importantes_ui: (
+                                          current.value.notas_importantes_ui ||
+                                          QUOTE_NOTAS_IMPORTANTES_DEFAULT
+                                        ).filter((_, itemIndex) => itemIndex !== index),
+                                      },
+                                    }))
+                                  }
+                                  className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                                  title="Eliminar nota"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="mt-5">
@@ -3797,8 +8764,16 @@ export function CRM() {
                         rows={3}
                         maxLength={180}
                         value={quoteModal.value.observaciones_ui || ""}
-                        onChange={(e) => setQuoteModal((p) => ({ ...p, value: { ...p.value, observaciones_ui: e.target.value } }))}
-                        placeholder="Entrega programada con 48 horas de anticipación."
+                        onChange={(e) =>
+                          setQuoteModal((p) => ({
+                            ...p,
+                            value: {
+                              ...p.value,
+                              observaciones_ui: e.target.value,
+                            },
+                          }))
+                        }
+                        placeholder="Escribe una observación específica para esta cotización..."
                         className="w-full rounded border border-orange-200 bg-orange-50/40 p-2 text-gray-700 outline-none focus:border-[#FF6A00]"
                       />
                     </div>
@@ -3821,22 +8796,135 @@ export function CRM() {
         </div>
       )}
 
+
+      {/* ==================================================== */}
+      {/* MODAL NUEVA RUTA DESDE COTIZACIÓN */}
+      {/* ==================================================== */}
+      {routeModalOpen && (
+        <div className="fixed inset-0 z-[260] bg-black/55 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl overflow-hidden">
+            <div className="bg-[#0C2D6B] text-white px-5 py-4 flex items-center justify-between">
+              <div><p className="text-xs uppercase tracking-widest text-white/60">Cotizaciones</p><h2 className="text-xl font-bold">Nueva ruta</h2></div>
+              <button onClick={() => setRouteModalOpen(false)} className="p-2 rounded-lg hover:bg-white/10"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-4" data-enter-form>
+              {routeErrors.general && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{routeErrors.general}</div>}
+              <p className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-[#0C2D6B]">Crea la ruta una sola vez. Al guardarla, el origen y destino quedarán seleccionados automáticamente en la cotización.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div><label className="text-xs font-bold text-gray-700">Origen *</label><input data-enter-item="true" onKeyDown={moveWithEnter} value={routeDraft.origen} onChange={(e) => setRouteDraft((p) => ({ ...p, origen: capitalizeCommercialTyping(e.target.value, 100) }))} placeholder="Ej. Bofasa Villa Canales" className={inputClass(routeErrors.origen)} /><ErrorText value={routeErrors.origen} /></div>
+                <div><label className="text-xs font-bold text-gray-700">País origen</label><input data-enter-item="true" onKeyDown={moveWithEnter} value={routeDraft.pais_origen} onChange={(e) => setRouteDraft((p) => ({ ...p, pais_origen: cleanRoleTyping(e.target.value, 60) }))} className={inputClass()} /></div>
+                <div><label className="text-xs font-bold text-gray-700">Destino *</label><input data-enter-item="true" onKeyDown={moveWithEnter} value={routeDraft.destino} onChange={(e) => setRouteDraft((p) => ({ ...p, destino: capitalizeCommercialTyping(e.target.value, 100) }))} placeholder="Ej. Fraijanes" className={inputClass(routeErrors.destino)} /><ErrorText value={routeErrors.destino} /></div>
+                <div><label className="text-xs font-bold text-gray-700">País destino</label><input data-enter-item="true" onKeyDown={moveWithEnter} value={routeDraft.pais_destino} onChange={(e) => setRouteDraft((p) => ({ ...p, pais_destino: cleanRoleTyping(e.target.value, 60) }))} className={inputClass()} /></div>
+                <div><label className="text-xs font-bold text-gray-700">Nombre de ruta</label><input data-enter-item="true" onKeyDown={moveWithEnter} value={routeDraft.nombre_ruta} onChange={(e) => setRouteDraft((p) => ({ ...p, nombre_ruta: capitalizeCommercialTyping(e.target.value, 100) }))} placeholder="Se genera automáticamente si lo dejas vacío" className={inputClass()} /></div>
+                <div><label className="text-xs font-bold text-gray-700">Distancia (km)</label><input data-enter-item="true" onKeyDown={moveWithEnter} inputMode="decimal" value={routeDraft.distancia_km} onChange={(e) => setRouteDraft((p) => ({ ...p, distancia_km: cleanDecimal(e.target.value, 8, 2) }))} placeholder="0" className={inputClass()} /></div>
+              </div>
+            </div>
+            <div className="border-t p-4 flex justify-end gap-2"><button onClick={() => setRouteModalOpen(false)} className="h-10 px-4 rounded-lg font-bold text-gray-600 hover:bg-gray-100">Cancelar</button><button data-enter-save="true" onClick={saveNewRoute} className="h-10 px-5 rounded-lg bg-[#0C2D6B] text-white font-bold inline-flex items-center gap-2"><Save className="w-4 h-4" /> Guardar ruta</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* EXPEDIENTE DE PROVEEDOR */}
+      {/* ==================================================== */}
+      {providerModal.open && (
+        <div className="fixed inset-0 z-[240] bg-black/50 flex justify-end">
+          <div className="bg-white w-full max-w-4xl h-full flex flex-col shadow-2xl">
+            <div className="px-6 py-4 bg-[#0C2D6B] text-white flex items-center justify-between shrink-0">
+              <div><p className="text-xs text-white/60 uppercase tracking-widest">Expediente del proveedor</p><h2 className="text-xl font-bold">{providerModal.mode === "create" ? "Nuevo Proveedor" : providerModal.mode === "edit" ? "Editar Proveedor" : "Detalle Proveedor"}</h2></div>
+              <button onClick={() => setProviderModal({ open: false, mode: "create", value: {} })} className="p-2 rounded-lg hover:bg-white/10"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 bg-[#F8FAFC] space-y-4" data-enter-form>
+              <ErrorSummary errors={providerErrors} title="Revisa los datos del proveedor" />
+
+              <section className="rounded-xl border bg-white p-5">
+                <div className="border-b pb-3 mb-4"><h3 className="font-bold text-[#0C2D6B]">Información del proveedor</h3></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div><label className="text-xs font-bold text-gray-700">Código</label><input readOnly value={providerModal.value.codigo_proveedor || "Automático"} className={`${inputClass()} bg-gray-100`} /></div>
+                  <div><label className="text-xs font-bold text-gray-700">Estado</label><select disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={providerModal.value.estado_id || 1} onChange={(e) => setProviderModal((p) => ({ ...p, value: { ...p.value, estado_id: Number(e.target.value) } }))} className={inputClass()}>{providerStates.length ? providerStates.map((s: any) => <option key={s.id} value={s.id}>{s.nombre_estado_proveedor}</option>) : <><option value={1}>Activo</option><option value={2}>Inactivo</option></>}</select></div>
+                  <div><label className="text-xs font-bold text-gray-700">Razón social *</label><input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={providerModal.value.razon_social || ""} onChange={(e) => setProviderModal((p) => ({ ...p, value: { ...p.value, razon_social: capitalizeCommercialTyping(e.target.value, 140) } }))} className={inputClass(providerErrors.razon_social)} /><ErrorText value={providerErrors.razon_social} /></div>
+                  <div><label className="text-xs font-bold text-gray-700">Nombre comercial</label><input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={providerModal.value.nombre_comercial || ""} onChange={(e) => setProviderModal((p) => ({ ...p, value: { ...p.value, nombre_comercial: capitalizeCommercialTyping(e.target.value, 120) } }))} className={inputClass()} /></div>
+                  <div><label className="text-xs font-bold text-gray-700">NIT *</label><input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={providerModal.value.nit || ""} onChange={(e) => setProviderModal((p) => ({ ...p, value: { ...p.value, nit: cleanNit(e.target.value) } }))} className={inputClass(providerErrors.nit)} /><ErrorText value={providerErrors.nit} /></div>
+                  <div><label className="text-xs font-bold text-gray-700">Correo general</label><input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={providerModal.value.correo || ""} onChange={(e) => setProviderModal((p) => ({ ...p, value: { ...p.value, correo: cleanEmail(e.target.value) } }))} className={inputClass(providerErrors.correo)} /><ErrorText value={providerErrors.correo} /></div>
+                  <div><label className="text-xs font-bold text-gray-700">Teléfono general</label><input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} inputMode="numeric" value={providerModal.value.telefono || ""} onChange={(e) => setProviderModal((p) => ({ ...p, value: { ...p.value, telefono: cleanPhone(e.target.value, 15) } }))} className={inputClass()} /></div>
+                </div>
+              </section>
+
+              <section className="rounded-xl border bg-white p-5">
+                <div className="flex items-center justify-between border-b pb-3 mb-4"><div><h3 className="font-bold text-[#0C2D6B]">Contactos del proveedor</h3><p className="text-xs text-gray-500">Puedes registrar varios y marcar uno como principal.</p></div>{providerModal.mode !== "view" && <button onClick={addProviderContact} className="h-9 px-3 rounded-lg bg-[#FF6A00] text-white text-xs font-bold inline-flex items-center gap-1"><UserPlus className="w-4 h-4" /> Nuevo contacto</button>}</div>
+                <div className="space-y-3">
+                  {providerContactDraft.map((c, index) => (
+                    <div key={c.id} className="rounded-xl border bg-gray-50 p-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        <input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} placeholder="Primer nombre *" value={c.primer_nombre} onChange={(e) => patchProviderContact(c.id, { primer_nombre: capitalizePersonTyping(e.target.value) })} className={inputClass(providerErrors[`contacto_${index}`])} />
+                        <input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} placeholder="Segundo nombre" value={c.segundo_nombre || ""} onChange={(e) => patchProviderContact(c.id, { segundo_nombre: capitalizePersonTyping(e.target.value) })} className={inputClass()} />
+                        <input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} placeholder="Primer apellido *" value={c.primer_apellido} onChange={(e) => patchProviderContact(c.id, { primer_apellido: capitalizePersonTyping(e.target.value) })} className={inputClass(providerErrors[`contacto_${index}`])} />
+                        <input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} placeholder="Segundo apellido" value={c.segundo_apellido || ""} onChange={(e) => patchProviderContact(c.id, { segundo_apellido: capitalizePersonTyping(e.target.value) })} className={inputClass()} />
+                        <input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} placeholder="Cargo" value={c.cargo || ""} onChange={(e) => patchProviderContact(c.id, { cargo: capitalizeRoleTyping(e.target.value) })} className={inputClass()} />
+                        <input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} placeholder="Correo" value={c.correo || ""} onChange={(e) => patchProviderContact(c.id, { correo: cleanEmail(e.target.value) })} className={inputClass(providerErrors[`correo_contacto_${index}`])} />
+                        <input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} placeholder="Teléfono" inputMode="numeric" value={c.telefono || ""} onChange={(e) => patchProviderContact(c.id, { telefono: cleanPhone(e.target.value, 15) })} className={inputClass()} />
+                        <label className="h-10 rounded-lg border bg-white px-3 text-xs font-bold flex items-center gap-2"><input type="checkbox" disabled={providerModal.mode === "view"} checked={c.es_principal} onChange={(e) => patchProviderContact(c.id, { es_principal: e.target.checked })} /> Principal</label>
+                        {providerModal.mode !== "view" && <button onClick={() => setProviderContactDraft((rows) => rows.filter((x) => x.id !== c.id))} className="h-10 rounded-lg bg-red-50 text-red-600"><Trash2 className="w-4 h-4 mx-auto" /></button>}
+                      </div>
+                    </div>
+                  ))}
+                  {!providerContactDraft.length && <p className="text-sm italic text-gray-400">Sin contactos registrados.</p>}
+                </div>
+              </section>
+
+              <section className="rounded-xl border bg-white p-5">
+                <div className="flex items-center justify-between border-b pb-3 mb-4"><h3 className="font-bold text-[#0C2D6B]">Servicios</h3>{providerModal.mode !== "view" && <button onClick={addProviderService} className="h-9 px-3 rounded-lg bg-[#0C2D6B] text-white text-xs font-bold inline-flex items-center gap-1"><Plus className="w-4 h-4" /> Agregar servicio</button>}</div>
+                <div className="space-y-2">{providerServiceDraft.map((s) => <div key={s.id} className="grid grid-cols-[1fr_120px_44px] gap-2"><input disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={s.nombre_servicio_proveedor} onChange={(e) => patchProviderService(s.id, { nombre_servicio_proveedor: capitalizeCommercialTyping(e.target.value, 100) })} placeholder="Transporte FTL" className={inputClass()} /><label className="h-10 rounded-lg border px-3 text-xs font-bold flex items-center gap-2"><input type="checkbox" disabled={providerModal.mode === "view"} checked={s.es_principal} onChange={(e) => patchProviderService(s.id, { es_principal: e.target.checked })} /> Principal</label>{providerModal.mode !== "view" ? <button onClick={() => setProviderServiceDraft((rows) => rows.filter((x) => x.id !== s.id))} className="h-10 rounded-lg bg-red-50 text-red-600"><Trash2 className="w-4 h-4 mx-auto" /></button> : <span />}</div>)}</div>
+              </section>
+
+              <section className="rounded-xl border bg-white p-5">
+                <div className="border-b pb-3 mb-4"><h3 className="font-bold text-[#0C2D6B]">Cumplimiento</h3></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><div><label className="text-xs font-bold text-gray-700">Estado SAT</label><select disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={providerComplianceDraft.estado_sat} onChange={(e) => setProviderComplianceDraft((p) => ({ ...p, estado_sat: e.target.value as ProviderSat }))} className={inputClass()}><option value="vigente">Vigente</option><option value="no_vigente">No vigente</option><option value="pendiente">Pendiente</option></select></div><div className="grid grid-cols-2 gap-2">{[["lista_clinton","Lista Clinton"],["rtu_validado","RTU"],["licencia_validada","Licencias"],["cuenta_validada","Cuenta bancaria"]].map(([field,label]) => <label key={field} className="rounded-lg border bg-gray-50 px-3 py-2 text-xs font-bold flex items-center gap-2"><input type="checkbox" disabled={providerModal.mode === "view"} checked={Boolean((providerComplianceDraft as any)[field])} onChange={(e) => setProviderComplianceDraft((p) => ({ ...p, [field]: e.target.checked }))} /> {label}</label>)}</div></div>
+              </section>
+
+              <section className="rounded-xl border bg-white p-5">
+                <div className="border-b pb-3 mb-4"><h3 className="font-bold text-[#0C2D6B]">Desempeño</h3></div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">{(["Verde","Amarillo","Rojo"] as ProviderLevel[]).map((level) => <button type="button" key={level} disabled={providerModal.mode === "view"} onClick={() => setProviderPerformanceDraft((p) => ({ ...p, nivel: level }))} className={`h-11 rounded-xl border font-bold inline-flex items-center justify-center gap-2 ${providerPerformanceDraft.nivel === level ? level === "Verde" ? "bg-green-50 border-green-400" : level === "Rojo" ? "bg-red-50 border-red-400" : "bg-yellow-50 border-yellow-400" : "bg-white"}`}><span className={`w-3 h-3 rounded-full ${level === "Verde" ? "bg-green-500" : level === "Rojo" ? "bg-red-500" : "bg-yellow-400"}`} /> {level}</button>)}</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><div><label className="text-xs font-bold text-gray-700">Fecha de evaluación</label><input type="date" disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} value={providerPerformanceDraft.fecha || ""} onChange={(e) => setProviderPerformanceDraft((p) => ({ ...p, fecha: e.target.value }))} className={inputClass()} /></div><div /><div><label className="text-xs font-bold text-gray-700">Historial</label><textarea disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} rows={4} value={providerPerformanceDraft.historial || ""} onChange={(e) => setProviderPerformanceDraft((p) => ({ ...p, historial: e.target.value }))} className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-[#0C2D6B] disabled:bg-gray-100" /></div><div><label className="text-xs font-bold text-gray-700">Hallazgos</label><textarea disabled={providerModal.mode === "view"} data-enter-item="true" onKeyDown={moveWithEnter} rows={4} value={providerPerformanceDraft.hallazgos || ""} onChange={(e) => setProviderPerformanceDraft((p) => ({ ...p, hallazgos: e.target.value }))} className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-[#0C2D6B] disabled:bg-gray-100" /></div></div>
+              </section>
+            </div>
+
+            <div className="border-t bg-white p-4 flex justify-end gap-2 shrink-0"><button onClick={() => setProviderModal({ open: false, mode: "create", value: {} })} className="h-10 px-4 rounded-lg font-bold text-gray-600 hover:bg-gray-100">{providerModal.mode === "view" ? "Cerrar" : "Cancelar"}</button>{providerModal.mode === "view" ? <button onClick={() => setProviderModal((p) => ({ ...p, mode: "edit" }))} className="h-10 px-5 rounded-lg bg-[#FF6A00] text-white font-bold inline-flex items-center gap-2"><Edit2 className="w-4 h-4" /> Editar</button> : <button data-enter-save="true" onClick={saveProvider} className="h-10 px-5 rounded-lg bg-[#0C2D6B] text-white font-bold inline-flex items-center gap-2"><Save className="w-4 h-4" /> Guardar proveedor</button>}</div>
+          </div>
+        </div>
+      )}
+
+      {providerDeleteId && (
+        <div className="fixed inset-0 z-[280] bg-black/60 flex items-center justify-center p-4"><div className="w-full max-w-md rounded-2xl bg-white shadow-2xl p-6 text-center"><div className="w-14 h-14 mx-auto rounded-full bg-red-100 text-red-600 flex items-center justify-center mb-4"><Trash2 className="w-7 h-7" /></div><h3 className="text-xl font-bold">¿Eliminar proveedor?</h3><p className="text-sm text-gray-500 mt-2 mb-5">Si tiene operaciones relacionadas no se borrará el historial; se marcará como Inactivo.</p><div className="flex gap-3"><button onClick={() => setProviderDeleteId(null)} className="flex-1 h-10 rounded-lg border font-bold text-gray-600">Cancelar</button><button onClick={deleteProvider} className="flex-1 h-10 rounded-lg bg-red-600 text-white font-bold">Continuar</button></div></div></div>
+      )}
+
       {/* ==================================================== */}
       {/* CONFIRMACIÓN DE BAJA / REACTIVACIÓN / ELIMINACIÓN */}
       {/* ==================================================== */}
       {deleteModal.open && (
-        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl p-6 text-center">
-            {deleteModal.type === "client" ? (
+        <div
+          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirmación de eliminación"
+        >
+          <div className="relative z-[301] w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl">
+            {deleteModal.type === "client" ||
+            deleteModal.type === "clientPermanent" ? (
               <>
                 <div
                   className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${
-                    clientStatusActionIsReactivate
+                    deleteModal.type === "clientPermanent"
+                      ? "bg-red-100 text-red-700"
+                      : clientStatusActionIsReactivate
                       ? "bg-green-100 text-green-600"
                       : "bg-red-100 text-red-600"
                   }`}
                 >
-                  {clientStatusActionIsReactivate ? (
+                  {deleteModal.type === "clientPermanent" ? (
+                    <Trash2 className="w-7 h-7" />
+                  ) : clientStatusActionIsReactivate ? (
                     <UserCheck className="w-7 h-7" />
                   ) : (
                     <UserX className="w-7 h-7" />
@@ -3844,7 +8932,9 @@ export function CRM() {
                 </div>
 
                 <h3 className="text-xl font-bold text-gray-900 mb-2">
-                  {clientStatusActionIsReactivate
+                  {deleteModal.type === "clientPermanent"
+                    ? "¿Eliminar cliente definitivamente?"
+                    : clientStatusActionIsReactivate
                     ? "¿Reactivar cliente?"
                     : "¿Dar de baja al cliente?"}
                 </h3>
@@ -3853,29 +8943,77 @@ export function CRM() {
                   {clientForStatusAction?.nombre_empresa || "Cliente seleccionado"}
                 </p>
 
-                <p className="text-gray-500 text-sm mb-6">
-                  {clientStatusActionIsReactivate
+                <p className="text-gray-500 text-sm mb-4">
+                  {deleteModal.type === "clientPermanent"
+                    ? "Esta acción es irreversible. Solo se permitirá si el cliente no tiene relaciones que deban conservarse. Si tiene historial comercial u operativo, deberás inactivarlo."
+                    : clientStatusActionIsReactivate
                     ? "El cliente volverá a estar disponible para nuevos procesos comerciales."
                     : "El cliente quedará inactivo, pero se conservarán su información, contactos, oportunidades, cotizaciones e historial relacionados."}
                 </p>
 
+                {deleteModal.type === "client" &&
+                !clientStatusActionIsReactivate && (
+                  <div className="mb-5 text-left">
+                    <label className="mb-1 block text-xs font-bold text-gray-700 first-letter:uppercase">
+                      ¿Por qué se inactiva? *
+                    </label>
+                    <textarea
+                      autoFocus
+                      rows={3}
+                      maxLength={250}
+                      value={clientInactiveReason}
+                      onChange={(e) =>
+                        setClientInactiveReason(
+                          e.target.value.replace(/\s{2,}/g, " ").slice(0, 250)
+                        )
+                      }
+                      placeholder="Ejemplo: Cliente solicitó suspensión temporal de servicios."
+                      className="w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-[#FF6A00] focus:ring-2 focus:ring-[#FF6A00]/20"
+                    />
+                    <div className="mt-1 flex items-center justify-between text-[11px]">
+                      <span className={clientInactiveReason.trim().length < 5 ? "text-red-500" : "text-green-600"}>
+                        {clientInactiveReason.trim().length < 5
+                          ? "Es obligatorio indicar un motivo."
+                          : "Motivo listo para guardar."}
+                      </span>
+                      <span className="text-gray-400">
+                        {clientInactiveReason.length}/250
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex gap-3">
                   <button
-                    onClick={() => setDeleteModal({ open: false, type: null, id: null })}
-                    className="flex-1 h-10 rounded-lg font-bold text-gray-600 hover:bg-gray-100"
+                    onClick={() => {
+                      setDeleteModal({ open: false, type: null, id: null });
+                      setClientInactiveReason("");
+                    }}
+                    className="flex-1 h-10 cursor-pointer rounded-lg font-bold text-gray-600 transition hover:bg-gray-100"
                   >
                     Cancelar
                   </button>
 
                   <button
                     onClick={executeDelete}
-                    className={`flex-1 h-10 rounded-lg font-bold text-white ${
-                      clientStatusActionIsReactivate
+                    disabled={
+                      deleteModal.type === "client" &&
+                      !clientStatusActionIsReactivate &&
+                      clientInactiveReason.trim().length < 5
+                    }
+                    className={`flex-1 h-10 cursor-pointer rounded-lg font-bold text-white transition disabled:cursor-not-allowed disabled:bg-gray-300 ${
+                      deleteModal.type === "clientPermanent"
+                        ? "bg-red-700 hover:bg-red-800"
+                        : clientStatusActionIsReactivate
                         ? "bg-green-600 hover:bg-green-700"
                         : "bg-red-600 hover:bg-red-700"
                     }`}
                   >
-                    {clientStatusActionIsReactivate ? "Reactivar" : "Dar de baja"}
+                    {deleteModal.type === "clientPermanent"
+                      ? "Sí, eliminar definitivamente"
+                      : clientStatusActionIsReactivate
+                      ? "Reactivar"
+                      : "Dar de baja"}
                   </button>
                 </div>
               </>
@@ -3896,14 +9034,14 @@ export function CRM() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => setDeleteModal({ open: false, type: null, id: null })}
-                    className="flex-1 h-10 rounded-lg font-bold text-gray-600 hover:bg-gray-100"
+                    className="flex-1 h-10 cursor-pointer rounded-lg font-bold text-gray-600 transition hover:bg-gray-100"
                   >
                     Cancelar
                   </button>
 
                   <button
                     onClick={executeDelete}
-                    className="flex-1 h-10 rounded-lg font-bold bg-red-600 text-white hover:bg-red-700"
+                    className="flex-1 h-10 cursor-pointer rounded-lg bg-red-600 font-bold text-white transition hover:bg-red-700"
                   >
                     Sí, eliminar
                   </button>

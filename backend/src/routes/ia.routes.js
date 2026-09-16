@@ -398,6 +398,15 @@ const detectModules = (question) => {
   const modules = new Set();
 
   const general = containsAny(q, [
+    "informacion del sistema",
+    "datos del sistema",
+    "que informacion tiene el sistema",
+    "que informacion hay en el sistema",
+    "que contiene el sistema",
+    "modulos del sistema",
+    "informacion disponible",
+    "datos disponibles",
+    "base de datos",
     "todo el sistema",
     "toda la informacion",
     "informacion completa",
@@ -606,6 +615,7 @@ const getContextoCompacto = async () => {
           (SELECT COUNT(*) FROM comprobante) AS comprobantes,
           (SELECT COUNT(*) FROM oportunidad) AS oportunidades,
           (SELECT COUNT(*) FROM cotizacion) AS cotizaciones,
+          (SELECT COUNT(*) FROM usuario) AS usuarios,
           (SELECT COUNT(*) FROM asignacion) AS asignaciones,
           (SELECT COUNT(*) FROM viaje) AS viajes,
           (SELECT COUNT(*) FROM envio) AS envios
@@ -1113,6 +1123,7 @@ const getContextoCompacto = async () => {
     rutas: Number(general.rutas || 0),
     proveedores: Number(general.proveedores || 0),
     cotizaciones: Number(general.cotizaciones || 0),
+    usuarios: Number(general.usuarios || 0),
     envios: Number(general.envios || 0),
   };
 
@@ -1143,6 +1154,7 @@ const getContextoCompacto = async () => {
     vehiculos: kpis.vehiculos_total,
     proveedores: kpis.proveedores,
     cotizaciones: kpis.cotizaciones,
+    usuarios: kpis.usuarios,
     envios: kpis.envios,
   };
 
@@ -1228,6 +1240,7 @@ const getContextoCompacto = async () => {
         proveedores: kpis.proveedores,
         rutas: kpis.rutas,
         clientes: kpis.clientes,
+        usuarios: kpis.usuarios,
         asignaciones: kpis.asignaciones,
       },
     },
@@ -2333,6 +2346,22 @@ const getRelevantContext = async (question) => {
    RESPUESTA LOCAL VERIFICADA
 ========================================================= */
 
+const isSystemOverviewQuestion = (question) =>
+  containsAny(question, [
+    "informacion del sistema",
+    "datos del sistema",
+    "que informacion tiene el sistema",
+    "que informacion hay en el sistema",
+    "que contiene el sistema",
+    "modulos del sistema",
+    "informacion disponible",
+    "datos disponibles",
+    "base de datos",
+    "todo el sistema",
+    "resumen general",
+    "estado general",
+  ]);
+
 const lineList = (
   rows,
   mapper,
@@ -2368,6 +2397,72 @@ const buildLocalAnswer = (question, ctx) => {
   const q = clean(question);
   const { kpis } = ctx.data;
   const relevant = ctx.relevant || {};
+
+  if (isSystemOverviewQuestion(question)) {
+    const moduleTable = markdownTable(
+      ["Módulo", "Información consultable", "Registros principales"],
+      [
+        [
+          "CRM y Ventas",
+          "Clientes, contactos, oportunidades y cotizaciones",
+          `${kpis.clientes} clientes · ${kpis.oportunidades} oportunidades · ${kpis.cotizaciones} cotizaciones`,
+        ],
+        [
+          "Logística",
+          "Servicios de transporte, viajes, tracking y alertas",
+          `${kpis.envios} servicios · ${kpis.viajes_total} viajes`,
+        ],
+        [
+          "Flota",
+          "Vehículos, disponibilidad y mantenimiento",
+          `${kpis.vehiculos_total} vehículos · ${kpis.flota_disponible} disponibles`,
+        ],
+        [
+          "Comprobantes",
+          "Facturación, pagos, saldos y cobranza",
+          `${kpis.comprobantes} comprobantes · ${money(kpis.saldo_por_cobrar)} por cobrar`,
+        ],
+        [
+          "Operaciones",
+          "Asignaciones, costos, ingresos, proveedores y margen",
+          `${kpis.asignaciones} asignaciones · ${money(kpis.margen_operativo)} margen`,
+        ],
+        [
+          "Proveedores",
+          "Expediente, SAT, cumplimiento y desempeño",
+          `${kpis.proveedores} proveedores`,
+        ],
+        [
+          "Rutas",
+          "Origen, destino, distancia, tiempo, costo e historial",
+          `${kpis.rutas} rutas`,
+        ],
+        [
+          "Usuarios",
+          "Usuarios y roles sin credenciales sensibles",
+          `${kpis.usuarios || 0} usuarios`,
+        ],
+      ],
+      10
+    );
+
+    return `# Información general de GL365
+
+## Cobertura del sistema
+${moduleTable}
+
+## Indicadores actuales
+- Viajes activos: ${kpis.viajes_activos}.
+- Alertas críticas: ${kpis.alertas_criticas}.
+- Vehículos disponibles: ${kpis.flota_disponible}.
+- Saldo por cobrar: ${money(kpis.saldo_por_cobrar)}.
+- Saldo vencido: ${money(kpis.saldo_vencido)}.
+- Pipeline ponderado: ${money(kpis.pipeline_ponderado)}.
+- Margen operativo: ${money(kpis.margen_operativo)}.
+
+## Qué podés preguntar
+Podés consultar un cliente, proveedor, viaje, servicio de transporte, ruta, vehículo, comprobante, oportunidad, cotización, asignación, usuario o indicador específico. La respuesta utiliza registros reales disponibles en MySQL y nunca expone contraseñas, hashes, tokens ni credenciales.`;
+  }
 
   if (
     ctx.modules.length === 1 &&
@@ -2813,6 +2908,8 @@ const buildGroqPrompt = (question, ctx, verifiedAnswer) => {
         "Utiliza únicamente la información real de MySQL entregada en el contexto. " +
         "No inventes registros, fechas, estados, montos, nombres, teléfonos ni direcciones. " +
         "Si no hay coincidencias suficientes, dilo claramente. " +
+        "Si el usuario pide información general del sistema, organiza la respuesta por módulos y usa los totales reales de MySQL. " +
+        "Si pide un registro específico, responde primero el dato solicitado y después agrega contexto breve. " +
         "Cuando compares registros usa una tabla Markdown de pocas columnas. " +
         "Para análisis usa secciones y viñetas. " +
         "Nunca pidas ni reveles contraseñas, hashes, tokens o credenciales.",

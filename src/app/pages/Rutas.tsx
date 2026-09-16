@@ -87,12 +87,6 @@ interface LocationForm {
   pais: string;
 }
 
-type RouteEstimate = {
-  distancia_km: string;
-  tiempo: string;
-  source: "existente" | "coordenadas";
-  label: string;
-};
 
 const inputClass =
   "w-full h-11 rounded-xl border border-gray-200 bg-white px-3 text-sm outline-none focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/10 disabled:bg-gray-100 disabled:text-gray-500";
@@ -236,6 +230,30 @@ const formatDuration = (value: any) => {
   return `${horas} h ${minutos} min`;
 };
 
+const localDateTimeInput = (date = new Date()) => {
+  const pad = (value: number) => String(value).padStart(2, "0");
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const formatEta = (value?: string | null) => {
+  if (!value) return "-";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return date.toLocaleString("es-GT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+};
+
 const cleanHours = (value: string) => value.replace(/\D/g, "").slice(0, 3);
 
 const cleanMinutes = (value: string) => {
@@ -376,77 +394,6 @@ const mapsDirectionUrl = (
   return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(
     origenText
   )}&destination=${encodeURIComponent(destinoText)}`;
-};
-
-const estimateRouteData = (
-  ruta: Partial<Ruta>,
-  ubicaciones: Ubicacion[],
-  rutas: Ruta[]
-): RouteEstimate | null => {
-  const origenId = Number(ruta.origen_id);
-  const destinoId = Number(ruta.destino_id);
-
-  if (!origenId || !destinoId || origenId === destinoId) return null;
-
-  const existente = rutas.find((item) => {
-    const same =
-      Number(item.origen_id) === origenId &&
-      Number(item.destino_id) === destinoId &&
-      Number(item.id) !== Number(ruta.id || 0);
-
-    return same && numeric(item.distancia_km) > 0 && numeric(item.tiempo) > 0;
-  });
-
-  if (existente) {
-    return {
-      distancia_km: String(roundTo(numeric(existente.distancia_km), 2)),
-      tiempo: String(roundTo(numeric(existente.tiempo), 2)),
-      source: "existente",
-      label: `Usado de la ruta existente ${existente.codigo_ruta}.`,
-    };
-  }
-
-  const inversa = rutas.find((item) => {
-    const same =
-      Number(item.origen_id) === destinoId &&
-      Number(item.destino_id) === origenId &&
-      Number(item.id) !== Number(ruta.id || 0);
-
-    return same && numeric(item.distancia_km) > 0 && numeric(item.tiempo) > 0;
-  });
-
-  if (inversa) {
-    return {
-      distancia_km: String(roundTo(numeric(inversa.distancia_km), 2)),
-      tiempo: String(roundTo(numeric(inversa.tiempo), 2)),
-      source: "existente",
-      label: `Calculado con la ruta inversa ${inversa.codigo_ruta}.`,
-    };
-  }
-
-  const origen = ubicaciones.find((item) => Number(item.id) === origenId);
-  const destino = ubicaciones.find((item) => Number(item.id) === destinoId);
-
-  const coordOrigen = getLocationCoord(origen);
-  const coordDestino = getLocationCoord(destino);
-
-  if (!coordOrigen || !coordDestino) return null;
-
-  const directKm = haversineKm(coordOrigen, coordDestino);
-  const sameCountry = normalize(origen?.pais) === normalize(destino?.pais);
-  const roadFactor = sameCountry ? 1.28 : 1.18;
-  const averageSpeed = sameCountry ? 55 : 62;
-
-  const distancia = Math.max(1, directKm * roadFactor);
-  const tiempo = distancia / averageSpeed;
-
-  return {
-    distancia_km: String(roundTo(distancia, 2)),
-    tiempo: String(roundTo(tiempo, 2)),
-    source: "coordenadas",
-    label:
-      "Estimación automática por coordenadas aproximadas. Podés verificarla en Google Maps.",
-  };
 };
 
 const loadImageDataUrl = async (src: string): Promise<string> =>
@@ -798,7 +745,7 @@ export function Rutas() {
     useState<SortDirection>("asc");
 
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(8);
+  const [pageSize, setPageSize] = useState(6);
 
   const [errors, setErrors] = useState<FormErrors>({});
   const [apiError, setApiError] = useState("");
@@ -1200,6 +1147,25 @@ export function Rutas() {
     ) {
       nextErrors.destino_id =
         "El destino debe ser diferente del origen.";
+    }
+
+    if (
+      selected.origen_id &&
+      selected.destino_id &&
+      Number(selected.origen_id) !== Number(selected.destino_id)
+    ) {
+      const duplicate = rutas.find(
+        (ruta) =>
+          Number(ruta.id) !== Number(selected.id || 0) &&
+          Number(ruta.origen_id) === Number(selected.origen_id) &&
+          Number(ruta.destino_id) === Number(selected.destino_id)
+      );
+
+      if (duplicate) {
+        nextErrors.general = `Ya existe la ruta ${duplicate.codigo_ruta}: ${routeName(
+          duplicate
+        )}. No se permiten rutas repetidas.`;
+      }
     }
 
     if (
@@ -1666,8 +1632,7 @@ export function Rutas() {
           </h1>
 
           <p className="mt-1 text-gray-500">
-            Gestión de rutas, distancias, horas, minutos,
-            costos y frecuencias operativas
+            Rutas únicas sin duplicados, recorrido visual en Google Maps, costos y frecuencias operativas
           </p>
         </div>
 
@@ -1863,11 +1828,12 @@ export function Rutas() {
                   }
                   className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-[#0C2D6B]"
                 >
-                  <option value={4}>4</option>
-                  <option value={8}>8</option>
+                  <option value={3}>3</option>
+                  <option value={6}>6</option>
+                  <option value={9}>9</option>
                   <option value={12}>12</option>
-                  <option value={20}>20</option>
-                  <option value={40}>40</option>
+                  <option value={15}>15</option>
+                  <option value={18}>18</option>
                 </select>
               </label>
             </div>
@@ -1928,35 +1894,48 @@ export function Rutas() {
                     </Badge>
                   </div>
 
-                  <div className="mb-4 rounded-2xl bg-gray-50 p-4">
-                    <div className="grid grid-cols-[24px_1fr] gap-x-3 gap-y-3">
-                      <MapPin className="mt-0.5 h-5 w-5 text-green-600" />
-
-                      <div>
-                        <p className="text-xs font-bold uppercase text-gray-400">
+                  <div className="mb-4 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-orange-50 p-4">
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                      <div className="min-w-0">
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                          <MapPin className="h-3.5 w-3.5 text-green-600" />
                           Origen
-                        </p>
-
-                        <p className="text-sm font-semibold text-gray-800">
-                          {nombreUbicacion(
-                            ruta.origen_id
-                          )}
+                        </div>
+                        <p className="truncate text-sm font-bold text-[#0C2D6B]">
+                          {nombreUbicacion(ruta.origen_id)}
                         </p>
                       </div>
 
-                      <Navigation className="mt-0.5 h-5 w-5 text-[#FF6A00]" />
+                      <div className="flex items-center gap-1 text-[#FF6A00]">
+                        <span className="h-px w-5 bg-orange-200" />
+                        <Navigation className="h-4 w-4" />
+                        <span className="h-px w-5 bg-orange-200" />
+                      </div>
 
-                      <div>
-                        <p className="text-xs font-bold uppercase text-gray-400">
+                      <div className="min-w-0 text-right">
+                        <div className="mb-1 flex items-center justify-end gap-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-400">
                           Destino
-                        </p>
-
-                        <p className="text-sm font-semibold text-gray-800">
-                          {nombreUbicacion(
-                            ruta.destino_id
-                          )}
+                          <MapPin className="h-3.5 w-3.5 text-red-500" />
+                        </div>
+                        <p className="truncate text-sm font-bold text-[#0C2D6B]">
+                          {nombreUbicacion(ruta.destino_id)}
                         </p>
                       </div>
+                    </div>
+
+                    <div className="mt-3 flex justify-end">
+                      <a
+                        href={mapsDirectionUrl(
+                          ubicacionById(ruta.origen_id),
+                          ubicacionById(ruta.destino_id)
+                        )}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-100 bg-white px-3 text-[11px] font-bold text-[#0C2D6B] shadow-sm hover:bg-blue-50"
+                      >
+                        <MapPin className="h-3.5 w-3.5" />
+                        Ver recorrido
+                      </a>
                     </div>
                   </div>
 
@@ -2232,6 +2211,10 @@ function RutaModal({
 }) {
   const readonly = modo === "ver";
 
+  const [departureTime, setDepartureTime] = useState(() =>
+    localDateTimeInput(new Date(Date.now() + 5 * 60 * 1000))
+  );
+
   const origenSeleccionado = ubicaciones.find(
     (item) =>
       Number(item.id) === Number(selected.origen_id)
@@ -2242,12 +2225,6 @@ function RutaModal({
       Number(item.id) === Number(selected.destino_id)
   );
 
-  const routeEstimate = estimateRouteData(
-    selected,
-    ubicaciones,
-    rutas
-  );
-
   const mapsUrl =
     origenSeleccionado && destinoSeleccionado
       ? mapsDirectionUrl(
@@ -2256,54 +2233,34 @@ function RutaModal({
         )
       : "";
 
-  const applyRouteEstimate = (
-    nextSelected: Ruta,
-    options: { force?: boolean } = {}
-  ) => {
-    const estimate = estimateRouteData(
-      nextSelected,
-      ubicaciones,
-      rutas
+  const manualEta = (() => {
+    if (!departureTime || numeric(selected.tiempo) <= 0) {
+      return null;
+    }
+
+    const departure = new Date(departureTime);
+    if (Number.isNaN(departure.getTime())) return null;
+
+    return new Date(
+      departure.getTime() +
+        numeric(selected.tiempo) * 60 * 60 * 1000
     );
-
-    if (!estimate) return nextSelected;
-
-    const shouldFillDistance =
-      options.force ||
-      !String(nextSelected.distancia_km ?? "").trim();
-
-    const shouldFillTime =
-      options.force ||
-      !String(nextSelected.tiempo ?? "").trim();
-
-    return {
-      ...nextSelected,
-      distancia_km: shouldFillDistance
-        ? estimate.distancia_km
-        : nextSelected.distancia_km,
-      tiempo: shouldFillTime
-        ? estimate.tiempo
-        : nextSelected.tiempo,
-    };
-  };
+  })();
 
   const updateLocationAndEstimate = (
     field: "origen_id" | "destino_id",
     id: number
   ) => {
-    const next = applyRouteEstimate(
-      {
-        ...selected,
-        [field]: id,
-      },
-      { force: true }
+    setSelected((current) =>
+      current
+        ? {
+            ...current,
+            [field]: id,
+          }
+        : current
     );
 
-    setSelected(next);
-
     clearError(field);
-    clearError("distancia_km");
-    clearError("tiempo");
   };
 
   return (
@@ -2371,72 +2328,127 @@ function RutaModal({
             </p>
           </div>
 
+          {(() => {
+            const duplicate = rutas.find(
+              (ruta) =>
+                Number(ruta.id) !== Number(selected.id || 0) &&
+                Number(ruta.origen_id) === Number(selected.origen_id) &&
+                Number(ruta.destino_id) === Number(selected.destino_id)
+            );
+
+            if (!duplicate || readonly) return null;
+
+            return (
+              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4">
+                <p className="text-sm font-bold text-red-700">
+                  Esta ruta ya existe
+                </p>
+                <p className="mt-1 text-xs text-red-600">
+                  {duplicate.codigo_ruta} · {routeName(duplicate)}. Usá la ruta existente en lugar de crear otra.
+                </p>
+              </div>
+            );
+          })()}
+
           {!readonly &&
             selected.origen_id &&
             selected.destino_id &&
             Number(selected.origen_id) !==
               Number(selected.destino_id) && (
-              <div
-                className={`mb-4 rounded-2xl border p-4 ${
-                  routeEstimate
-                    ? "border-blue-100 bg-blue-50"
-                    : "border-amber-200 bg-amber-50"
-                }`}
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p
-                      className={`text-sm font-bold ${
-                        routeEstimate
-                          ? "text-[#0C2D6B]"
-                          : "text-amber-700"
-                      }`}
-                    >
-                      {routeEstimate
-                        ? "Cálculo automático disponible"
-                        : "Verificar ruta en mapa"}
-                    </p>
+              <div className="mb-4 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-orange-50 p-4">
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-bold text-[#0C2D6B]">
+                          Consultar recorrido
+                        </p>
 
-                    <p className="mt-1 text-xs leading-relaxed text-gray-600">
-                      {routeEstimate
-                        ? `${routeEstimate.label} Distancia: ${routeEstimate.distancia_km} km · Tiempo: ${formatDuration(
-                            routeEstimate.tiempo
-                          )}.`
-                        : "No hay coordenadas registradas para una de estas ubicaciones. Podés abrir Google Maps y copiar los valores manualmente."}
-                    </p>
-                  </div>
+                        <span className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[10px] font-bold text-green-700">
+                          Sin API de pago
+                        </span>
+                      </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    {routeEstimate && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next =
-                            applyRouteEstimate(
-                              selected,
-                              { force: true }
-                            );
-
-                          setSelected(next);
-                          clearError("distancia_km");
-                          clearError("tiempo");
-                        }}
-                        className="h-10 rounded-xl bg-[#0C2D6B] px-4 text-xs font-bold text-white hover:bg-[#143C8C]"
-                      >
-                        Usar km, horas y minutos
-                      </button>
-                    )}
+                      <p className="mt-1 max-w-xl text-xs leading-relaxed text-gray-600">
+                        Abrí el recorrido en Google Maps, revisá los kilómetros y el tiempo que muestra Maps y escribilos manualmente en los campos de abajo.
+                      </p>
+                    </div>
 
                     {mapsUrl && (
                       <a
                         href={mapsUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex h-10 items-center justify-center rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-[#0C2D6B] hover:bg-gray-50"
+                        className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#0C2D6B] px-4 text-xs font-bold text-white shadow-sm hover:bg-[#143C8C]"
                       >
-                        Abrir Maps
+                        <MapPin className="h-4 w-4" />
+                        Ver recorrido en Google Maps
                       </a>
                     )}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl border border-gray-100 bg-white p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                        Origen
+                      </p>
+                      <p className="mt-1 text-sm font-bold text-[#0C2D6B]">
+                        {origenSeleccionado
+                          ? `${origenSeleccionado.nombre_ubicacion}, ${origenSeleccionado.pais}`
+                          : "-"}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-gray-100 bg-white p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                        Destino
+                      </p>
+                      <p className="mt-1 text-sm font-bold text-[#0C2D6B]">
+                        {destinoSeleccionado
+                          ? `${destinoSeleccionado.nombre_ubicacion}, ${destinoSeleccionado.pais}`
+                          : "-"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-orange-100 bg-orange-50 px-3 py-2.5 text-xs text-[#9A4A00]">
+                    <b>Cómo llenarlo:</b> abrí Maps → mirá la distancia y duración del recorrido → regresá a GL365 → ingresá esos valores en <b>Distancia (km)</b> y <b>Tiempo estimado</b>.
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end">
+                    <Field label="Hora de salida (opcional para calcular llegada)">
+                      <input
+                        type="datetime-local"
+                        value={departureTime}
+                        onChange={(event) =>
+                          setDepartureTime(event.target.value)
+                        }
+                        className={inputClass}
+                      />
+                    </Field>
+
+                    <div className="rounded-xl border border-gray-100 bg-white p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                        Llegada estimada en GL365
+                      </p>
+
+                      <p className="mt-1 text-lg font-bold text-[#FF6A00]">
+                        {manualEta
+                          ? manualEta.toLocaleString("es-GT", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: false,
+                            })
+                          : "Ingresá el tiempo"}
+                      </p>
+
+                      <p className="mt-1 text-[10px] text-gray-400">
+                        Se calcula localmente con la hora de salida + el tiempo que escribiste.
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2451,8 +2463,7 @@ function RutaModal({
                   </p>
 
                   <p className="mt-1 text-xs text-gray-600">
-                    Abre la ruta en Google Maps para validar el
-                    recorrido.
+                    Abrí el recorrido en Google Maps para consultarlo. Los kilómetros y el tiempo mostrados abajo son los valores guardados manualmente en GL365.
                   </p>
                 </div>
 
@@ -2588,7 +2599,7 @@ function RutaModal({
                       ? errorInput
                       : ""
                   }`}
-                  placeholder="Auto o manual"
+                  placeholder="Ej. 97.00"
                 />
               )}
             </Field>
@@ -2692,8 +2703,7 @@ function RutaModal({
                   </div>
 
                   <p className="col-span-2 text-[11px] text-gray-400">
-                    Se guarda en la base como horas
-                    decimales, pero aquí se captura separado.
+                    Ingresá las horas y minutos que observaste en Google Maps. Se guarda en la base como horas decimales.
                   </p>
                 </div>
               )}

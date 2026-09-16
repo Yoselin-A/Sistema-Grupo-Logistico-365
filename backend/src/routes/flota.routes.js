@@ -68,20 +68,6 @@ const tableExists = async (tableName) => {
   return rows.length > 0;
 };
 
-const nextFleetCode = async (connection) => {
-  const [rows] = await connection.query(
-    `SELECT codigo FROM \`${T.vehiculo}\` WHERE codigo LIKE 'FL-%'`
-  );
-
-  let max = 0;
-
-  rows.forEach((row) => {
-    const match = String(row.codigo || "").match(/^FL-(\d+)$/i);
-    if (match) max = Math.max(max, Number(match[1]));
-  });
-
-  return `FL-${String(max + 1).padStart(3, "0")}`;
-};
 
 const getFlotaCatalogos = async () => {
   const [tiposVehiculo] = await pool.query(`
@@ -114,6 +100,7 @@ const getVehiculosRows = async () => {
     SELECT
       v.id,
       v.codigo,
+      v.codigo AS placa,
       v.tipo_id,
       v.estado_id,
       v.eficiencia,
@@ -182,8 +169,8 @@ const limpiarTextoMantenimiento = (value, max = 180) =>
 
 const saveMantenimientoVehiculo = async (connection, body) => {
   const vehiculoId = asId(body.vehiculo_id);
-  const tipo = limpiarTextoMantenimiento(body.tipo, 60);
-  const descripcion = limpiarTextoMantenimiento(body.descripcion, 250);
+  const tipo = limpiarTextoMantenimiento(body.tipo, 50);
+  const descripcion = limpiarTextoMantenimiento(body.descripcion, 200);
   const fecha = asDate(body.fecha);
   const proximo = asDate(body.proximo);
   const costo = asDecimal(body.costo, -1);
@@ -218,10 +205,28 @@ const saveMantenimientoVehiculo = async (connection, body) => {
   const [result] = await connection.query(
     `
     INSERT INTO \`${T.mantenimiento}\`
-    (codigo_mantenimiento, vehiculo_id, tipo, descripcion, fecha, proximo, costo)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    (
+      codigo_mantenimiento,
+      vehiculo_id,
+      tipo,
+      descripcion,
+      fecha,
+      proximo,
+      estado_id,
+      costo
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
-    [codigo, vehiculoId, tipo, descripcion, fecha, proximo, costo]
+    [
+      codigo,
+      vehiculoId,
+      tipo,
+      descripcion,
+      fecha,
+      proximo,
+      estadoMantenimientoId,
+      costo,
+    ]
   );
 
   await connection.query(
@@ -242,8 +247,8 @@ const saveMantenimientoVehiculo = async (connection, body) => {
 };
 
 
-const validateVehiclePayload = (body, isUpdate = false) => {
-  const codigo = limpiarCodigo(body.codigo);
+const validateVehiclePayload = (body) => {
+  const codigo = limpiarCodigo(body.placa ?? body.codigo);
   const tipoId = asId(body.tipo_id);
   const estadoId = asId(body.estado_id);
   const eficiencia = asInt(body.eficiencia, -1);
@@ -251,8 +256,8 @@ const validateVehiclePayload = (body, isUpdate = false) => {
   const estadoMantenimientoId = asId(body.estado_mantenimiento_id || body.estados_mantenimiento_id);
   const proximoMantenimiento = asDate(body.proximo_mantenimiento);
 
-  if (isUpdate && !codigo) {
-    throw new Error("Ingresa un código o placa válida para el vehículo.");
+  if (!codigo) {
+    throw new Error("Ingresa una placa válida para el vehículo.");
   }
 
   if (!tipoId) throw new Error("Selecciona el tipo de vehículo.");
@@ -342,11 +347,11 @@ router.post("/flota/vehiculos", async (req, res) => {
   const connection = await pool.getConnection();
 
   try {
-    const data = validateVehiclePayload(req.body, false);
+    const data = validateVehiclePayload(req.body);
 
     await connection.beginTransaction();
 
-    const codigo = data.codigo || (await nextFleetCode(connection));
+    const codigo = data.codigo;
 
     const [[exists]] = await connection.query(
       `SELECT id FROM \`${T.vehiculo}\` WHERE codigo = ? LIMIT 1`,
@@ -355,7 +360,7 @@ router.post("/flota/vehiculos", async (req, res) => {
 
     if (exists) {
       await connection.rollback();
-      return fail(res, 409, "Ya existe un vehículo con ese código.");
+      return fail(res, 409, "Ya existe un vehículo con esa placa.");
     }
 
     const [result] = await connection.query(
@@ -377,7 +382,7 @@ router.post("/flota/vehiculos", async (req, res) => {
 
     await connection.commit();
 
-    return ok(res, { id: result.insertId, codigo }, "Vehículo guardado correctamente.");
+    return ok(res, { id: result.insertId, placa: codigo, codigo }, "Vehículo guardado correctamente.");
   } catch (error) {
     await connection.rollback();
     console.error("Error POST /flota/vehiculos:", error);
@@ -394,7 +399,7 @@ router.put("/flota/vehiculos/:id", async (req, res) => {
     const id = asId(req.params.id);
     if (!id) return fail(res, 400, "ID de vehículo inválido.");
 
-    const data = validateVehiclePayload(req.body, true);
+    const data = validateVehiclePayload(req.body);
 
     await connection.beginTransaction();
 
@@ -415,7 +420,7 @@ router.put("/flota/vehiculos/:id", async (req, res) => {
 
     if (exists) {
       await connection.rollback();
-      return fail(res, 409, "Ya existe otro vehículo con ese código.");
+      return fail(res, 409, "Ya existe otro vehículo con esa placa.");
     }
 
     await connection.query(
@@ -444,7 +449,7 @@ router.put("/flota/vehiculos/:id", async (req, res) => {
 
     await connection.commit();
 
-    return ok(res, { id }, "Vehículo actualizado correctamente.");
+    return ok(res, { id, placa: data.codigo, codigo: data.codigo }, "Vehículo actualizado correctamente.");
   } catch (error) {
     await connection.rollback();
     console.error("Error PUT /flota/vehiculos:", error);
@@ -537,6 +542,16 @@ router.post("/flota/mantenimientos", async (req, res) => {
   } catch (error) {
     await connection.rollback();
     console.error("Error POST /flota/mantenimientos:", error);
+
+    if (error?.code === "ER_DATA_TOO_LONG") {
+      return fail(
+        res,
+        400,
+        "La descripción excede el tamaño permitido en la base de datos. Ejecuta la migración para ampliar mantenimiento.descripcion a VARCHAR(200).",
+        error
+      );
+    }
+
     return fail(res, 500, "No se pudo registrar el mantenimiento.", error);
   } finally {
     connection.release();

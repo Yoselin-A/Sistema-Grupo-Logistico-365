@@ -16,6 +16,13 @@ import {
   Database,
   Gauge,
   MapPin,
+  FileText,
+  Target,
+  Package,
+  ReceiptText,
+  WalletCards,
+  TrendingDown,
+  UserRoundCog,
   RefreshCw,
   X,
   Route as RouteIcon,
@@ -494,22 +501,12 @@ export function IALogistica() {
   const [thinking, setThinking] = useState(false);
   const [input, setInput] = useState("");
 
-  const welcomeMessage: ChatMessage = {
-    id: "welcome",
-    role: "assistant",
-    text:
-      "Hola, soy GL365 Intelligence.\n\n" +
-      "Puedo analizar la información real de MySQL para ayudarte con logística, flota, cobranza, rentabilidad, ventas y proveedores.\n\n" +
-      "Probá preguntándome: ¿Qué requiere atención hoy?",
-    createdAt: new Date().toISOString(),
-    provider: "Sistema",
-  };
-
-  const [chat, setChat] = useState<ChatMessage[]>([
-    welcomeMessage,
-  ]);
+  // El chat inicia vacío. Solo se muestra contenido cuando el usuario
+  // escribe una consulta o presiona uno de los botones rápidos.
+  const [chat, setChat] = useState<ChatMessage[]>([]);
 
   const chatBodyRef = useRef<HTMLDivElement | null>(null);
+  const assistantSectionRef = useRef<HTMLDivElement | null>(null);
 
   const loadContext = async () => {
     setLoading(true);
@@ -632,6 +629,12 @@ export function IALogistica() {
 
   const quickPrompts = [
     {
+      label: "Información del sistema",
+      value:
+        "Dame una descripción clara de la información disponible en GL365, organizada por módulos, con los principales totales registrados en MySQL.",
+      icon: Database,
+    },
+    {
       label: "Informe PRO",
       value:
         "Dame un informe ejecutivo profesional del sistema GL365 con hallazgos clave, riesgos, prioridades y acciones recomendadas para gerencia.",
@@ -694,6 +697,61 @@ export function IALogistica() {
       label: "Proveedores",
       value: "¿Qué proveedores requieren revisión?",
       icon: Building2,
+    },
+    {
+      label: "Clientes",
+      value: "Dame un resumen de los clientes registrados y los principales datos disponibles.",
+      icon: Users,
+    },
+    {
+      label: "Cotizaciones",
+      value: "Analiza las cotizaciones registradas, sus estados y los datos comerciales más relevantes.",
+      icon: FileText,
+    },
+    {
+      label: "Oportunidades",
+      value: "Muéstrame un resumen de las oportunidades comerciales activas, etapas y valores.",
+      icon: Target,
+    },
+    {
+      label: "Servicios de transporte",
+      value: "Dame un resumen de los servicios de transporte registrados, sus estados, origen, destino y clientes.",
+      icon: Package,
+    },
+    {
+      label: "Rutas",
+      value: "Analiza las rutas registradas, origen, destino, distancia, tiempo y costo.",
+      icon: RouteIcon,
+    },
+    {
+      label: "Facturación vencida",
+      value: "Muéstrame los comprobantes o saldos vencidos que requieren seguimiento.",
+      icon: ReceiptText,
+    },
+    {
+      label: "Costos operativos",
+      value: "Analiza los costos operativos registrados y señala los más relevantes.",
+      icon: WalletCards,
+    },
+    {
+      label: "Márgenes bajos",
+      value: "Identifica operaciones con margen bajo o negativo y explica cuáles requieren atención.",
+      icon: TrendingDown,
+    },
+    {
+      label: "Operaciones finalizadas",
+      value: "Resume las operaciones finalizadas y sus principales resultados.",
+      icon: CheckCircle2,
+    },
+    {
+      label: "Usuarios",
+      value: "Dame un resumen de los usuarios y roles registrados, sin mostrar contraseñas, hashes ni credenciales.",
+      icon: UserRoundCog,
+    },
+    {
+      label: "Estado SAT",
+      value: "Analiza el estado SAT y cumplimiento de los proveedores registrados.",
+      icon: ShieldCheck,
     },
   ];
 
@@ -861,6 +919,20 @@ export function IALogistica() {
     ? diagnostics.errors
     : [];
 
+  const sendQuickPrompt = (value: string) => {
+    // Enviamos la consulta elegida.
+    void send(value);
+
+    // Después de pulsar un botón rápido, llevamos al usuario
+    // al inicio del asistente para que pueda ver la respuesta.
+    window.setTimeout(() => {
+      assistantSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 120);
+  };
+
   const clearConversation = () => {
     localStorage.removeItem("gl365_ia_messages");
     localStorage.removeItem(
@@ -870,13 +942,7 @@ export function IALogistica() {
       "ia_logistica_messages"
     );
 
-    setChat([
-      {
-        ...welcomeMessage,
-        id: `welcome-${Date.now()}`,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
+    setChat([]);
     setInput("");
     setApiError("");
   };
@@ -1006,10 +1072,13 @@ export function IALogistica() {
           />
         </div>
 
-        <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
+        <div
+          ref={assistantSectionRef}
+          className="grid min-w-0 scroll-mt-24 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_400px] xl:items-stretch"
+        >
           {/* CHAT */}
-          <Card className="flex h-[900px] min-h-[760px] min-w-0 flex-col overflow-hidden border border-gray-100 p-0 shadow-sm">
-            <div className="flex shrink-0 flex-col gap-3 border-b border-gray-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
+          <Card className="flex h-full min-h-[880px] min-w-0 flex-col overflow-hidden border border-gray-100 p-0 shadow-sm">
+            <div className="flex shrink-0 flex-col gap-2.5 border-b border-gray-100 px-4 py-3 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-[#0C2D6B]">
                   <Bot className="h-5 w-5" />
@@ -1053,38 +1122,10 @@ export function IALogistica() {
               </div>
             </div>
 
-            {/* QUICK ACTIONS */}
-            <div className="shrink-0 px-5 pt-4">
-              <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-gray-400">
-                Preguntas sugeridas
-              </p>
-
-              <div className="flex max-h-[108px] flex-wrap gap-2 overflow-y-auto pb-2 pr-1">
-                {quickPrompts.map((prompt) => {
-                  const Icon = prompt.icon;
-
-                  return (
-                    <button
-                      key={prompt.label}
-                      type="button"
-                      onClick={() =>
-                        void send(prompt.value)
-                      }
-                      disabled={thinking}
-                      className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-xs font-bold text-gray-600 transition hover:bg-[#0C2D6B] hover:text-white disabled:opacity-50"
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                      {prompt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* CHAT BODY */}
             <div
               ref={chatBodyRef}
-              className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain border-y border-gray-100 bg-[#F8FAFC] px-5 py-5"
+              className="min-h-[210px] flex-1 space-y-4 overflow-y-auto overscroll-contain border-y border-gray-100 bg-[#FAFBFD] px-4 py-4"
             >
               {chat.map((message) => (
                 <div
@@ -1162,8 +1203,8 @@ export function IALogistica() {
               )}
             </div>
 
-            {/* INPUT */}
-            <div className="shrink-0 bg-white p-4">
+            {/* INPUT + CONSULTAS RÁPIDAS */}
+            <div className="shrink-0 border-t border-gray-100 bg-white p-3.5">
               <div className="flex items-end gap-3">
                 <div className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-gray-50 transition focus-within:border-[#0C2D6B] focus-within:bg-white focus-within:ring-2 focus-within:ring-[#0C2D6B]/10">
                   <textarea
@@ -1172,10 +1213,10 @@ export function IALogistica() {
                       setInput(event.target.value)
                     }
                     onKeyDown={handleKeyDown}
-                    rows={4}
+                    rows={2}
                     maxLength={1500}
-                    placeholder="Escribí una consulta o usá Mejorar PRO para convertirla en una pregunta gerencial..."
-                    className="min-h-[118px] w-full resize-none bg-transparent px-4 py-4 text-sm leading-6 outline-none placeholder:text-slate-400"
+                    placeholder="Preguntá cualquier dato del sistema: clientes, viajes, rutas, flota, facturación, proveedores, oportunidades..."
+                    className="min-h-[70px] w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 outline-none placeholder:text-slate-400"
                   />
 
                   <div className="flex flex-col gap-2 px-4 pb-3 text-[10px] text-gray-400 sm:flex-row sm:items-center sm:justify-between">
@@ -1192,184 +1233,250 @@ export function IALogistica() {
                       </button>
 
                       <span>
-                        Enter para enviar · Shift +
-                        Enter para nueva línea
+                        Enter para enviar · Shift + Enter para nueva línea
                       </span>
                     </div>
 
-                    <span>
-                      {input.length}/1500
-                    </span>
+                    <span>{input.length}/1500</span>
                   </div>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => void send()}
-                  disabled={
-                    !input.trim() || thinking
-                  }
-                  className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-[#FF6A00] text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#e95f00] disabled:translate-y-0 disabled:opacity-40"
+                  disabled={!input.trim() || thinking}
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FF6A00] text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#e95f00] disabled:translate-y-0 disabled:opacity-40"
                   title="Enviar"
                 >
                   <Send className="h-5 w-5" />
                 </button>
               </div>
+
+              <div className="mt-2.5">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-gray-400">
+                    Consultas rápidas
+                  </p>
+
+                  <span className="hidden text-[10px] text-gray-400 sm:inline">
+                    También podés escribir cualquier consulta del sistema
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 overflow-visible">
+                  {quickPrompts.map((prompt) => {
+                    const Icon = prompt.icon;
+
+                    return (
+                      <button
+                        key={prompt.label}
+                        type="button"
+                        onClick={() => sendQuickPrompt(prompt.value)}
+                        disabled={thinking}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[9.5px] font-bold text-slate-600 transition hover:border-[#0C2D6B] hover:bg-[#0C2D6B] hover:text-white disabled:opacity-50"
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        {prompt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </Card>
 
-          {/* PANEL DERECHO */}
-          <div className="max-h-none space-y-4 overflow-visible pr-0 xl:h-[900px] xl:min-h-[760px] xl:overflow-y-auto xl:pr-1">
-            <Card className="border border-gray-100 p-4 shadow-sm">
-              <div className="mb-4 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-[#FF6A00]" />
-                <h3 className="font-black text-[#0C2D6B]">
-                  Atención prioritaria
-                </h3>
-              </div>
+          {/* PANEL DERECHO - MISMO ALTO QUE EL CHAT */}
+          <Card className="flex min-h-[880px] self-stretch flex-col overflow-visible border border-gray-100 p-0 shadow-sm">
+            {/* ENCABEZADO */}
+            <div className="shrink-0 border-b border-gray-100 px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Brain className="h-5 w-5 text-[#0C2D6B]" />
+                  <div>
+                    <h3 className="font-black text-[#0C2D6B]">
+                      Resumen inteligente
+                    </h3>
+                    <p className="text-[10px] text-gray-400">
+                      Estado actual del sistema GL365
+                    </p>
+                  </div>
+                </div>
 
-              <div className="space-y-3">
-                {priorityItems.map(
-                  (item, index) => (
+                <span className="rounded-full bg-green-50 px-2.5 py-1 text-[10px] font-black text-green-700">
+                  MySQL conectado
+                </span>
+              </div>
+            </div>
+
+            {/* CONTENIDO - SIN SCROLL */}
+            <div className="flex flex-1 flex-col gap-2.5 p-3 pb-5">
+              {/* ATENCIÓN PRIORITARIA */}
+              <section className="shrink-0">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-[#FF6A00]" />
+                    <h3 className="text-sm font-black text-[#0C2D6B]">
+                      Atención prioritaria
+                    </h3>
+                  </div>
+
+                  <span className="rounded-full bg-orange-50 px-2 py-1 text-[9px] font-black text-orange-700">
+                    {priorityItems.length} aviso{priorityItems.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                  {priorityItems.map((item, index) => (
                     <PriorityItem
                       key={`${item.title}-${index}`}
                       {...item}
                     />
-                  )
-                )}
-              </div>
-            </Card>
+                  ))}
+                </div>
+              </section>
 
-            <Card className="border border-gray-100 p-4 shadow-sm">
-              <div className="mb-4 flex items-center gap-2">
-                <Database className="h-4 w-4 text-[#0C2D6B]" />
-                <h3 className="font-black text-[#0C2D6B]">
-                  Información consultable
-                </h3>
-              </div>
+              {/* INFORMACIÓN CONSULTABLE */}
+              <section className="shrink-0 rounded-2xl border border-slate-100 bg-slate-50/60 p-2.5">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Database className="h-4 w-4 text-[#0C2D6B]" />
+                    <h3 className="text-sm font-black text-[#0C2D6B]">
+                      Información consultable
+                    </h3>
+                  </div>
 
-              <ContextRow
-                icon={Truck}
-                label="Logística"
-                value={`${
-                  summary.viajesTotal ??
-                  context.logistics.viajes.length
-                } viajes`}
-              />
-
-              <ContextRow
-                icon={Gauge}
-                label="Flota"
-                value={`${
-                  summary.vehiculos ??
-                  context.fleet.vehiculos.length
-                } vehículos`}
-              />
-
-              <ContextRow
-                icon={CircleDollarSign}
-                label="Finanzas"
-                value={`${
-                  summary.comprobantes ??
-                  context.finance
-                    .comprobantes.length
-                } comprobantes`}
-              />
-
-              <ContextRow
-                icon={Users}
-                label="Comercial"
-                value={`${
-                  summary.oportunidadesActivas ??
-                  context.commercial
-                    .oportunidades.length
-                } oportunidades`}
-              />
-
-              <ContextRow
-                icon={Building2}
-                label="Proveedores"
-                value={`${
-                  summary.proveedores ??
-                  context.suppliers.proveedores
-                    .length
-                } registros`}
-              />
-
-              <ContextRow
-                icon={RouteIcon}
-                label="Rutas"
-                value={`${
-                  summary.rutas ??
-                  context.routes.rutas.length
-                } rutas`}
-              />
-            </Card>
-
-            <Card className="border border-gray-100 bg-[#0C2D6B] p-5 text-white shadow-sm">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-5 w-5 text-[#FF9A4A]" />
-                <h3 className="font-black">
-                  Conexión segura
-                </h3>
-              </div>
-
-              <p className="mt-3 text-xs leading-5 text-white/75">
-                La llave de Groq queda en el
-                backend con <b>GROQ_API_KEY</b>.
-                El frontend solo consulta tu API
-                local, por eso no expone
-                credenciales.
-              </p>
-
-              <div className="mt-4 rounded-2xl bg-white/10 p-3 text-xs text-white/80">
-                Modelo:{" "}
-                {provider?.model ||
-                  "configurable en .env"}
-              </div>
-            </Card>
-
-            {context.logistics.viajes.length >
-              0 && (
-              <Card className="border border-gray-100 p-5 shadow-sm">
-                <div className="mb-4 flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-[#0C2D6B]" />
-                  <h3 className="font-black text-[#0C2D6B]">
-                    Viajes recientes
-                  </h3>
+                  <span className="text-[9px] font-bold text-gray-400">
+                    Datos reales
+                  </span>
                 </div>
 
-                <div className="space-y-3">
-                  {context.logistics.viajes
-                    .slice(0, 5)
-                    .map((row) => (
+                <div className="grid grid-cols-2 gap-2">
+                  <ContextTile
+                    icon={Truck}
+                    label="Logística"
+                    value={`${summary.viajesTotal ?? context.logistics.viajes.length} viajes`}
+                  />
+                  <ContextTile
+                    icon={Gauge}
+                    label="Flota"
+                    value={`${summary.vehiculos ?? context.fleet.vehiculos.length} vehículos`}
+                  />
+                  <ContextTile
+                    icon={CircleDollarSign}
+                    label="Finanzas"
+                    value={`${summary.comprobantes ?? context.finance.comprobantes.length} comprobantes`}
+                  />
+                  <ContextTile
+                    icon={Users}
+                    label="Comercial"
+                    value={`${summary.oportunidadesActivas ?? context.commercial.oportunidades.length} oportunidades`}
+                  />
+                  <ContextTile
+                    icon={Building2}
+                    label="Proveedores"
+                    value={`${summary.proveedores ?? context.suppliers.proveedores.length} registros`}
+                  />
+                  <ContextTile
+                    icon={RouteIcon}
+                    label="Rutas"
+                    value={`${summary.rutas ?? context.routes.rutas.length} rutas`}
+                  />
+                </div>
+              </section>
+
+              {/* IA + BD */}
+              <section className="shrink-0 rounded-2xl bg-gradient-to-r from-[#0C2D6B] to-[#123B82] p-3 text-white shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10">
+                      <ShieldCheck className="h-4 w-4 text-[#FFB37A]" />
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="text-xs font-black">
+                        IA + base de datos
+                      </p>
+                      <p className="truncate text-[10px] text-white/70">
+                        {groqReady ? "Groq activo" : "Respaldo local"} · credenciales protegidas
+                      </p>
+                    </div>
+                  </div>
+
+                  <span className="max-w-[145px] shrink-0 truncate rounded-full bg-white/10 px-2.5 py-1 text-[9px] font-bold text-white/90">
+                    {provider?.model || "modelo IA"}
+                  </span>
+                </div>
+              </section>
+
+              {/* VIAJES RECIENTES */}
+              <section className="shrink-0 overflow-visible rounded-2xl border border-gray-100 bg-white p-3">
+                <div className="mb-2.5 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-[#FF6A00]" />
+                    <h3 className="text-sm font-black text-[#0C2D6B]">
+                      Viajes recientes
+                    </h3>
+                  </div>
+
+                  <span className="rounded-full bg-slate-50 px-2 py-1 text-[9px] font-bold text-gray-400">
+                    Últimos 3
+                  </span>
+                </div>
+
+                {context.logistics.viajes.length > 0 ? (
+                  <div className="space-y-2">
+                    {context.logistics.viajes.slice(0, 3).map((row) => (
                       <div
                         key={row.id}
-                        className="rounded-2xl border border-slate-100 p-3"
+                        className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2"
                       >
-                        <p className="font-black text-[#0C2D6B]">
-                          {row.codigo}
-                        </p>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[11px] font-black text-[#0C2D6B]">
+                              {row.codigo}
+                            </p>
 
-                        <p className="mt-1 text-xs text-slate-500">
-                          {row.ruta}
-                        </p>
+                            <p
+                              className="mt-0.5 truncate text-[9.5px] text-slate-500"
+                              title={row.ruta}
+                            >
+                              {row.ruta || "Ruta no registrada"}
+                            </p>
+                          </div>
 
-                        <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                          <span className="font-bold text-slate-500">
-                            {row.estado}
-                          </span>
+                          <div className="shrink-0 text-right">
+                            <span className="inline-flex max-w-[105px] truncate rounded-full bg-white px-2 py-1 text-[8.5px] font-bold text-slate-500 shadow-sm">
+                              {row.estado || "Sin estado"}
+                            </span>
 
-                          <span className="font-black text-[#FF6A00]">
-                            {pct(row.progreso)}
-                          </span>
+                            <p className="mt-1 text-[10px] font-black text-[#FF6A00]">
+                              {pct(row.progreso)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className="h-full rounded-full bg-[#FF6A00]"
+                            style={{
+                              width: `${Math.max(
+                                0,
+                                Math.min(100, Number(row.progreso || 0))
+                              )}%`,
+                            }}
+                          />
                         </div>
                       </div>
                     ))}
-                </div>
-              </Card>
-            )}
-          </div>
+                  </div>
+                ) : (
+                  <div className="flex min-h-[80px] items-center justify-center rounded-xl bg-slate-50 text-center text-xs text-gray-400">
+                    Sin viajes recientes.
+                  </div>
+                )}
+              </section>
+            </div>
+          </Card>
         </div>
       </div>
     </div>
@@ -1456,18 +1563,47 @@ function PriorityItem({
 
   return (
     <div
-      className={`rounded-xl border p-3 ${style}`}
+      className={`rounded-xl border px-3 py-1.5 ${style}`}
     >
       <div className="flex gap-2">
         {icon}
 
         <div className="min-w-0">
-          <p className="text-sm font-black text-gray-800">
+          <p className="text-[13px] font-black leading-5 text-gray-800">
             {title}
           </p>
 
-          <p className="mt-1 text-xs leading-5 text-gray-500">
+          <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-gray-500">
             {detail}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ContextTile({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-xl border border-slate-100 bg-white p-2">
+      <div className="flex items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-[#0C2D6B] shadow-sm">
+          <Icon className="h-4 w-4" />
+        </div>
+
+        <div className="min-w-0">
+          <p className="truncate text-[10px] font-semibold text-slate-400">
+            {label}
+          </p>
+          <p className="truncate text-[12px] font-black text-[#0C2D6B]">
+            {value}
           </p>
         </div>
       </div>

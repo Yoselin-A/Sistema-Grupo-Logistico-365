@@ -43,6 +43,22 @@ const limpiarPais = (value, max = 60) =>
     .replace(/\s+/g, " ")
     .slice(0, max);
 
+
+const normalizarLugar = (value) =>
+  limpiar(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\bpiza\b/g, "pisa")
+    .replace(/\bvn\b/g, "villa nueva")
+    .replace(/\bz\s*(\d+)\b/g, "zona $1")
+    .replace(/\bzona\s*(\d+)\b/g, "zona $1")
+    .replace(/\bkm\s*/g, "km")
+    .replace(/[^a-z0-9.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+
 const asId = (value) => {
   const number = Number(value);
   return Number.isInteger(number) && number > 0 ? number : null;
@@ -248,6 +264,102 @@ const buildRouteName = async (connection, origenId, destinoId) => {
   return `${origen.nombre_ubicacion} → ${destino.nombre_ubicacion}`;
 };
 
+
+const findDuplicateRoute = async (
+  connection,
+  origenId,
+  destinoId,
+  excludeId = null
+) => {
+  const params = [origenId, destinoId];
+
+  let sql = `
+    SELECT
+      r.id,
+      r.codigo_ruta,
+      r.nombre_ruta,
+      r.origen_id,
+      r.destino_id,
+      uo.nombre_ubicacion AS origen_nombre,
+      uo.pais AS origen_pais,
+      ud.nombre_ubicacion AS destino_nombre,
+      ud.pais AS destino_pais
+    FROM \`${T.ruta}\` r
+    LEFT JOIN \`${T.ubicacion}\` uo ON uo.id = r.origen_id
+    LEFT JOIN \`${T.ubicacion}\` ud ON ud.id = r.destino_id
+    WHERE r.origen_id = ?
+      AND r.destino_id = ?
+  `;
+
+  if (excludeId) {
+    sql += " AND r.id <> ?";
+    params.push(excludeId);
+  }
+
+  sql += " ORDER BY r.id ASC LIMIT 1";
+
+  const [[exact]] = await connection.query(sql, params);
+
+  if (exact) return exact;
+
+  const [[selectedOrigin]] = await connection.query(
+    `SELECT nombre_ubicacion, pais FROM \`${T.ubicacion}\` WHERE id = ? LIMIT 1`,
+    [origenId]
+  );
+
+  const [[selectedDestination]] = await connection.query(
+    `SELECT nombre_ubicacion, pais FROM \`${T.ubicacion}\` WHERE id = ? LIMIT 1`,
+    [destinoId]
+  );
+
+  if (!selectedOrigin || !selectedDestination) return null;
+
+  const [rows] = await connection.query(
+    `
+    SELECT
+      r.id,
+      r.codigo_ruta,
+      r.nombre_ruta,
+      r.origen_id,
+      r.destino_id,
+      uo.nombre_ubicacion AS origen_nombre,
+      uo.pais AS origen_pais,
+      ud.nombre_ubicacion AS destino_nombre,
+      ud.pais AS destino_pais
+    FROM \`${T.ruta}\` r
+    LEFT JOIN \`${T.ubicacion}\` uo ON uo.id = r.origen_id
+    LEFT JOIN \`${T.ubicacion}\` ud ON ud.id = r.destino_id
+    ${excludeId ? "WHERE r.id <> ?" : ""}
+    `,
+    excludeId ? [excludeId] : []
+  );
+
+  const originKey = `${normalizarLugar(
+    selectedOrigin.nombre_ubicacion
+  )}|${normalizarLugar(selectedOrigin.pais)}`;
+
+  const destinationKey = `${normalizarLugar(
+    selectedDestination.nombre_ubicacion
+  )}|${normalizarLugar(selectedDestination.pais)}`;
+
+  return (
+    rows.find((row) => {
+      const rowOrigin = `${normalizarLugar(
+        row.origen_nombre
+      )}|${normalizarLugar(row.origen_pais)}`;
+
+      const rowDestination = `${normalizarLugar(
+        row.destino_nombre
+      )}|${normalizarLugar(row.destino_pais)}`;
+
+      return (
+        rowOrigin === originKey &&
+        rowDestination === destinationKey
+      );
+    }) || null
+  );
+};
+
 const validateRutaPayload = async (connection, body) => {
   const origenId = asId(body.origen_id);
   const destinoId = asId(body.destino_id);
@@ -268,6 +380,22 @@ const validateRutaPayload = async (connection, body) => {
   if (!frecuenciaId) throw new Error("Selecciona la frecuencia.");
   if (!estadoId) throw new Error("Selecciona el estado.");
 
+  const duplicate = await findDuplicateRoute(
+    connection,
+    origenId,
+    destinoId,
+    asId(body.id) || null
+  );
+
+  if (duplicate) {
+    const error = new Error(
+      `La ruta ya existe como ${duplicate.codigo_ruta}: ${duplicate.nombre_ruta}.`
+    );
+    error.code = "DUPLICATE_ROUTE";
+    error.route = duplicate;
+    throw error;
+  }
+
   const nombreRuta = await buildRouteName(connection, origenId, destinoId);
 
   return {
@@ -283,7 +411,10 @@ const validateRutaPayload = async (connection, body) => {
 };
 
 const saveRuta = async (connection, body, id = null) => {
-  const data = await validateRutaPayload(connection, body);
+  const data = await validateRutaPayload(connection, {
+    ...body,
+    id,
+  });
 
   if (id) {
     const [[actual]] = await connection.query(
@@ -434,6 +565,16 @@ router.post("/rutas", async (req, res) => {
   } catch (error) {
     await connection.rollback();
     console.error("Error POST /rutas:", error);
+
+    if (error?.code === "DUPLICATE_ROUTE") {
+      return fail(
+        res,
+        409,
+        error.message,
+        error.route || error
+      );
+    }
+
     return fail(res, 500, "No se pudo guardar la ruta.", error);
   } finally {
     connection.release();
@@ -457,6 +598,16 @@ router.put("/rutas/:id", async (req, res) => {
   } catch (error) {
     await connection.rollback();
     console.error("Error PUT /rutas/:id:", error);
+
+    if (error?.code === "DUPLICATE_ROUTE") {
+      return fail(
+        res,
+        409,
+        error.message,
+        error.route || error
+      );
+    }
+
     return fail(res, 500, "No se pudo actualizar la ruta.", error);
   } finally {
     connection.release();
@@ -570,6 +721,7 @@ router.post("/rutas/ubicaciones", async (req, res) => {
     connection.release();
   }
 });
+
 
 router.get("/rutas/:id/historial", async (req, res) => {
   try {

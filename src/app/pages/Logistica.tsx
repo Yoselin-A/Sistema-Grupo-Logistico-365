@@ -19,7 +19,6 @@ import {
   Search,
   Trash2,
   Truck,
-  Warehouse,
   X,
 } from "lucide-react";
 import jsPDF from "jspdf";
@@ -81,11 +80,6 @@ type EstadoEnvio = {
   nombre_estado_envio: string;
 };
 
-type TipoDeposito = {
-  id: number;
-  codigo_tipo_deposito: string;
-  nombre_tipo_deposito: string;
-};
 
 type Envio = {
   id: number;
@@ -93,6 +87,11 @@ type Envio = {
   cliente_id: number;
   origen_id: number;
   destino_id: number;
+  ruta_id?: number | null;
+  codigo_ruta?: string | null;
+  nombre_ruta?: string | null;
+  distancia_km?: number | null;
+  ruta_texto?: string | null;
   direccion: string;
   fecha: string;
   estado_id: number;
@@ -125,21 +124,6 @@ type Viaje = {
   envio_codigo?: string;
 };
 
-type Deposito = {
-  id: number;
-  codigo: string;
-  nombre_deposito: string;
-  nombre?: string;
-  ubicacion_id: number;
-  direccion?: string | null;
-  capacidad: number | string;
-  unidad_medida?: string | null;
-  tipo_id: number;
-  activo: boolean | number;
-  ubicacion: string;
-  tipo: string;
-  estado: string;
-};
 
 type FormErrors = Record<string, string>;
 
@@ -237,15 +221,34 @@ const money = (value: any) =>
     currency: "GTQ",
   }).format(Number(value || 0));
 
+const toDateInput = (value: any) => {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
+};
+
 const formatDate = (value: any) => {
-  const text = String(value || "");
-  if (!text) return "-";
-  return text.slice(0, 10);
+  const iso = toDateInput(value);
+  if (!iso) return "-";
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
 };
 
 const toDateTimeInput = (value: any) => {
-  const text = String(value || "");
+  const text = String(value || "").trim();
   if (!text) return "";
+
+  // Cuando MySQL/Express devuelve un ISO con Z, no debemos cortar la cadena:
+  // hay que convertirlo a la hora LOCAL del navegador. Esto corrige, por ejemplo,
+  // 17:05 en Guatemala que antes se mostraba como 23:05.
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(text)) {
+    const date = new Date(text);
+    if (!Number.isNaN(date.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+  }
+
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)) return text.slice(0, 16);
   if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(text)) return text.replace(" ", "T").slice(0, 16);
   if (/^\d{4}-\d{2}-\d{2}/.test(text)) return `${text.slice(0, 10)}T00:00`;
@@ -340,7 +343,8 @@ function moveOnEnter(event: React.KeyboardEvent<HTMLElement>) {
   ).filter((item) => {
     const disabled = item.hasAttribute("disabled") || item.getAttribute("aria-disabled") === "true";
     const hidden = item.offsetParent === null;
-    return !disabled && !hidden;
+    const skip = item.getAttribute("data-skip-enter") === "true";
+    return !disabled && !hidden && !skip;
   });
 
   const index = fields.indexOf(target);
@@ -360,15 +364,31 @@ function Field({
   error,
   children,
   className = "",
+  actionLabel,
+  onAction,
 }: {
   label: string;
   error?: string;
   children: React.ReactNode;
   className?: string;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   return (
     <div className={className}>
-      <label className={labelClass}>{label}</label>
+      <div className="mb-1.5 flex min-h-[20px] items-center justify-between gap-2">
+        <label className="block text-xs font-bold text-gray-600">{label}</label>
+        {actionLabel && onAction && (
+          <button
+            type="button"
+            data-skip-enter="true"
+            onClick={onAction}
+            className="inline-flex h-7 items-center gap-1 rounded-lg border border-orange-200 bg-orange-50 px-2.5 text-[11px] font-bold text-[#D45700] transition hover:border-[#FF6A00] hover:bg-orange-100"
+          >
+            <Plus className="h-3.5 w-3.5" /> {actionLabel}
+          </button>
+        )}
+      </div>
       {children}
       {error && <p className={errorClass}>{error}</p>}
     </div>
@@ -624,8 +644,10 @@ function PaginationControls({
           className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-[#0C2D6B] shadow-sm outline-none focus:border-[#0C2D6B]"
           aria-label="Registros por página"
         >
-          {[4, 8, 12, 20, 40].map((size) => (
-            <option key={size} value={size}>{size} por página</option>
+          {[3, 6, 9, 12, 15, 18].map((size) => (
+            <option key={size} value={size}>
+              {size} por página
+            </option>
           ))}
         </select>
 
@@ -653,13 +675,11 @@ export function Logistica() {
   const [unidades, setUnidades] = useState<Unidad[]>([]);
   const [pilotos, setPilotos] = useState<Piloto[]>([]);
   const [estadosEnvio, setEstadosEnvio] = useState<EstadoEnvio[]>([]);
-  const [tiposDeposito, setTiposDeposito] = useState<TipoDeposito[]>([]);
 
   const [envios, setEnvios] = useState<Envio[]>([]);
   const [viajes, setViajes] = useState<Viaje[]>([]);
-  const [depositos, setDepositos] = useState<Deposito[]>([]);
 
-  const [activeTab, setActiveTab] = useState<"envios" | "depositos">("envios");
+  const [activeTab, setActiveTab] = useState<"envios">("envios");
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState("");
   const [notice, setNotice] = useState("");
@@ -675,19 +695,11 @@ export function Logistica() {
   const [sortEnvioField, setSortEnvioField] = useState("");
   const [sortEnvioDirection, setSortEnvioDirection] = useState<SortDirection>("asc");
 
-  const [searchDepositos, setSearchDepositos] = useState("");
-  const [filterEstadoDeposito, setFilterEstadoDeposito] = useState("Todos");
-  const [filterTipoDeposito, setFilterTipoDeposito] = useState("Todos");
-  const [sortDepositoField, setSortDepositoField] = useState("");
-  const [sortDepositoDirection, setSortDepositoDirection] = useState<SortDirection>("asc");
-
   // Paginación independiente para cada submódulo de Logística.
   const [viajePage, setViajePage] = useState(1);
-  const [viajeRowsPerPage, setViajeRowsPerPage] = useState(8);
+  const [viajeRowsPerPage, setViajeRowsPerPage] = useState(6);
   const [envioPage, setEnvioPage] = useState(1);
-  const [envioRowsPerPage, setEnvioRowsPerPage] = useState(8);
-  const [depositoPage, setDepositoPage] = useState(1);
-  const [depositoRowsPerPage, setDepositoRowsPerPage] = useState(8);
+  const [envioRowsPerPage, setEnvioRowsPerPage] = useState(6);
 
   const [viajeModal, setViajeModal] = useState<{ open: boolean; mode: "create" | "edit" | "view" }>({
     open: false,
@@ -697,25 +709,27 @@ export function Logistica() {
     open: false,
     mode: "create",
   });
-  const [depositoModal, setDepositoModal] = useState<{ open: boolean; mode: "create" | "edit" | "view" }>({
-    open: false,
-    mode: "create",
-  });
-
   const [currentViaje, setCurrentViaje] = useState<Viaje | null>(null);
   const [currentEnvio, setCurrentEnvio] = useState<Envio | null>(null);
-  const [currentDeposito, setCurrentDeposito] = useState<Deposito | null>(null);
+  const [hoveredViajeId, setHoveredViajeId] = useState<number | null>(null);
 
   const [viajeForm, setViajeForm] = useState<AnyRow>({});
   const [envioForm, setEnvioForm] = useState<AnyRow>({});
-  const [depositoForm, setDepositoForm] = useState<AnyRow>({});
 
   const [viajeErrors, setViajeErrors] = useState<FormErrors>({});
   const [envioErrors, setEnvioErrors] = useState<FormErrors>({});
-  const [depositoErrors, setDepositoErrors] = useState<FormErrors>({});
+
+  const [envioFromViaje, setEnvioFromViaje] = useState(false);
+  const [quickModal, setQuickModal] = useState<null | {
+    type: "cliente" | "ruta" | "unidad" | "piloto" | "ubicacion";
+    target: string;
+  }>(null);
+  const [quickForm, setQuickForm] = useState<AnyRow>({});
+  const [quickError, setQuickError] = useState("");
+  const [quickSaving, setQuickSaving] = useState(false);
 
   const [confirmDialog, setConfirmDialog] = useState<null | {
-    type: "viaje" | "envio" | "deposito";
+    type: "viaje" | "envio";
     id: number;
     code: string;
     title: string;
@@ -738,10 +752,8 @@ export function Logistica() {
       setUnidades(asArray<Unidad>(data.unidades));
       setPilotos(asArray<Piloto>(data.pilotos));
       setEstadosEnvio(asArray<EstadoEnvio>(data.estadosEnvio));
-      setTiposDeposito(asArray<TipoDeposito>(data.tiposDeposito));
       setEnvios(asArray<Envio>(data.envios));
       setViajes(asArray<Viaje>(data.viajes));
-      setDepositos(asArray<Deposito>(data.depositos));
     } catch (error: any) {
       console.error("Error cargando logística:", error);
       setApiError(error.message || "No se pudo conectar Logística con MySQL.");
@@ -857,13 +869,6 @@ export function Logistica() {
     setSortEnvioDirection("asc");
   };
 
-  const resetDepositoFilters = () => {
-    setSearchDepositos("");
-    setFilterEstadoDeposito("Todos");
-    setFilterTipoDeposito("Todos");
-    setSortDepositoField("");
-    setSortDepositoDirection("asc");
-  };
 
   const estadoIdByName = (name: string) => {
     const term = name.toLowerCase();
@@ -969,57 +974,9 @@ export function Logistica() {
     return rows;
   }, [filteredEnvios, sortEnvioField, sortEnvioDirection]);
 
-  const tiposDepositoFiltro = useMemo(() => {
-    return ["Todos", ...Array.from(new Set(depositos.map((item) => item.tipo).filter(Boolean)))];
-  }, [depositos]);
-
-  const estadosDepositoFiltro = useMemo(() => {
-    return ["Todos", ...Array.from(new Set(depositos.map((item) => item.estado).filter(Boolean)))];
-  }, [depositos]);
-
-  const filteredDepositos = useMemo(() => {
-    const term = searchDepositos.trim().toLowerCase();
-
-    return depositos.filter((deposito) => {
-      const text = `${deposito.codigo} ${deposito.nombre_deposito || deposito.nombre} ${deposito.ubicacion} ${deposito.tipo} ${deposito.estado}`.toLowerCase();
-      const matchesSearch = !term || text.includes(term);
-      const matchesEstado = filterEstadoDeposito === "Todos" || deposito.estado === filterEstadoDeposito;
-      const matchesTipo = filterTipoDeposito === "Todos" || deposito.tipo === filterTipoDeposito;
-      return matchesSearch && matchesEstado && matchesTipo;
-    });
-  }, [depositos, searchDepositos, filterEstadoDeposito, filterTipoDeposito]);
-
-  const sortedDepositos = useMemo(() => {
-    const rows = [...filteredDepositos];
-
-    rows.sort((a, b) => {
-      const av =
-        sortDepositoField === "codigo" ? a.codigo :
-        sortDepositoField === "nombre" ? (a.nombre_deposito || a.nombre || "") :
-        sortDepositoField === "ubicacion" ? a.ubicacion :
-        sortDepositoField === "capacidad" ? Number(a.capacidad || 0) :
-        sortDepositoField === "tipo" ? a.tipo :
-        sortDepositoField === "estado" ? a.estado :
-        "";
-
-      const bv =
-        sortDepositoField === "codigo" ? b.codigo :
-        sortDepositoField === "nombre" ? (b.nombre_deposito || b.nombre || "") :
-        sortDepositoField === "ubicacion" ? b.ubicacion :
-        sortDepositoField === "capacidad" ? Number(b.capacidad || 0) :
-        sortDepositoField === "tipo" ? b.tipo :
-        sortDepositoField === "estado" ? b.estado :
-        "";
-
-      return sortDepositoField ? compareValues(av, bv, sortDepositoDirection) : 0;
-    });
-
-    return rows;
-  }, [filteredDepositos, sortDepositoField, sortDepositoDirection]);
 
   const viajeTotalPages = Math.max(1, Math.ceil(sortedViajes.length / viajeRowsPerPage));
   const envioTotalPages = Math.max(1, Math.ceil(sortedEnvios.length / envioRowsPerPage));
-  const depositoTotalPages = Math.max(1, Math.ceil(sortedDepositos.length / depositoRowsPerPage));
 
   const paginatedViajes = useMemo(() => {
     const start = (viajePage - 1) * viajeRowsPerPage;
@@ -1031,10 +988,6 @@ export function Logistica() {
     return sortedEnvios.slice(start, start + envioRowsPerPage);
   }, [sortedEnvios, envioPage, envioRowsPerPage]);
 
-  const paginatedDepositos = useMemo(() => {
-    const start = (depositoPage - 1) * depositoRowsPerPage;
-    return sortedDepositos.slice(start, start + depositoRowsPerPage);
-  }, [sortedDepositos, depositoPage, depositoRowsPerPage]);
 
   // Al buscar, filtrar, ordenar o cambiar el tamaño de página regresamos a la primera página.
   useEffect(() => {
@@ -1045,9 +998,6 @@ export function Logistica() {
     setEnvioPage(1);
   }, [searchEnvios, filterEstadoEnvio, filterClienteEnvio, sortEnvioField, sortEnvioDirection, envioRowsPerPage]);
 
-  useEffect(() => {
-    setDepositoPage(1);
-  }, [searchDepositos, filterEstadoDeposito, filterTipoDeposito, sortDepositoField, sortDepositoDirection, depositoRowsPerPage]);
 
   useEffect(() => {
     setViajePage((page) => Math.min(page, viajeTotalPages));
@@ -1057,9 +1007,6 @@ export function Logistica() {
     setEnvioPage((page) => Math.min(page, envioTotalPages));
   }, [envioTotalPages]);
 
-  useEffect(() => {
-    setDepositoPage((page) => Math.min(page, depositoTotalPages));
-  }, [depositoTotalPages]);
 
   const alerts = useMemo(() => {
     return viajes
@@ -1074,7 +1021,7 @@ export function Logistica() {
 
   const kpis = [
     {
-      title: "Total envíos",
+      title: "Total servicios",
       value: envios.length,
       icon: Package,
       colorClass: "bg-[#0C2D6B]",
@@ -1097,13 +1044,118 @@ export function Logistica() {
       icon: AlertTriangle,
       colorClass: "bg-orange-500",
     },
-    {
-      title: "Depósitos activos",
-      value: depositos.filter((d) => d.estado === "Activo" || Number(d.activo) === 1).length,
-      icon: Warehouse,
-      colorClass: "bg-purple-500",
-    },
   ];
+
+  const openQuick = (
+    type: "cliente" | "ruta" | "unidad" | "piloto" | "ubicacion",
+    target: string,
+    seed: AnyRow = {}
+  ) => {
+    setQuickError("");
+    setQuickForm(
+      type === "ubicacion"
+        ? { pais: "Guatemala", ...seed }
+        : type === "ruta"
+        ? { origen_id: "", destino_id: "", nombre_ruta: "", distancia_km: "", ...seed }
+        : seed
+    );
+    setQuickModal({ type, target });
+  };
+
+  const closeQuick = () => {
+    if (quickSaving) return;
+    setQuickModal(null);
+    setQuickForm({});
+    setQuickError("");
+  };
+
+  const applyQuickCreated = (target: string, created: AnyRow) => {
+    if (!created?.id) return;
+
+    if (target === "viaje_cliente") {
+      setViajeForm((current) => ({ ...current, cliente_id: created.id, envio_id: "" }));
+    } else if (target === "viaje_ruta") {
+      setViajeForm((current) => ({ ...current, ruta_id: created.id }));
+    } else if (target === "viaje_unidad") {
+      setViajeForm((current) => ({ ...current, unidad_id: created.id }));
+    } else if (target === "viaje_piloto") {
+      setViajeForm((current) => ({ ...current, piloto_id: created.id }));
+    } else if (target === "envio_cliente") {
+      setEnvioForm((current) => ({ ...current, cliente_id: created.id }));
+    } else if (target === "envio_origen") {
+      setEnvioForm((current) => ({ ...current, origen_id: created.id }));
+    } else if (target === "envio_destino") {
+      setEnvioForm((current) => ({ ...current, destino_id: created.id }));
+    } else if (target === "envio_ruta") {
+      setEnvioForm((current) => ({
+        ...current,
+        origen_id: created.origen_id || current.origen_id,
+        destino_id: created.destino_id || current.destino_id,
+      }));
+    }
+  };
+
+  const saveQuick = async () => {
+    if (!quickModal) return;
+    setQuickError("");
+
+    const value = (name: string) => String(quickForm[name] || "").trim();
+
+    if (quickModal.type === "cliente" && (!value("nombre_empresa") || !value("nit"))) {
+      setQuickError("Nombre de empresa y NIT son obligatorios.");
+      return;
+    }
+    if (quickModal.type === "ubicacion" && !value("nombre_ubicacion")) {
+      setQuickError("El nombre de la ubicación es obligatorio.");
+      return;
+    }
+    if (quickModal.type === "ruta" && (!quickForm.origen_id || !quickForm.destino_id)) {
+      setQuickError("Seleccioná origen y destino para la ruta.");
+      return;
+    }
+    if (quickModal.type === "ruta" && Number(quickForm.origen_id) === Number(quickForm.destino_id)) {
+      setQuickError("Origen y destino deben ser diferentes.");
+      return;
+    }
+    if (quickModal.type === "unidad" && !value("tipo")) {
+      setQuickError("El tipo de unidad es obligatorio.");
+      return;
+    }
+    if (
+      quickModal.type === "piloto" &&
+      (!value("primer_nombre") || !value("primer_apellido") || !value("licencia"))
+    ) {
+      setQuickError("Primer nombre, primer apellido y licencia son obligatorios.");
+      return;
+    }
+
+    try {
+      setQuickSaving(true);
+      const payload = { ...quickForm };
+      const catalogPath: Record<string, string> = {
+        cliente: "clientes",
+        ruta: "rutas",
+        unidad: "unidades",
+        piloto: "pilotos",
+        ubicacion: "ubicaciones",
+      };
+      const created = await apiRequest(`/logistica/catalogos/${catalogPath[quickModal.type]}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      const target = quickModal.target;
+      await load();
+      applyQuickCreated(target, created);
+      setQuickModal(null);
+      setQuickForm({});
+      showNotice("Registro creado y seleccionado correctamente.");
+    } catch (error: any) {
+      setQuickError(error.message || "No se pudo crear el registro.");
+    } finally {
+      setQuickSaving(false);
+    }
+  };
 
   const openCreateViaje = () => {
     setViajeErrors({});
@@ -1150,10 +1202,10 @@ export function Logistica() {
 
       errors.envio_id =
         viajeForm.cliente_id && enviosDelCliente.length === 0
-          ? "Este cliente no tiene envíos. Registrá un envío primero y luego regresá al viaje."
-          : "Seleccioná un envío relacionado.";
+          ? "Este cliente no tiene servicios de transporte. Registrá un servicio primero y luego regresá al viaje."
+          : "Seleccioná un servicio relacionado.";
     }
-    if (!viajeForm.ruta_id) errors.ruta_id = "Seleccioná una ruta.";
+    // La ruta se obtiene automáticamente del origen y destino del envío.
     if (!viajeForm.unidad_id) errors.unidad_id = "Seleccioná una unidad.";
     if (!viajeForm.piloto_id) errors.piloto_id = "Seleccioná un piloto.";
     if (!viajeForm.fecha_salida) errors.fecha_salida = "Seleccioná fecha y hora.";
@@ -1179,7 +1231,7 @@ export function Logistica() {
           body: JSON.stringify({
             cliente_id: viajeForm.cliente_id,
             envio_id: viajeForm.envio_id,
-            ruta_id: viajeForm.ruta_id,
+            ruta_id: viajeForm.ruta_id || null,
             unidad_id: viajeForm.unidad_id,
             piloto_id: viajeForm.piloto_id,
             fecha_salida: viajeForm.fecha_salida,
@@ -1239,11 +1291,7 @@ export function Logistica() {
 
   const openCreateEnvioFromViaje = () => {
     const clienteId = viajeForm.cliente_id || "";
-
-    setViajeModal({ open: false, mode: "create" });
-    setViajeErrors({});
-    setCurrentViaje(null);
-
+    setEnvioFromViaje(true);
     setEnvioErrors({});
     setCurrentEnvio(null);
     setEnvioForm({
@@ -1253,13 +1301,13 @@ export function Logistica() {
       direccion: "",
       fecha: "",
       estado_id: estadoIdByName("recolección"),
-      observaciones: "Envío creado desde el formulario de viaje.",
+      observaciones: "Servicio creado desde el formulario de viaje.",
     });
-
     setEnvioModal({ open: true, mode: "create" });
   };
 
   const openCreateEnvio = () => {
+    setEnvioFromViaje(false);
     setEnvioErrors({});
     setCurrentEnvio(null);
     setEnvioForm({
@@ -1279,7 +1327,7 @@ export function Logistica() {
     setCurrentEnvio(envio);
     setEnvioForm({
       ...envio,
-      fecha: formatDate(envio.fecha),
+      fecha: toDateInput(envio.fecha),
     });
     setEnvioModal({ open: true, mode: "edit" });
   };
@@ -1307,7 +1355,7 @@ export function Logistica() {
     if (!validateEnvio()) return;
 
     try {
-      await apiRequest(
+      const savedEnvio = await apiRequest(
         envioModal.mode === "edit" && currentEnvio
           ? `/logistica/envios/${currentEnvio.id}`
           : "/logistica/envios",
@@ -1327,9 +1375,20 @@ export function Logistica() {
 
       setEnvioModal({ open: false, mode: "create" });
       await load();
-      showNotice("Envío guardado correctamente en MySQL.");
+
+      if (envioFromViaje && savedEnvio?.id) {
+        setViajeForm((current) => ({
+          ...current,
+          cliente_id: envioForm.cliente_id || current.cliente_id,
+          envio_id: savedEnvio.id,
+          ruta_id: savedEnvio.ruta_id || "",
+        }));
+      }
+
+      setEnvioFromViaje(false);
+      showNotice("Servicio guardado correctamente en MySQL.");
     } catch (error: any) {
-      setEnvioErrors({ general: error.message || "No se pudo guardar el envío." });
+      setEnvioErrors({ general: error.message || "No se pudo guardar el servicio." });
     }
   };
 
@@ -1338,96 +1397,10 @@ export function Logistica() {
       type: "envio",
       id: envio.id,
       code: envio.codigo,
-      title: "Eliminar envío",
-      message: `Esta acción eliminará el envío ${envio.codigo}. Si el envío ya está relacionado con un viaje, el sistema no permitirá borrarlo para proteger el historial operativo.`,
+      title: "Eliminar servicio",
+      message: `Esta acción eliminará el servicio ${envio.codigo}. Si el servicio ya está relacionado con un viaje, el sistema no permitirá borrarlo para proteger el historial operativo.`,
       actionLabel: "Sí, eliminar",
       tone: "danger",
-    });
-  };
-
-  const openCreateDeposito = () => {
-    setDepositoErrors({});
-    setCurrentDeposito(null);
-    setDepositoForm({
-      nombre_deposito: "",
-      ubicacion_id: "",
-      direccion: "",
-      capacidad: "",
-      unidad_medida: "m³",
-      tipo_id: tiposDeposito[0]?.id || "",
-      activo: true,
-    });
-    setDepositoModal({ open: true, mode: "create" });
-  };
-
-  const openEditDeposito = (deposito: Deposito) => {
-    setDepositoErrors({});
-    setCurrentDeposito(deposito);
-    setDepositoForm({
-      ...deposito,
-      nombre_deposito: deposito.nombre_deposito || deposito.nombre,
-      capacidad: String(deposito.capacidad || ""),
-      activo: deposito.estado === "Activo" || Number(deposito.activo) === 1,
-    });
-    setDepositoModal({ open: true, mode: "edit" });
-  };
-
-  const openViewDeposito = (deposito: Deposito) => {
-    setCurrentDeposito(deposito);
-    setDepositoModal({ open: true, mode: "view" });
-  };
-
-  const validateDeposito = () => {
-    const errors: FormErrors = {};
-    if (!String(depositoForm.nombre_deposito || depositoForm.nombre || "").trim()) {
-      errors.nombre_deposito = "Ingresá el nombre.";
-    }
-    if (!depositoForm.ubicacion_id) errors.ubicacion_id = "Seleccioná ubicación.";
-    if (!depositoForm.tipo_id) errors.tipo_id = "Seleccioná tipo.";
-    if (!Number(depositoForm.capacidad)) errors.capacidad = "Ingresá capacidad numérica.";
-    setDepositoErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const saveDeposito = async () => {
-    if (!validateDeposito()) return;
-
-    try {
-      await apiRequest(
-        depositoModal.mode === "edit" && currentDeposito
-          ? `/logistica/depositos/${currentDeposito.id}`
-          : "/logistica/depositos",
-        {
-          method: depositoModal.mode === "edit" ? "PUT" : "POST",
-          body: JSON.stringify({
-            nombre_deposito: cleanCommercial(String(depositoForm.nombre_deposito || depositoForm.nombre || ""), 120),
-            ubicacion_id: depositoForm.ubicacion_id,
-            direccion: cleanAddress(String(depositoForm.direccion || ""), 180),
-            capacidad: depositoForm.capacidad,
-            unidad_medida: depositoForm.unidad_medida || "m³",
-            tipo_id: depositoForm.tipo_id,
-            activo: depositoForm.activo !== false,
-          }),
-        }
-      );
-
-      setDepositoModal({ open: false, mode: "create" });
-      await load();
-      showNotice("Depósito guardado correctamente en MySQL.");
-    } catch (error: any) {
-      setDepositoErrors({ general: error.message || "No se pudo guardar el depósito." });
-    }
-  };
-
-  const deleteDeposito = async (deposito: Deposito) => {
-    setConfirmDialog({
-      type: "deposito",
-      id: deposito.id,
-      code: deposito.codigo,
-      title: "Inactivar depósito",
-      message: `El depósito ${deposito.codigo} quedará marcado como inactivo. No se borrará definitivamente para conservar el historial.`,
-      actionLabel: "Sí, inactivar",
-      tone: "warning",
     });
   };
 
@@ -1445,13 +1418,9 @@ export function Logistica() {
 
       if (confirmDialog.type === "envio") {
         await apiRequest(`/logistica/envios/${confirmDialog.id}`, { method: "DELETE" });
-        showNotice("Envío eliminado correctamente.");
+        showNotice("Servicio eliminado correctamente.");
       }
 
-      if (confirmDialog.type === "deposito") {
-        await apiRequest(`/logistica/depositos/${confirmDialog.id}`, { method: "DELETE" });
-        showNotice("Depósito inactivado correctamente.");
-      }
 
       setConfirmDialog(null);
       await load();
@@ -1464,7 +1433,7 @@ export function Logistica() {
 
   const exportEnviosPDF = async () => {
     const doc = new jsPDF();
-    await addCorporatePdfHeader(doc, "Reporte de Envíos", "Logística · Registro y seguimiento de envíos");
+    await addCorporatePdfHeader(doc, "Servicios de Transporte", "Logística · Solicitudes de transporte registradas");
 
     autoTable(doc, {
       startY: 44,
@@ -1476,7 +1445,7 @@ export function Logistica() {
       margin: { left: 12, right: 12 },
     });
 
-    doc.save(`Reporte_Envios_${Date.now()}.pdf`);
+    doc.save(`Servicios_Transporte_${Date.now()}.pdf`);
   };
 
   const exportViajesPDF = async () => {
@@ -1496,29 +1465,6 @@ export function Logistica() {
     doc.save(`Reporte_Viajes_${Date.now()}.pdf`);
   };
 
-  const exportDepositosPDF = async () => {
-    const doc = new jsPDF();
-    await addCorporatePdfHeader(doc, "Reporte de Depósitos", "Logística · Gestión de depósitos y capacidad");
-
-    autoTable(doc, {
-      startY: 44,
-      head: [["Código", "Nombre", "Ubicación", "Capacidad", "Tipo", "Estado"]],
-      body: sortedDepositos.map((d) => [
-        d.codigo,
-        d.nombre_deposito || d.nombre,
-        d.ubicacion,
-        `${d.capacidad} ${d.unidad_medida || ""}`,
-        d.tipo,
-        d.estado,
-      ]),
-      headStyles: { fillColor: [12, 45, 107], textColor: [255, 255, 255] },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
-      styles: { fontSize: 8, cellPadding: 2.5 },
-      margin: { left: 12, right: 12 },
-    });
-
-    doc.save(`Reporte_Depositos_${Date.now()}.pdf`);
-  };
 
   const exportExcel = (rows: AnyRow[], sheetName: string, fileName: string) => {
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -1532,29 +1478,48 @@ export function Logistica() {
   // hacia la sección seleccionada y conserva los filtros/datos actuales.
   const scrollToLogisticaSection = (id: string) => {
     const element = document.getElementById(id);
-    element?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!element) return;
+
+    // Dejamos espacio para:
+    // - header principal del sistema
+    // - barra rápida "Ir a"
+    // Así los títulos no quedan escondidos/cortados al navegar.
+    const offset = 166;
+    const top =
+      element.getBoundingClientRect().top +
+      window.scrollY -
+      offset;
+
+    window.scrollTo({
+      top: Math.max(0, top),
+      behavior: "smooth",
+    });
   };
 
-  const goToViajes = () => scrollToLogisticaSection("logistica-viajes");
+  const goToViajes = () =>
+    scrollToLogisticaSection("logistica-viajes");
 
   const goToEnvios = () => {
     setActiveTab("envios");
-    window.setTimeout(() => scrollToLogisticaSection("logistica-registros"), 60);
+    window.setTimeout(
+      () => scrollToLogisticaSection("logistica-registros"),
+      80
+    );
   };
 
-  const goToDepositos = () => {
-    setActiveTab("depositos");
-    window.setTimeout(() => scrollToLogisticaSection("logistica-registros"), 60);
+  const goToTop = () => {
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   };
-
-  const goToTop = () => scrollToLogisticaSection("logistica-top");
 
   return (
-    <div id="logistica-top" className="space-y-5 pb-12 w-full max-w-full overflow-hidden px-3 sm:px-4 scroll-mt-24">
+    <div id="logistica-top" className="space-y-5 pb-12 w-full max-w-full overflow-hidden px-3 sm:px-4 scroll-mt-[166px]">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-[#0C2D6B]">Logística</h1>
-          <p className="text-gray-500 mt-1">Gestión de envíos, rutas, depósitos y monitoreo operativo</p>
+          <p className="text-gray-500 mt-1">Gestión de servicios de transporte, viajes, rutas y monitoreo operativo</p>
         </div>
 
         <div className="flex gap-2">
@@ -1590,84 +1555,144 @@ export function Logistica() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {kpis.map((kpi) => (
           <KpiCard key={kpi.title} {...kpi} />
         ))}
       </div>
 
-      {/* Accesos rápidos dentro del mismo módulo */}
-      <div className="sticky top-16 z-30 rounded-2xl border border-gray-200 bg-white/95 backdrop-blur px-3 py-2.5 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-gray-400">Ir a:</span>
-          <button
-            type="button"
-            onClick={goToViajes}
-            className="h-9 px-3 rounded-xl border border-blue-100 bg-blue-50 text-[#0C2D6B] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-100 transition-colors"
-          >
-            <Truck className="w-4 h-4" /> Viajes
-          </button>
-          <button
-            type="button"
-            onClick={goToEnvios}
-            className={`h-9 px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
-              activeTab === "envios"
-                ? "border-orange-200 bg-orange-50 text-[#C85100]"
-                : "border-gray-200 bg-white text-[#0C2D6B] hover:bg-blue-50"
-            }`}
-          >
-            <Package className="w-4 h-4" /> Envíos
-          </button>
-          <button
-            type="button"
-            onClick={goToDepositos}
-            className={`h-9 px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
-              activeTab === "depositos"
-                ? "border-orange-200 bg-orange-50 text-[#C85100]"
-                : "border-gray-200 bg-white text-[#0C2D6B] hover:bg-blue-50"
-            }`}
-          >
-            <Warehouse className="w-4 h-4" /> Depósitos / Bodega
-          </button>
-          <button
-            type="button"
-            onClick={goToTop}
-            className="h-9 px-3 rounded-xl border border-gray-200 bg-white text-gray-600 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-gray-50 transition-colors ml-0 sm:ml-auto"
-          >
-            <ArrowUp className="w-4 h-4" /> Arriba
-          </button>
+      {/* Navegación rápida de ancho completo.
+          Se deja larga para que sea fácil de ver y no choque con el header. */}
+      <div className="sticky top-[92px] z-30 w-full px-1">
+        <div className="w-full rounded-2xl border border-gray-200/90 bg-white/95 px-4 py-2.5 shadow-[0_6px_20px_rgba(15,23,42,0.10)] backdrop-blur-md">
+          <div className="flex min-h-10 w-full flex-wrap items-center gap-2">
+            <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+              Ir a:
+            </span>
+
+            <button
+              type="button"
+              onClick={goToViajes}
+              className="h-9 px-3 rounded-xl border border-blue-100 bg-blue-50 text-[#0C2D6B] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-100 transition-colors"
+            >
+              <Truck className="w-4 h-4" /> Viajes
+            </button>
+
+            <button
+              type="button"
+              onClick={goToEnvios}
+              className={`h-9 px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
+                activeTab === "envios"
+                  ? "border-orange-200 bg-orange-50 text-[#C85100]"
+                  : "border-gray-200 bg-white text-[#0C2D6B] hover:bg-blue-50"
+              }`}
+            >
+              <Package className="w-4 h-4" /> Servicios
+            </button>
+
+            <button
+              type="button"
+              onClick={goToTop}
+              className="ml-0 sm:ml-auto h-9 px-3 rounded-xl border border-gray-200 bg-white text-gray-600 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-gray-50 transition-colors"
+            >
+              <ArrowUp className="w-4 h-4" /> Arriba
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <section className="xl:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xl sm:text-2xl font-bold text-[#0C2D6B] flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-[#FF6A00]" />
-              Rastreo en Tiempo Real
-            </h2>
-            <div className="flex gap-3 text-xs font-semibold text-gray-500">
-              <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-full bg-green-500" /> En tiempo</span>
-              <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-full bg-orange-500" /> Retraso</span>
-              <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-full bg-red-500" /> Crítico</span>
+            <div>
+              <h2 className="text-xl sm:text-2xl font-bold text-[#0C2D6B] flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-[#FF6A00]" />
+                Rastreo en Tiempo Real
+              </h2>
+              <p className="mt-1 text-[11px] text-gray-400">
+                Identificá cada viaje por su código sin abrir el detalle.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className="inline-flex h-7 items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 text-[10px] font-extrabold text-[#0C2D6B]">
+                {
+                  viajes.filter(
+                    (v) => v.estado !== "Entregado" && v.estado !== "Pendiente"
+                  ).length
+                }{" "}
+                activos
+              </span>
+
+              <div className="flex gap-3 text-xs font-semibold text-gray-500">
+                <span className="inline-flex items-center gap-1">
+                  <i className="w-2.5 h-2.5 rounded-full bg-green-500" /> En tiempo
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <i className="w-2.5 h-2.5 rounded-full bg-orange-500" /> Retraso
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <i className="w-2.5 h-2.5 rounded-full bg-red-500" /> Crítico
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="relative h-[420px] bg-[#eef2f7] overflow-hidden">
-            <svg className="absolute inset-0 w-full h-full opacity-40">
-              <path d="M 50 90 Q 220 35 390 160 T 720 120" stroke="#94a3b8" strokeWidth="2" fill="none" strokeDasharray="6,6" />
-              <path d="M 90 300 Q 310 390 610 260" stroke="#94a3b8" strokeWidth="2" fill="none" strokeDasharray="6,6" />
-              <path d="M 140 210 Q 360 110 720 310" stroke="#0C2D6B" strokeWidth="2" fill="none" opacity=".35" />
+          <div className="relative h-[420px] overflow-hidden bg-gradient-to-br from-[#f5f8fc] via-[#eef3f8] to-[#e8eef6]">
+            <div className="pointer-events-none absolute inset-0 opacity-[0.22]"
+              style={{
+                backgroundImage:
+                  "radial-gradient(circle at 1px 1px, #94a3b8 1px, transparent 0)",
+                backgroundSize: "24px 24px",
+              }}
+            />
+
+            <svg
+              className="absolute inset-0 h-full w-full opacity-45"
+              viewBox="0 0 1000 420"
+              preserveAspectRatio="none"
+            >
+              <path
+                d="M 60 95 Q 230 25 410 155 T 900 125"
+                stroke="#94a3b8"
+                strokeWidth="2"
+                fill="none"
+                strokeDasharray="7,7"
+              />
+              <path
+                d="M 95 310 Q 330 405 760 245"
+                stroke="#94a3b8"
+                strokeWidth="2"
+                fill="none"
+                strokeDasharray="7,7"
+              />
+              <path
+                d="M 170 215 Q 390 115 880 325"
+                stroke="#0C2D6B"
+                strokeWidth="2"
+                fill="none"
+                opacity=".32"
+              />
             </svg>
 
             {viajes
               .filter((v) => v.estado !== "Entregado" && v.estado !== "Pendiente")
               .slice(0, 8)
               .map((viaje, index) => {
-                const pos = {
-                  top: 90 + (index % 4) * 70,
-                  left: 90 + (index % 6) * 130,
-                };
+                const positions = [
+                  { top: 24, left: 12 },
+                  { top: 45, left: 28 },
+                  { top: 67, left: 12 },
+                  { top: 67, left: 44 },
+                  { top: 24, left: 74 },
+                  { top: 45, left: 88 },
+                  { top: 83, left: 60 },
+                  { top: 83, left: 28 },
+                ];
+
+                const pos = positions[index % positions.length];
+                const alignLeft = pos.left >= 74;
+                const popupAbove = pos.top >= 63;
 
                 const marker =
                   viaje.estado === "Crítico"
@@ -1676,24 +1701,90 @@ export function Logistica() {
                     ? "bg-orange-500"
                     : "bg-green-500";
 
+                const markerRing =
+                  viaje.estado === "Crítico"
+                    ? "ring-red-100"
+                    : viaje.estado === "Retraso"
+                    ? "ring-orange-100"
+                    : "ring-green-100";
+
                 return (
                   <button
                     type="button"
                     key={viaje.id}
                     onClick={() => openViewViaje(viaje)}
-                    className="absolute group"
-                    style={{ top: pos.top, left: pos.left }}
+                    onMouseEnter={() => setHoveredViajeId(viaje.id)}
+                    onMouseLeave={() => setHoveredViajeId(null)}
+                    onFocus={() => setHoveredViajeId(viaje.id)}
+                    onBlur={() => setHoveredViajeId(null)}
+                    className="absolute z-10 group hover:z-[80] focus:z-[80] focus-visible:z-[80]"
+                    style={{
+                      top: `${pos.top}%`,
+                      left: `${pos.left}%`,
+                      transform: "translate(-50%, -50%)",
+                    }}
+                    title={`Abrir ${viaje.codigo}`}
                   >
-                    <span className={`block w-5 h-5 rounded-full border-2 border-white shadow-lg ${marker} ${viaje.estado === "En tránsito" ? "animate-pulse" : ""}`} />
-                    <span className="absolute top-8 left-1/2 -translate-x-1/2 w-52 rounded-xl bg-white p-3 shadow-xl text-left opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      <b className="block text-xs text-[#0C2D6B]">{viaje.codigo} · {viaje.unidad}</b>
-                      <span className="block text-[11px] text-gray-500 mt-1 truncate">{viaje.piloto}</span>
-                      <span className="block text-[11px] text-gray-500 truncate">{viaje.cliente}</span>
-                      <span className="block h-1.5 bg-gray-100 rounded-full mt-2 overflow-hidden">
-                        <span className={`block h-full ${marker}`} style={{ width: `${viaje.progreso || 0}%` }} />
+                    <span className="relative flex items-center">
+                      <span
+                        className={`block h-5 w-5 rounded-full border-2 border-white shadow-md ring-4 ${markerRing} ${marker} ${
+                          viaje.estado === "En tránsito" ? "animate-pulse" : ""
+                        }`}
+                      />
+
+                      <span
+                        className={`absolute top-1/2 -translate-y-1/2 max-w-[116px] truncate whitespace-nowrap rounded-lg border border-gray-200 bg-white/95 px-2 py-1 text-[10px] font-extrabold text-[#0C2D6B] shadow-md backdrop-blur-sm transition-opacity duration-150 ${
+                          alignLeft ? "right-7" : "left-7"
+                        } ${
+                          hoveredViajeId !== null && hoveredViajeId !== viaje.id
+                            ? "opacity-0"
+                            : "opacity-100"
+                        }`}
+                      >
+                        {viaje.codigo}
                       </span>
-                      <span className="block text-[10px] text-right mt-1 font-bold text-gray-600">
-                        {viaje.estado} · {viaje.progreso || 0}%
+                    </span>
+
+                    <span
+                      className={`absolute z-[90] w-56 rounded-2xl border border-gray-100 bg-white p-3.5 text-left shadow-2xl ring-8 ring-white/80 opacity-0 scale-[0.98] transition-all duration-150 pointer-events-none group-hover:opacity-100 group-hover:scale-100 ${
+                        alignLeft ? "right-0" : "left-0"
+                      } ${popupAbove ? "bottom-9" : "top-9"}`}
+                    >
+                      <span className="mb-2 flex items-start justify-between gap-2">
+                        <span className="min-w-0">
+                          <b className="block truncate text-xs text-[#0C2D6B]">
+                            {viaje.codigo}
+                          </b>
+                          <span className="mt-0.5 block truncate text-[10px] font-semibold text-gray-500">
+                            {viaje.unidad}
+                          </span>
+                        </span>
+
+                        <span
+                          className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${marker}`}
+                        />
+                      </span>
+
+                      <span className="block truncate text-[11px] font-semibold text-gray-700">
+                        {viaje.piloto}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10px] text-gray-500">
+                        {viaje.cliente}
+                      </span>
+                      <span className="mt-1 block truncate text-[10px] text-gray-400">
+                        {viaje.ruta}
+                      </span>
+
+                      <span className="mt-2.5 block h-1.5 overflow-hidden rounded-full bg-gray-100">
+                        <span
+                          className={`block h-full rounded-full ${marker}`}
+                          style={{ width: `${Math.min(100, Number(viaje.progreso || 0))}%` }}
+                        />
+                      </span>
+
+                      <span className="mt-1.5 flex items-center justify-between text-[10px] font-bold">
+                        <span className="text-gray-600">{viaje.estado}</span>
+                        <span className="text-[#0C2D6B]">{viaje.progreso || 0}%</span>
                       </span>
                     </span>
                   </button>
@@ -1743,7 +1834,7 @@ export function Logistica() {
         </section>
       </div>
 
-      <section id="logistica-viajes" className="scroll-mt-28">
+      <section id="logistica-viajes" className="scroll-mt-[166px]">
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
           <div className="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-3 mb-3">
             <h2 className="text-2xl font-bold text-[#0C2D6B] flex items-center gap-2">
@@ -1831,10 +1922,7 @@ export function Logistica() {
           <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Accesos:</span>
             <button type="button" onClick={goToEnvios} className="h-8 px-3 rounded-lg bg-blue-50 text-[#0C2D6B] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-100">
-              <Package className="w-3.5 h-3.5" /> Ir a Envíos
-            </button>
-            <button type="button" onClick={goToDepositos} className="h-8 px-3 rounded-lg bg-orange-50 text-[#C85100] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-orange-100">
-              <Warehouse className="w-3.5 h-3.5" /> Ir a Depósitos / Bodega
+              <Package className="w-3.5 h-3.5" /> Ir a Servicios
             </button>
             <button type="button" onClick={goToTop} className="h-8 px-3 rounded-lg bg-gray-50 text-gray-600 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-gray-100">
               <ArrowUp className="w-3.5 h-3.5" /> Volver arriba
@@ -1913,27 +2001,25 @@ export function Logistica() {
         />
       </section>
 
-      <section id="logistica-registros" className="scroll-mt-28">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-gray-200 mb-4">
+      <section id="logistica-registros" className="scroll-mt-[166px]">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 border-b border-gray-200 mb-4 overflow-visible">
           <div className="flex flex-wrap gap-6">
-          <button
-            type="button"
-            onClick={() => setActiveTab("envios")}
-            className={`px-2 pb-3 font-bold text-base sm:text-lg border-b-4 ${
-              activeTab === "envios" ? "border-[#FF6A00] text-[#0C2D6B]" : "border-transparent text-gray-500"
-            }`}
-          >
-            Registro de Envíos
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("depositos")}
-            className={`px-2 pb-3 font-bold text-base sm:text-lg border-b-4 ${
-              activeTab === "depositos" ? "border-[#FF6A00] text-[#0C2D6B]" : "border-transparent text-gray-500"
-            }`}
-          >
-            Gestión de Depósitos
-          </button>
+          <div className="pb-3">
+            <button
+              type="button"
+              onClick={() => setActiveTab("envios")}
+              className={`px-2 pb-2 font-bold text-base sm:text-lg border-b-4 ${
+                activeTab === "envios"
+                  ? "border-[#FF6A00] text-[#0C2D6B]"
+                  : "border-transparent text-gray-500"
+              }`}
+            >
+              Servicios de Transporte
+            </button>
+            <p className="mt-2 px-2 text-xs text-gray-500">
+              Solicitudes del cliente: origen, destino y fecha. Después se asignan a un viaje con unidad y piloto.
+            </p>
+          </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 pb-2">
@@ -1947,82 +2033,98 @@ export function Logistica() {
         </div>
 
         {activeTab === "envios" && (
-          <div id="logistica-envios" className="scroll-mt-28">
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
-              <div className="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_210px_230px_auto] gap-3 2xl:flex-1">
-                  <div className="relative">
-                    <Search className="w-5 h-5 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
-                    <input
-                      value={searchEnvios}
-                      onChange={(e) => setSearchEnvios(e.target.value)}
-                      placeholder="Código, cliente, origen..."
-                      className="w-full h-11 rounded-xl bg-white border border-gray-200 pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
-                    />
-                  </div>
-
-                  <div className="relative">
-                    <Filter className="w-5 h-5 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
-                    <select
-                      value={filterEstadoEnvio}
-                      onChange={(e) => setFilterEstadoEnvio(e.target.value)}
-                      className="w-full h-11 rounded-xl bg-white border border-gray-200 pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
-                    >
-                      {estadosFiltro.map((estado) => (
-                        <option key={estado} value={estado}>{estado === "Todos" ? "Todos los estados" : estado}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="relative">
-                    <Filter className="w-5 h-5 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
-                    <select
-                      value={filterClienteEnvio}
-                      onChange={(e) => setFilterClienteEnvio(e.target.value)}
-                      className="w-full h-11 rounded-xl bg-white border border-gray-200 pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
-                    >
-                      {clientesFiltro.map((cliente) => (
-                        <option key={cliente} value={cliente}>{cliente === "Todos" ? "Todos los clientes" : cliente}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={resetEnvioFilters}
-                    className="h-11 px-4 rounded-xl border border-orange-200 bg-white text-sm font-bold text-[#FF6A00] inline-flex items-center justify-center gap-1.5 shadow-sm hover:border-[#FF6A00] hover:bg-orange-50 whitespace-nowrap"
-                  >
-                    <X className="w-4 h-4" /> Limpiar
-                  </button>
+          <div id="logistica-envios" className="scroll-mt-[166px]">
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4 overflow-hidden">
+              <div className="flex min-w-0 flex-wrap xl:flex-nowrap items-center gap-2.5">
+                {/* Búsqueda: flexible para absorber el espacio disponible */}
+                <div className="relative min-w-[220px] flex-[1_1_260px]">
+                  <Search className="w-5 h-5 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
+                  <input
+                    value={searchEnvios}
+                    onChange={(e) => setSearchEnvios(e.target.value)}
+                    placeholder="Código, cliente, origen..."
+                    className="w-full h-11 rounded-xl bg-white border border-gray-200 pl-12 pr-3 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
+                  />
                 </div>
 
-                <div className="flex gap-2 2xl:shrink-0">
-                  <button onClick={openCreateEnvio} className="h-12 px-6 rounded-xl bg-[#0C2D6B] text-white font-bold text-base inline-flex items-center gap-2.5 whitespace-nowrap shadow-md hover:bg-[#143C8C] transition-colors">
-                    <Plus className="w-5 h-5" /> Nuevo Envío
-                  </button>
-                  <button onClick={exportEnviosPDF} className="h-11 px-4 rounded-xl bg-red-500 text-white font-bold text-sm inline-flex items-center gap-2 whitespace-nowrap">
-                    <FileText className="w-4 h-4" /> PDF
-                  </button>
-                  <button
-                    onClick={() =>
-                      exportExcel(
-                        sortedEnvios.map((e) => ({
-                          Código: e.codigo,
-                          Cliente: e.cliente,
-                          Origen: e.origen,
-                          Destino: e.destino,
-                          Fecha: formatDate(e.fecha),
-                          Estado: e.estado,
-                        })),
-                        "Envíos",
-                        "Reporte_Envios"
-                      )
-                    }
-                    className="h-11 px-4 rounded-xl bg-[#22C55E] text-white font-bold text-sm inline-flex items-center gap-2 whitespace-nowrap"
+                <div className="relative w-[180px] shrink-0">
+                  <Filter className="w-4.5 h-4.5 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <select
+                    value={filterEstadoEnvio}
+                    onChange={(e) => setFilterEstadoEnvio(e.target.value)}
+                    className="w-full h-11 rounded-xl bg-white border border-gray-200 pl-10 pr-8 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
                   >
-                    <Download className="w-4 h-4" /> Excel
-                  </button>
+                    {estadosFiltro.map((estado) => (
+                      <option key={estado} value={estado}>
+                        {estado === "Todos" ? "Todos los estados" : estado}
+                      </option>
+                    ))}
+                  </select>
                 </div>
+
+                <div className="relative w-[195px] shrink-0">
+                  <Filter className="w-4.5 h-4.5 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <select
+                    value={filterClienteEnvio}
+                    onChange={(e) => setFilterClienteEnvio(e.target.value)}
+                    className="w-full h-11 rounded-xl bg-white border border-gray-200 pl-10 pr-8 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
+                  >
+                    {clientesFiltro.map((cliente) => (
+                      <option key={cliente} value={cliente}>
+                        {cliente === "Todos" ? "Todos los clientes" : cliente}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={resetEnvioFilters}
+                  className="h-11 shrink-0 px-3.5 rounded-xl border border-orange-200 bg-white text-sm font-bold text-[#FF6A00] inline-flex items-center justify-center gap-1.5 shadow-sm hover:border-[#FF6A00] hover:bg-orange-50 whitespace-nowrap"
+                >
+                  <X className="w-4 h-4" /> Limpiar
+                </button>
+
+                <div className="hidden xl:block flex-1 min-w-0" />
+
+                <button
+                  type="button"
+                  onClick={openCreateEnvio}
+                  className="h-11 shrink-0 px-4 rounded-xl bg-[#0C2D6B] text-white font-bold text-sm inline-flex items-center gap-2 whitespace-nowrap shadow-md hover:bg-[#143C8C] transition-colors"
+                >
+                  <Plus className="w-4 h-4" /> Nuevo Servicio
+                </button>
+
+                <button
+                  type="button"
+                  onClick={exportEnviosPDF}
+                  className="h-11 shrink-0 px-3.5 rounded-xl bg-red-500 text-white font-bold text-sm inline-flex items-center gap-1.5 whitespace-nowrap shadow-sm hover:bg-red-600"
+                  title="Exportar servicios a PDF"
+                >
+                  <FileText className="w-4 h-4" /> PDF
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportExcel(
+                      sortedEnvios.map((e) => ({
+                        Código: e.codigo,
+                        Cliente: e.cliente,
+                        Origen: e.origen,
+                        Destino: e.destino,
+                        Fecha: formatDate(e.fecha),
+                        Estado: e.estado,
+                      })),
+                      "Servicios",
+                      "Servicios_Transporte"
+                    )
+                  }
+                  className="h-11 shrink-0 px-3.5 rounded-xl bg-[#22C55E] text-white font-bold text-sm inline-flex items-center gap-1.5 whitespace-nowrap shadow-sm hover:bg-[#16A34A]"
+                  title="Exportar servicios a Excel"
+                >
+                  <Download className="w-4 h-4" /> Excel
+                </button>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 pt-3">
@@ -2033,7 +2135,7 @@ export function Logistica() {
                 <SortChip field="destino" label="Destino" activeField={sortEnvioField} direction={sortEnvioDirection} setField={setSortEnvioField} setDirection={setSortEnvioDirection} />
                 <SortChip field="fecha" label="Fecha" activeField={sortEnvioField} direction={sortEnvioDirection} setField={setSortEnvioField} setDirection={setSortEnvioDirection} />
                 <span className="ml-0 lg:ml-auto text-sm font-bold text-gray-400">
-                  {sortedEnvios.length} de {envios.length} registros visibles
+                  {sortedEnvios.length} de {envios.length} servicios visibles
                 </span>
               </div>
             </div>
@@ -2043,33 +2145,68 @@ export function Logistica() {
                 <article key={envio.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                   <div className="bg-[#0C2D6B] p-4 text-white">
                     <div className="flex items-start justify-between gap-3">
-                      <span className="font-mono font-bold text-sm">{envio.codigo}</span>
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${getEstadoColor(envio.estado)}`}>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono font-bold text-sm">{envio.codigo}</span>
+                          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-blue-100">
+                            Servicio solicitado
+                          </span>
+                        </div>
+                        <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-blue-200">
+                          Cliente
+                        </p>
+                        <h3 className="mt-0.5 font-bold text-base leading-5 line-clamp-2">
+                          {envio.cliente}
+                        </h3>
+                      </div>
+
+                      <span
+                        className={`shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold border ${getEstadoColor(
+                          envio.estado
+                        )}`}
+                      >
                         {envio.estado}
                       </span>
                     </div>
-                    <h3 className="font-bold text-base mt-2 leading-5 line-clamp-2">{envio.cliente}</h3>
                   </div>
 
                   <div className="p-4 space-y-3">
-                    <div className="flex gap-2">
-                      <MapPin className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs text-gray-500">Ruta</p>
-                        <p className="text-sm font-semibold text-gray-800 truncate">{envio.origen}</p>
-                        <div className="flex items-center gap-2 my-1">
-                          <span className="h-px flex-1 bg-gray-200" />
-                          <Navigation className="w-3 h-3 text-gray-400" />
-                          <span className="h-px flex-1 bg-gray-200" />
+                    <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                      <div className="grid grid-cols-[18px_1fr] gap-x-2 gap-y-2">
+                        <MapPin className="mt-0.5 h-4 w-4 text-[#FF6A00]" />
+
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                            Origen
+                          </p>
+                          <p className="truncate text-sm font-bold text-gray-800">
+                            {envio.origen}
+                          </p>
                         </div>
-                        <p className="text-sm font-semibold text-gray-800 truncate">{envio.destino}</p>
+
+                        <Navigation className="mt-0.5 h-4 w-4 text-[#0C2D6B]" />
+
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                            Destino
+                          </p>
+                          <p className="truncate text-sm font-bold text-gray-800">
+                            {envio.destino}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 border-t border-dashed border-gray-200 pt-2">
+                        <p className="text-[10px] text-gray-400">
+                          La ruta se genera automáticamente con este origen y destino.
+                        </p>
                       </div>
                     </div>
 
                     <div className="flex gap-2">
                       <Building2 className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
                       <div className="min-w-0">
-                        <p className="text-xs text-gray-500">Dirección</p>
+                        <p className="text-xs text-gray-500">Dirección del servicio</p>
                         <p className="text-sm text-gray-800 line-clamp-2">{envio.direccion || "-"}</p>
                       </div>
                     </div>
@@ -2077,15 +2214,19 @@ export function Logistica() {
                     <div className="flex gap-2">
                       <Clock className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
                       <div>
-                        <p className="text-xs text-gray-500">Fecha</p>
+                        <p className="text-xs text-gray-500">Fecha solicitada</p>
                         <p className="text-sm font-semibold">{formatDate(envio.fecha)}</p>
                       </div>
                     </div>
 
                     {envio.observaciones && (
-                      <div className="rounded-xl bg-gray-50 p-3">
-                        <p className="text-xs text-gray-500">Observaciones</p>
-                        <p className="text-sm text-gray-700 line-clamp-2">{envio.observaciones}</p>
+                      <div className="rounded-xl bg-blue-50/70 p-3">
+                        <p className="text-xs font-semibold text-[#0C2D6B]">
+                          Observaciones del servicio
+                        </p>
+                        <p className="mt-1 text-sm text-gray-700 line-clamp-2">
+                          {envio.observaciones}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -2102,7 +2243,7 @@ export function Logistica() {
             {!sortedEnvios.length && (
               <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center text-gray-500">
                 <Package className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-                No se encontraron envíos.
+                No se encontraron servicios de transporte.
               </div>
             )}
 
@@ -2111,154 +2252,13 @@ export function Logistica() {
               totalPages={envioTotalPages}
               rowsPerPage={envioRowsPerPage}
               totalItems={sortedEnvios.length}
-              itemLabel="envíos filtrados"
+              itemLabel="servicios filtrados"
               onPageChange={setEnvioPage}
               onRowsPerPageChange={setEnvioRowsPerPage}
             />
           </div>
         )}
 
-        {activeTab === "depositos" && (
-          <div id="logistica-depositos" className="scroll-mt-28">
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
-              <div className="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_190px_190px_auto] gap-3 2xl:flex-1">
-                  <div className="relative">
-                    <Search className="w-5 h-5 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
-                    <input
-                      value={searchDepositos}
-                      onChange={(event) => setSearchDepositos(event.target.value)}
-                      placeholder="Código, depósito, ubicación..."
-                      className="w-full h-11 rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
-                    />
-                  </div>
-
-                  <select
-                    value={filterEstadoDeposito}
-                    onChange={(event) => setFilterEstadoDeposito(event.target.value)}
-                    className="w-full h-11 rounded-xl border border-gray-200 bg-white px-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
-                  >
-                    {estadosDepositoFiltro.map((estado) => (
-                      <option key={estado} value={estado}>{estado === "Todos" ? "Todos los estados" : estado}</option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={filterTipoDeposito}
-                    onChange={(event) => setFilterTipoDeposito(event.target.value)}
-                    className="w-full h-11 rounded-xl border border-gray-200 bg-white px-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
-                  >
-                    {tiposDepositoFiltro.map((tipo) => (
-                      <option key={tipo} value={tipo}>{tipo === "Todos" ? "Todos los tipos" : tipo}</option>
-                    ))}
-                  </select>
-
-                  <button
-                    type="button"
-                    onClick={resetDepositoFilters}
-                    className="h-11 px-4 rounded-xl border border-orange-200 bg-white text-sm font-bold text-[#FF6A00] inline-flex items-center justify-center gap-1.5 shadow-sm hover:border-[#FF6A00] hover:bg-orange-50 whitespace-nowrap"
-                  >
-                    <X className="w-4 h-4" /> Limpiar
-                  </button>
-                </div>
-
-                <div className="flex gap-2 2xl:shrink-0">
-                  <button onClick={openCreateDeposito} className="h-12 px-6 rounded-xl bg-[#0C2D6B] text-white font-bold text-base inline-flex items-center gap-2.5 whitespace-nowrap shadow-md hover:bg-[#143C8C] transition-colors">
-                    <Plus className="w-5 h-5" /> Nuevo Depósito
-                  </button>
-                  <button onClick={exportDepositosPDF} className="h-11 px-4 rounded-xl bg-red-500 text-white font-bold text-sm inline-flex items-center gap-2 whitespace-nowrap">
-                    <FileText className="w-4 h-4" /> PDF
-                  </button>
-                  <button
-                    onClick={() =>
-                      exportExcel(
-                        sortedDepositos.map((d) => ({
-                          Código: d.codigo,
-                          Nombre: d.nombre_deposito || d.nombre,
-                          Ubicación: d.ubicacion,
-                          Capacidad: `${d.capacidad} ${d.unidad_medida || ""}`,
-                          Tipo: d.tipo,
-                          Estado: d.estado,
-                        })),
-                        "Depósitos",
-                        "Reporte_Depositos"
-                      )
-                    }
-                    className="h-11 px-4 rounded-xl bg-[#22C55E] text-white font-bold text-sm inline-flex items-center gap-2 whitespace-nowrap"
-                  >
-                    <Download className="w-4 h-4" /> Excel
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-3 text-sm font-bold text-gray-400">
-                {sortedDepositos.length} de {depositos.length} registros visibles
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px] text-sm text-left">
-                  <thead className="bg-gray-50 text-[#0C2D6B]">
-                    <tr>
-                      <SortableTh field="codigo" activeField={sortDepositoField} direction={sortDepositoDirection} setField={setSortDepositoField} setDirection={setSortDepositoDirection} className="px-4 py-3">Código</SortableTh>
-                      <SortableTh field="nombre" activeField={sortDepositoField} direction={sortDepositoDirection} setField={setSortDepositoField} setDirection={setSortDepositoDirection} className="px-4 py-3">Nombre</SortableTh>
-                      <SortableTh field="ubicacion" activeField={sortDepositoField} direction={sortDepositoDirection} setField={setSortDepositoField} setDirection={setSortDepositoDirection} className="px-4 py-3">Ubicación</SortableTh>
-                      <SortableTh field="capacidad" activeField={sortDepositoField} direction={sortDepositoDirection} setField={setSortDepositoField} setDirection={setSortDepositoDirection} className="px-4 py-3">Capacidad</SortableTh>
-                      <SortableTh field="tipo" activeField={sortDepositoField} direction={sortDepositoDirection} setField={setSortDepositoField} setDirection={setSortDepositoDirection} className="px-4 py-3">Tipo</SortableTh>
-                      <SortableTh field="estado" activeField={sortDepositoField} direction={sortDepositoDirection} setField={setSortDepositoField} setDirection={setSortDepositoDirection} className="px-4 py-3">Estado</SortableTh>
-                      <th className="px-4 py-3 text-center">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {paginatedDepositos.map((deposito) => (
-                      <tr key={deposito.id} className="hover:bg-gray-50/60">
-                        <td className="px-4 py-3 font-mono font-bold text-[#0C2D6B]">{deposito.codigo}</td>
-                        <td className="px-4 py-3 font-bold text-gray-800">{deposito.nombre_deposito || deposito.nombre}</td>
-                        <td className="px-4 py-3 text-gray-600">{deposito.ubicacion}</td>
-                        <td className="px-4 py-3 text-gray-600">{deposito.capacidad} {deposito.unidad_medida || ""}</td>
-                        <td className="px-4 py-3">
-                          <span className="px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-[11px] font-bold">
-                            {deposito.tipo}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`px-3 py-1 rounded-full text-[11px] font-bold border ${getEstadoColor(deposito.estado)}`}>
-                            {deposito.estado}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-center gap-2">
-                            <ActionButton title="Ver" icon={Eye} tone="blue" onClick={() => openViewDeposito(deposito)} />
-                            <ActionButton title="Editar" icon={Edit2} tone="orange" onClick={() => openEditDeposito(deposito)} />
-                            <ActionButton title="Inactivar" icon={Trash2} tone="red" onClick={() => deleteDeposito(deposito)} />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {!sortedDepositos.length && (
-                <div className="p-10 text-center text-gray-500">
-                  <Warehouse className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-                  No se encontraron depósitos con los filtros seleccionados.
-                </div>
-              )}
-            </div>
-
-            <PaginationControls
-              page={depositoPage}
-              totalPages={depositoTotalPages}
-              rowsPerPage={depositoRowsPerPage}
-              totalItems={sortedDepositos.length}
-              itemLabel="depósitos filtrados"
-              onPageChange={setDepositoPage}
-              onRowsPerPageChange={setDepositoRowsPerPage}
-            />
-          </div>
-        )}
       </section>
 
       {/* Acceso flotante para regresar al inicio del módulo desde listados largos */}
@@ -2284,17 +2284,24 @@ export function Logistica() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
                 {viajeErrors.general && <div className="md:col-span-2 rounded-xl bg-red-50 text-red-700 p-3 text-sm font-semibold">{viajeErrors.general}</div>}
 
-                <Field label="Cliente *" error={viajeErrors.cliente_id}>
+                <Field label="Cliente *" error={viajeErrors.cliente_id} actionLabel="Nuevo cliente" onAction={() => openQuick("cliente", "viaje_cliente")}>
                   <SearchableSelect
                     value={viajeForm.cliente_id}
                     options={clientes}
                     placeholder="Buscar cliente..."
                     getLabel={(item) => `${item.codigo_cliente} · ${item.nombre_empresa}`}
-                    onSelect={(item) => setViajeForm({ ...viajeForm, cliente_id: item.id, envio_id: "" })}
+                    onSelect={(item) =>
+                      setViajeForm({
+                        ...viajeForm,
+                        cliente_id: item.id,
+                        envio_id: "",
+                        ruta_id: "",
+                      })
+                    }
                   />
                 </Field>
 
-                <Field label="Envío relacionado *" error={viajeErrors.envio_id}>
+                <Field label="Servicio relacionado *" error={viajeErrors.envio_id} actionLabel="Nuevo servicio" onAction={openCreateEnvioFromViaje}>
                   {(() => {
                     const enviosDelCliente = envios.filter((envio) =>
                       !viajeForm.cliente_id || Number(envio.cliente_id) === Number(viajeForm.cliente_id)
@@ -2312,11 +2319,11 @@ export function Logistica() {
 
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-bold text-[#C85100]">
-                                Este cliente aún no tiene envíos registrados
+                                Este cliente aún no tiene servicios registrados
                               </p>
                               <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                                Para crear un viaje primero se debe registrar el envío del cliente
-                                {clienteSeleccionado ? ` ${clienteSeleccionado.nombre_empresa}` : ""}. Luego regresá a Nuevo Viaje y seleccioná ese envío.
+                                Para crear un viaje primero se debe registrar el servicio del cliente
+                                {clienteSeleccionado ? ` ${clienteSeleccionado.nombre_empresa}` : ""}. Luego regresá a Nuevo Viaje y seleccioná ese servicio.
                               </p>
 
                               <button
@@ -2325,7 +2332,7 @@ export function Logistica() {
                                 className="mt-3 h-10 px-4 rounded-xl bg-[#0C2D6B] text-white text-sm font-bold inline-flex items-center gap-2"
                               >
                                 <Plus className="w-4 h-4" />
-                                Registrar envío primero
+                                Registrar servicio primero
                               </button>
                             </div>
                           </div>
@@ -2337,16 +2344,26 @@ export function Logistica() {
                       <SearchableSelect
                         value={viajeForm.envio_id}
                         options={enviosDelCliente}
-                        placeholder={viajeForm.cliente_id ? "Buscar envío del cliente..." : "Primero seleccioná un cliente"}
+                        placeholder={viajeForm.cliente_id ? "Buscar servicio del cliente..." : "Primero seleccioná un cliente"}
                         getLabel={(item) => `${item.codigo} · ${item.origen} → ${item.destino}`}
                         getSubLabel={(item) => item.cliente}
                         onSelect={(item) => {
-                          const ruta = rutas.find((r) => Number(r.origen_id) === Number(item.origen_id) && Number(r.destino_id) === Number(item.destino_id));
+                          const rutaCoincidente =
+                            rutas.find(
+                              (ruta) =>
+                                Number(ruta.id) === Number(item.ruta_id)
+                            ) ||
+                            rutas.find(
+                              (ruta) =>
+                                Number(ruta.origen_id) === Number(item.origen_id) &&
+                                Number(ruta.destino_id) === Number(item.destino_id)
+                            );
+
                           setViajeForm({
                             ...viajeForm,
                             envio_id: item.id,
                             cliente_id: item.cliente_id,
-                            ruta_id: ruta?.id || viajeForm.ruta_id,
+                            ruta_id: item.ruta_id || rutaCoincidente?.id || "",
                           });
                         }}
                         error={viajeErrors.envio_id}
@@ -2355,19 +2372,57 @@ export function Logistica() {
                   })()}
                 </Field>
 
-                <Field label="Ruta *" error={viajeErrors.ruta_id}>
-                  <SearchableSelect
-                    value={viajeForm.ruta_id}
-                    options={rutas}
-                    placeholder="Buscar ruta..."
-                    getLabel={(item) => `${item.codigo_ruta} · ${rutaLabel(item)}`}
-                    getSubLabel={(item) => `${item.distancia_km || 0} km`}
-                    onSelect={(item) => setViajeForm({ ...viajeForm, ruta_id: item.id })}
-                    error={viajeErrors.ruta_id}
-                  />
+                <Field label="Ruta del servicio">
+                  {(() => {
+                    const envioSeleccionado = envios.find(
+                      (envio) => Number(envio.id) === Number(viajeForm.envio_id)
+                    );
+
+                    const rutaSeleccionada =
+                      rutas.find(
+                        (ruta) => Number(ruta.id) === Number(viajeForm.ruta_id)
+                      ) ||
+                      rutas.find(
+                        (ruta) =>
+                          Number(ruta.origen_id) === Number(envioSeleccionado?.origen_id) &&
+                          Number(ruta.destino_id) === Number(envioSeleccionado?.destino_id)
+                      );
+
+                    if (!envioSeleccionado) {
+                      return (
+                        <div className="min-h-[54px] rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-400 flex items-center">
+                          Primero seleccioná un servicio relacionado
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="min-h-[54px] rounded-2xl border border-blue-100 bg-blue-50 px-4 py-2.5">
+                        <div className="flex items-start gap-2">
+                          <Navigation className="mt-0.5 h-4 w-4 shrink-0 text-[#0C2D6B]" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-[#0C2D6B]">
+                              {rutaSeleccionada?.codigo_ruta
+                                ? `${rutaSeleccionada.codigo_ruta} · ${rutaLabel(rutaSeleccionada)}`
+                                : `${envioSeleccionado.origen} → ${envioSeleccionado.destino}`}
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-gray-500">
+                              {rutaSeleccionada
+                                ? `Ruta tomada automáticamente del servicio${
+                                    rutaSeleccionada.distancia_km
+                                      ? ` · ${rutaSeleccionada.distancia_km} km`
+                                      : ""
+                                  }.`
+                                : "La ruta todavía no existe; GL365 la creará automáticamente al guardar el viaje."}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </Field>
 
-                <Field label="Unidad *" error={viajeErrors.unidad_id}>
+                <Field label="Unidad *" error={viajeErrors.unidad_id} actionLabel="Nueva unidad" onAction={() => openQuick("unidad", "viaje_unidad")}>
                   <SearchableSelect
                     value={viajeForm.unidad_id}
                     options={unidades}
@@ -2378,7 +2433,7 @@ export function Logistica() {
                   />
                 </Field>
 
-                <Field label="Piloto *" error={viajeErrors.piloto_id}>
+                <Field label="Piloto *" error={viajeErrors.piloto_id} actionLabel="Nuevo piloto" onAction={() => openQuick("piloto", "viaje_piloto")}>
                   <SearchableSelect
                     value={viajeForm.piloto_id}
                     options={pilotos}
@@ -2460,8 +2515,14 @@ export function Logistica() {
 
       {envioModal.open && (
         <Modal
-          title={envioModal.mode === "view" ? "Detalle de Envío" : envioModal.mode === "create" ? "Nuevo Envío" : "Editar Envío"}
-          onClose={() => setEnvioModal({ open: false, mode: "create" })}
+          title={
+            envioModal.mode === "view"
+              ? "Detalle del Servicio de Transporte"
+              : envioModal.mode === "create"
+              ? "Nuevo Servicio de Transporte"
+              : "Editar Servicio de Transporte"
+          }
+          onClose={() => { setEnvioModal({ open: false, mode: "create" }); setEnvioFromViaje(false); }}
         >
           {envioModal.mode === "view" && currentEnvio ? (
             <ViewEnvio envio={currentEnvio} />
@@ -2470,7 +2531,7 @@ export function Logistica() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
                 {envioErrors.general && <div className="md:col-span-2 rounded-xl bg-red-50 text-red-700 p-3 text-sm font-semibold">{envioErrors.general}</div>}
 
-                <Field label="Cliente *" error={envioErrors.cliente_id} className="md:col-span-2">
+                <Field label="Cliente *" error={envioErrors.cliente_id} className="md:col-span-2" actionLabel="Nuevo cliente" onAction={() => openQuick("cliente", "envio_cliente")}>
                   <SearchableSelect
                     value={envioForm.cliente_id}
                     options={clientes}
@@ -2481,7 +2542,7 @@ export function Logistica() {
                   />
                 </Field>
 
-                <Field label="Origen *" error={envioErrors.origen_id}>
+                <Field label="Origen *" error={envioErrors.origen_id} actionLabel="Nuevo origen" onAction={() => openQuick("ubicacion", "envio_origen")}>
                   <SearchableSelect
                     value={envioForm.origen_id}
                     options={ubicaciones}
@@ -2492,7 +2553,7 @@ export function Logistica() {
                   />
                 </Field>
 
-                <Field label="Destino *" error={envioErrors.destino_id}>
+                <Field label="Destino *" error={envioErrors.destino_id} actionLabel="Nuevo destino" onAction={() => openQuick("ubicacion", "envio_destino")}>
                   <SearchableSelect
                     value={envioForm.destino_id}
                     options={ubicaciones}
@@ -2502,6 +2563,50 @@ export function Logistica() {
                     error={envioErrors.destino_id}
                   />
                 </Field>
+
+                <div className="md:col-span-2 -mt-1">
+                  {(() => {
+                    if (!envioForm.origen_id || !envioForm.destino_id) {
+                      return (
+                        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500">
+                          Seleccioná origen y destino. GL365 utilizará esos datos para asociar la ruta del servicio.
+                        </div>
+                      );
+                    }
+
+                    const rutaExistente = rutas.find(
+                      (ruta) =>
+                        Number(ruta.origen_id) === Number(envioForm.origen_id) &&
+                        Number(ruta.destino_id) === Number(envioForm.destino_id)
+                    );
+
+                    const origen = ubicaciones.find(
+                      (ubicacion) => Number(ubicacion.id) === Number(envioForm.origen_id)
+                    );
+
+                    const destino = ubicaciones.find(
+                      (ubicacion) => Number(ubicacion.id) === Number(envioForm.destino_id)
+                    );
+
+                    return (
+                      <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                        <div className="flex items-start gap-2">
+                          <Navigation className="mt-0.5 h-4 w-4 shrink-0 text-[#0C2D6B]" />
+                          <div>
+                            <p className="text-xs font-bold text-[#0C2D6B]">
+                              Ruta automática: {origen?.nombre_ubicacion || "Origen"} → {destino?.nombre_ubicacion || "Destino"}
+                            </p>
+                            <p className="mt-1 text-[11px] text-gray-500">
+                              {rutaExistente
+                                ? `Ya existe ${rutaExistente.codigo_ruta}; se reutilizará automáticamente.`
+                                : "No existe todavía. Al guardar el servicio se creará una nueva ruta automáticamente y quedará disponible para los viajes."}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
 
                 <Field label="Dirección exacta *" error={envioErrors.direccion} className="md:col-span-2">
                   <input
@@ -2515,6 +2620,7 @@ export function Logistica() {
                 <Field label="Fecha *" error={envioErrors.fecha}>
                   <input
                     type="date"
+                    lang="es-GT"
                     value={envioForm.fecha || ""}
                     onChange={(event) => setEnvioForm({ ...envioForm, fecha: event.target.value })}
                     className={inputClass}
@@ -2544,104 +2650,84 @@ export function Logistica() {
                 </Field>
               </div>
 
-              <ModalFooter onCancel={() => setEnvioModal({ open: false, mode: "create" })} onSave={saveEnvio} />
+              <ModalFooter onCancel={() => { setEnvioModal({ open: false, mode: "create" }); setEnvioFromViaje(false); }} onSave={saveEnvio} />
             </div>
           )}
         </Modal>
       )}
 
-      {depositoModal.open && (
-        <Modal
-          title={depositoModal.mode === "view" ? "Detalle de Depósito" : depositoModal.mode === "create" ? "Nuevo Depósito" : "Editar Depósito"}
-          onClose={() => setDepositoModal({ open: false, mode: "create" })}
-        >
-          {depositoModal.mode === "view" && currentDeposito ? (
-            <ViewDeposito deposito={currentDeposito} />
-          ) : (
-            <div data-form onKeyDown={moveOnEnter}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
-                {depositoErrors.general && <div className="md:col-span-2 rounded-xl bg-red-50 text-red-700 p-3 text-sm font-semibold">{depositoErrors.general}</div>}
 
-                <Field label="Nombre del depósito *" error={depositoErrors.nombre_deposito} className="md:col-span-2">
-                  <input
-                    value={depositoForm.nombre_deposito || ""}
-                    onChange={(event) => setDepositoForm({ ...depositoForm, nombre_deposito: cleanCommercial(event.target.value, 120) })}
-                    className={inputClass}
-                    placeholder="Ej. Bodega Central"
-                  />
-                </Field>
+      {quickModal && (
+        <Modal title={quickModal.type === "cliente" ? "Nuevo Cliente" : quickModal.type === "ruta" ? "Nueva Ruta" : quickModal.type === "unidad" ? "Nueva Unidad" : quickModal.type === "piloto" ? "Nuevo Piloto" : "Nueva Ubicación"} onClose={closeQuick}>
+          <div data-form onKeyDown={moveOnEnter}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
+              {quickError && <div className="md:col-span-2 rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">{quickError}</div>}
 
-                <Field label="Ubicación *" error={depositoErrors.ubicacion_id} className="md:col-span-2">
-                  <SearchableSelect
-                    value={depositoForm.ubicacion_id}
-                    options={ubicaciones}
-                    placeholder="Buscar ubicación..."
-                    getLabel={(item) => `${item.nombre_ubicacion}, ${item.pais}`}
-                    onSelect={(item) => setDepositoForm({ ...depositoForm, ubicacion_id: item.id })}
-                    error={depositoErrors.ubicacion_id}
-                  />
-                </Field>
+              {quickModal.type === "cliente" && (
+                <>
+                  <Field label="Nombre de empresa *" className="md:col-span-2">
+                    <input value={quickForm.nombre_empresa || ""} onChange={(e) => setQuickForm({ ...quickForm, nombre_empresa: cleanCommercial(e.target.value, 120) })} className={inputClass} placeholder="Nombre o razón social" />
+                  </Field>
+                  <Field label="NIT *">
+                    <input value={quickForm.nit || ""} onChange={(e) => setQuickForm({ ...quickForm, nit: e.target.value.replace(/[^0-9Kk-]/g, "").slice(0, 20) })} className={inputClass} placeholder="NIT" />
+                  </Field>
+                  <Field label="Dirección">
+                    <input value={quickForm.direccion || ""} onChange={(e) => setQuickForm({ ...quickForm, direccion: cleanAddress(e.target.value, 180) })} className={inputClass} placeholder="Dirección" />
+                  </Field>
+                </>
+              )}
 
-                <Field label="Dirección / referencia">
-                  <input
-                    value={depositoForm.direccion || ""}
-                    onChange={(event) => setDepositoForm({ ...depositoForm, direccion: cleanAddress(event.target.value, 180) })}
-                    className={inputClass}
-                    placeholder="Dirección o referencia"
-                  />
-                </Field>
+              {quickModal.type === "ubicacion" && (
+                <>
+                  <Field label="Nombre de ubicación *">
+                    <input value={quickForm.nombre_ubicacion || ""} onChange={(e) => setQuickForm({ ...quickForm, nombre_ubicacion: cleanCommercial(e.target.value, 100) })} className={inputClass} placeholder="Ej. Fraijanes" />
+                  </Field>
+                  <Field label="País *">
+                    <input value={quickForm.pais || "Guatemala"} onChange={(e) => setQuickForm({ ...quickForm, pais: cleanLetters(e.target.value, 60) })} className={inputClass} />
+                  </Field>
+                </>
+              )}
 
-                <Field label="Capacidad *" error={depositoErrors.capacidad}>
-                  <input
-                    inputMode="decimal"
-                    value={depositoForm.capacidad || ""}
-                    onChange={(event) => setDepositoForm({ ...depositoForm, capacidad: cleanDecimal(event.target.value, 8, 2) })}
-                    className={inputClass}
-                    placeholder="Solo números"
-                  />
-                </Field>
+              {quickModal.type === "ruta" && (
+                <>
+                  <Field label="Origen *">
+                    <SearchableSelect value={quickForm.origen_id} options={ubicaciones} placeholder="Buscar origen..." getLabel={(item) => `${item.nombre_ubicacion}, ${item.pais}`} onSelect={(item) => setQuickForm({ ...quickForm, origen_id: item.id })} />
+                  </Field>
+                  <Field label="Destino *">
+                    <SearchableSelect value={quickForm.destino_id} options={ubicaciones} placeholder="Buscar destino..." getLabel={(item) => `${item.nombre_ubicacion}, ${item.pais}`} onSelect={(item) => setQuickForm({ ...quickForm, destino_id: item.id })} />
+                  </Field>
+                  <Field label="Nombre de ruta" className="md:col-span-2">
+                    <input value={quickForm.nombre_ruta || ""} onChange={(e) => setQuickForm({ ...quickForm, nombre_ruta: cleanCommercial(e.target.value, 80) })} className={inputClass} placeholder="Se genera automáticamente si lo dejás vacío" />
+                  </Field>
+                  <Field label="Distancia (km)">
+                    <input inputMode="decimal" value={quickForm.distancia_km || ""} onChange={(e) => setQuickForm({ ...quickForm, distancia_km: cleanDecimal(e.target.value, 7, 2) })} className={inputClass} placeholder="Opcional" />
+                  </Field>
+                </>
+              )}
 
-                <Field label="Unidad de medida">
-                  <select
-                    value={depositoForm.unidad_medida || "m³"}
-                    onChange={(event) => setDepositoForm({ ...depositoForm, unidad_medida: event.target.value })}
-                    className={inputClass}
-                  >
-                    <option value="m³">m³</option>
-                    <option value="pallets">pallets</option>
-                    <option value="kg">kg</option>
-                    <option value="unidades">unidades</option>
-                  </select>
-                </Field>
+              {quickModal.type === "unidad" && (
+                <>
+                  <Field label="Código">
+                    <input value={quickForm.codigo || ""} onChange={(e) => setQuickForm({ ...quickForm, codigo: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 20) })} className={inputClass} placeholder="Automático si queda vacío" />
+                  </Field>
+                  <Field label="Tipo de unidad *">
+                    <input value={quickForm.tipo || ""} onChange={(e) => setQuickForm({ ...quickForm, tipo: cleanCommercial(e.target.value, 40) })} className={inputClass} placeholder="Ej. Furgón 53 pies" />
+                  </Field>
+                </>
+              )}
 
-                <Field label="Tipo *" error={depositoErrors.tipo_id}>
-                  <select
-                    value={depositoForm.tipo_id || ""}
-                    onChange={(event) => setDepositoForm({ ...depositoForm, tipo_id: Number(event.target.value) })}
-                    className={inputClass}
-                  >
-                    <option value="">Seleccionar tipo</option>
-                    {tiposDeposito.map((tipo) => (
-                      <option key={tipo.id} value={tipo.id}>{tipo.nombre_tipo_deposito}</option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="Estado">
-                  <select
-                    value={depositoForm.activo === false ? "Inactivo" : "Activo"}
-                    onChange={(event) => setDepositoForm({ ...depositoForm, activo: event.target.value === "Activo" })}
-                    className={inputClass}
-                  >
-                    <option value="Activo">Activo</option>
-                    <option value="Inactivo">Inactivo</option>
-                  </select>
-                </Field>
-              </div>
-
-              <ModalFooter onCancel={() => setDepositoModal({ open: false, mode: "create" })} onSave={saveDeposito} />
+              {quickModal.type === "piloto" && (
+                <>
+                  <Field label="Primer nombre *"><input value={quickForm.primer_nombre || ""} onChange={(e) => setQuickForm({ ...quickForm, primer_nombre: cleanLetters(e.target.value, 30) })} className={inputClass} /></Field>
+                  <Field label="Segundo nombre"><input value={quickForm.segundo_nombre || ""} onChange={(e) => setQuickForm({ ...quickForm, segundo_nombre: cleanLetters(e.target.value, 30) })} className={inputClass} /></Field>
+                  <Field label="Primer apellido *"><input value={quickForm.primer_apellido || ""} onChange={(e) => setQuickForm({ ...quickForm, primer_apellido: cleanLetters(e.target.value, 35) })} className={inputClass} /></Field>
+                  <Field label="Segundo apellido"><input value={quickForm.segundo_apellido || ""} onChange={(e) => setQuickForm({ ...quickForm, segundo_apellido: cleanLetters(e.target.value, 35) })} className={inputClass} /></Field>
+                  <Field label="Licencia *" className="md:col-span-2"><input value={quickForm.licencia || ""} onChange={(e) => setQuickForm({ ...quickForm, licencia: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 25) })} className={inputClass} placeholder="Número de licencia" /></Field>
+                </>
+              )}
             </div>
-          )}
+            <ModalFooter onCancel={closeQuick} onSave={saveQuick} />
+          </div>
         </Modal>
       )}
 
@@ -2713,7 +2799,7 @@ function ConfirmDialog({
             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${
               isDanger ? "bg-red-50 text-red-600" : "bg-orange-50 text-[#FF6A00]"
             }`}>
-              {isDanger ? <Trash2 className="w-7 h-7" /> : <Warehouse className="w-7 h-7" />}
+              {isDanger ? <Trash2 className="w-7 h-7" /> : <AlertTriangle className="w-7 h-7" />}
             </div>
 
             <div className="min-w-0 flex-1">
@@ -2784,7 +2870,7 @@ function ViewViaje({ viaje }: { viaje: Viaje }) {
         <div>
           <p className="text-sm text-gray-500">Cliente</p>
           <h3 className="font-bold text-lg text-gray-800">{viaje.cliente}</h3>
-          <p className="text-xs text-gray-400 mt-1">{viaje.codigo} · Envío {viaje.envio_codigo || viaje.envio_id}</p>
+          <p className="text-xs text-gray-400 mt-1">{viaje.codigo} · Servicio {viaje.envio_codigo || viaje.envio_id}</p>
         </div>
         <span className={`px-4 py-1.5 rounded-full text-sm font-bold border ${getEstadoColor(viaje.estado)}`}>
           {viaje.estado}
@@ -2796,7 +2882,15 @@ function ViewViaje({ viaje }: { viaje: Viaje }) {
         <Info label="Unidad" value={`${viaje.unidad} ${viaje.unidad_tipo ? `· ${viaje.unidad_tipo}` : ""}`} />
         <Info label="Piloto" value={viaje.piloto} />
         <Info label="Licencia" value={viaje.licencia || "-"} />
-        <Info label="Salida" value={toDateTimeInput(viaje.fecha_salida || viaje.fechaSalida).replace("T", " ")} />
+        <Info
+          label="Salida"
+          value={(() => {
+            const local = toDateTimeInput(viaje.fecha_salida || viaje.fechaSalida);
+            if (!local) return "-";
+            const [date, time] = local.split("T");
+            return `${formatDate(date)} ${time}`;
+          })()}
+        />
         <Info label="ETA" value={viaje.eta || "-"} />
       </div>
 
@@ -2859,6 +2953,11 @@ function ViewEnvio({ envio }: { envio: Envio }) {
       <div className="rounded-xl bg-gray-50 p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Info label="Origen" value={envio.origen} />
         <Info label="Destino" value={envio.destino} />
+        <Info label="Ruta" value={
+          envio.codigo_ruta
+            ? `${envio.codigo_ruta} · ${envio.ruta_texto || `${envio.origen} → ${envio.destino}`}`
+            : `${envio.origen} → ${envio.destino}`
+        } />
         <Info label="Dirección" value={envio.direccion} />
         <Info label="Fecha" value={formatDate(envio.fecha)} />
       </div>
@@ -2869,30 +2968,6 @@ function ViewEnvio({ envio }: { envio: Envio }) {
           <p className="text-sm text-gray-700">{envio.observaciones}</p>
         </div>
       )}
-    </div>
-  );
-}
-
-function ViewDeposito({ deposito }: { deposito: Deposito }) {
-  return (
-    <div className="p-5 space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <div>
-          <p className="text-sm text-gray-500">Depósito</p>
-          <h3 className="font-bold text-lg text-gray-800">{deposito.nombre_deposito || deposito.nombre}</h3>
-          <p className="text-xs text-gray-400 mt-1">{deposito.codigo}</p>
-        </div>
-        <span className={`px-4 py-1.5 rounded-full text-sm font-bold border ${getEstadoColor(deposito.estado)}`}>
-          {deposito.estado}
-        </span>
-      </div>
-
-      <div className="rounded-xl bg-gray-50 p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Info label="Ubicación" value={deposito.ubicacion} />
-        <Info label="Dirección / referencia" value={deposito.direccion || "-"} />
-        <Info label="Capacidad" value={`${deposito.capacidad} ${deposito.unidad_medida || ""}`} />
-        <Info label="Tipo" value={deposito.tipo} />
-      </div>
     </div>
   );
 }

@@ -7,7 +7,6 @@ const T = {
   cliente: "cliente",
   envio: "envio",
   viaje: "viaje",
-  deposito: "deposito",
   trackingViaje: "tracking_viaje",
   alerta: "alerta",
   ruta: "ruta",
@@ -15,7 +14,8 @@ const T = {
   unidad: "unidad",
   piloto: "piloto",
   estadoEnvio: "estado_envio",
-  tipoDeposito: "tipo_deposito",
+  estadoCliente: "estado_cliente",
+  estadoRuta: "estado_ruta",
 };
 
 const ok = (res, data = null, message = "Operación realizada correctamente.") =>
@@ -126,6 +126,224 @@ const nextCode = async (connection, tabla, campo, prefijo, pad = 3) => {
   });
 
   return `${prefijo}-${String(max + 1).padStart(pad, "0")}`;
+};
+
+const nextFlexibleCode = async (
+  connection,
+  tabla,
+  campo,
+  prefijo,
+  pad = 3,
+  separator = "-"
+) => {
+  const [rows] = await connection.query(
+    `SELECT \`${campo}\` AS codigo FROM \`${tabla}\` WHERE \`${campo}\` LIKE ?`,
+    [`${prefijo}%`]
+  );
+
+  let max = 0;
+
+  rows.forEach((row) => {
+    const code = String(row.codigo || "");
+    const match = code.match(/(\d+)(?!.*\d)/);
+    if (match) max = Math.max(max, Number(match[1]));
+  });
+
+  return `${prefijo}${separator}${String(max + 1).padStart(pad, "0")}`;
+};
+
+const nextCompactCode = async (
+  connection,
+  tabla,
+  campo,
+  prefijo,
+  pad = 3
+) => {
+  const [rows] = await connection.query(
+    `SELECT \`${campo}\` AS codigo FROM \`${tabla}\` WHERE \`${campo}\` LIKE ?`,
+    [`${prefijo}%`]
+  );
+
+  let max = 0;
+
+  rows.forEach((row) => {
+    const code = String(row.codigo || "");
+    const match = code.match(/(\d+)(?!.*\d)/);
+    if (match) max = Math.max(max, Number(match[1]));
+  });
+
+  return `${prefijo}${String(max + 1).padStart(pad, "0")}`;
+};
+
+const firstId = async (connection, tabla) => {
+  if (!(await tableExists(tabla))) return null;
+
+  const [rows] = await connection.query(
+    `SELECT id FROM \`${tabla}\` ORDER BY id ASC LIMIT 1`
+  );
+
+  return rows[0]?.id || null;
+};
+
+const activeClienteEstadoId = async (connection) => {
+  if (!(await tableExists(T.estadoCliente))) return null;
+
+  const [active] = await connection.query(
+    `
+    SELECT id
+    FROM \`${T.estadoCliente}\`
+    WHERE LOWER(nombre_estado_cliente) = 'activo'
+    LIMIT 1
+    `
+  );
+
+  if (active[0]?.id) return active[0].id;
+  return firstId(connection, T.estadoCliente);
+};
+
+const activeRutaEstadoId = async (connection) => {
+  if (!(await tableExists(T.estadoRuta))) return null;
+
+  const [active] = await connection.query(
+    `
+    SELECT id
+    FROM \`${T.estadoRuta}\`
+    WHERE LOWER(nombre_estado_ruta) = 'activa'
+       OR LOWER(nombre_estado_ruta) = 'activo'
+    LIMIT 1
+    `
+  );
+
+  if (active[0]?.id) return active[0].id;
+  return firstId(connection, T.estadoRuta);
+};
+
+const getOrCreateRouteByLocations = async (
+  connection,
+  origenId,
+  destinoId
+) => {
+  const origen = asId(origenId);
+  const destino = asId(destinoId);
+
+  if (!origen || !destino) {
+    throw new Error("Selecciona origen y destino para asociar la ruta.");
+  }
+
+  if (Number(origen) === Number(destino)) {
+    throw new Error("El destino debe ser diferente del origen.");
+  }
+
+  const [existing] = await connection.query(
+    `
+    SELECT
+      r.id,
+      r.codigo_ruta,
+      r.nombre_ruta,
+      r.origen_id,
+      r.destino_id,
+      r.distancia_km,
+      uo.nombre_ubicacion AS origen,
+      ud.nombre_ubicacion AS destino,
+      CONCAT(uo.nombre_ubicacion, ' → ', ud.nombre_ubicacion) AS ruta_texto
+    FROM \`${T.ruta}\` r
+    LEFT JOIN \`${T.ubicacion}\` uo ON uo.id = r.origen_id
+    LEFT JOIN \`${T.ubicacion}\` ud ON ud.id = r.destino_id
+    WHERE r.origen_id = ?
+      AND r.destino_id = ?
+    ORDER BY r.id ASC
+    LIMIT 1
+    `,
+    [origen, destino]
+  );
+
+  if (existing[0]) {
+    return {
+      ...existing[0],
+      created: false,
+    };
+  }
+
+  const [[originRow]] = await connection.query(
+    `SELECT id, nombre_ubicacion FROM \`${T.ubicacion}\` WHERE id = ? LIMIT 1`,
+    [origen]
+  );
+
+  const [[destinationRow]] = await connection.query(
+    `SELECT id, nombre_ubicacion FROM \`${T.ubicacion}\` WHERE id = ? LIMIT 1`,
+    [destino]
+  );
+
+  if (!originRow || !destinationRow) {
+    throw new Error("El origen o destino seleccionado no existe.");
+  }
+
+  const codigo = await nextFlexibleCode(
+    connection,
+    T.ruta,
+    "codigo_ruta",
+    "RUT",
+    3,
+    "-"
+  );
+
+  const nombreRuta = `${originRow.nombre_ubicacion} → ${destinationRow.nombre_ubicacion}`.slice(
+    0,
+    80
+  );
+
+  const estadoRutaId = await activeRutaEstadoId(connection);
+
+  const [result] = await connection.query(
+    `
+    INSERT INTO \`${T.ruta}\`
+    (
+      codigo_ruta,
+      nombre_ruta,
+      origen_id,
+      destino_id,
+      distancia_km,
+      tiempo,
+      costo,
+      frecuencia_id,
+      estado_id
+    )
+    VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)
+    `,
+    [
+      codigo,
+      nombreRuta,
+      origen,
+      destino,
+      estadoRutaId,
+    ]
+  );
+
+  const [[created]] = await connection.query(
+    `
+    SELECT
+      r.id,
+      r.codigo_ruta,
+      r.nombre_ruta,
+      r.origen_id,
+      r.destino_id,
+      r.distancia_km,
+      uo.nombre_ubicacion AS origen,
+      ud.nombre_ubicacion AS destino,
+      CONCAT(uo.nombre_ubicacion, ' → ', ud.nombre_ubicacion) AS ruta_texto
+    FROM \`${T.ruta}\` r
+    LEFT JOIN \`${T.ubicacion}\` uo ON uo.id = r.origen_id
+    LEFT JOIN \`${T.ubicacion}\` ud ON ud.id = r.destino_id
+    WHERE r.id = ?
+    LIMIT 1
+    `,
+    [result.insertId]
+  );
+
+  return {
+    ...created,
+    created: true,
+  };
 };
 
 const getEstadosEnvio = async (connection = pool) => {
@@ -247,11 +465,6 @@ const queryCatalogos = async () => {
     ORDER BY id
   `);
 
-  const [tiposDeposito] = await pool.query(`
-    SELECT id, codigo_tipo_deposito, nombre_tipo_deposito
-    FROM \`${T.tipoDeposito}\`
-    ORDER BY id
-  `);
 
   return {
     clientes,
@@ -260,7 +473,6 @@ const queryCatalogos = async () => {
     unidades,
     pilotos,
     estadosEnvio,
-    tiposDeposito,
   };
 };
 
@@ -272,8 +484,13 @@ const getEnviosRows = async () => {
       e.cliente_id,
       e.origen_id,
       e.destino_id,
+      r.id AS ruta_id,
+      r.codigo_ruta,
+      r.nombre_ruta,
+      r.distancia_km,
+      CONCAT(uo.nombre_ubicacion, ' → ', ud.nombre_ubicacion) AS ruta_texto,
       e.direccion,
-      e.fecha,
+      DATE_FORMAT(e.fecha, '%Y-%m-%d') AS fecha,
       e.estado_id,
       e.observaciones,
       e.created_at,
@@ -288,6 +505,15 @@ const getEnviosRows = async () => {
     LEFT JOIN \`${T.cliente}\` c ON c.id = e.cliente_id
     LEFT JOIN \`${T.ubicacion}\` uo ON uo.id = e.origen_id
     LEFT JOIN \`${T.ubicacion}\` ud ON ud.id = e.destino_id
+    LEFT JOIN \`${T.ruta}\` r
+      ON r.id = (
+        SELECT r2.id
+        FROM \`${T.ruta}\` r2
+        WHERE r2.origen_id = e.origen_id
+          AND r2.destino_id = e.destino_id
+        ORDER BY r2.id ASC
+        LIMIT 1
+      )
     LEFT JOIN \`${T.estadoEnvio}\` ee ON ee.id = e.estado_id
     ORDER BY e.id DESC
   `);
@@ -308,9 +534,9 @@ const getViajesRows = async () => {
       v.unidad_id,
       v.piloto_id,
       v.envio_id,
-      v.fecha_salida,
+      DATE_FORMAT(v.fecha_salida, '%Y-%m-%d %H:%i') AS fecha_salida,
       DATE_FORMAT(v.eta, '%H:%i') AS eta,
-      v.eta AS eta_datetime,
+      DATE_FORMAT(v.eta, '%Y-%m-%d %H:%i') AS eta_datetime,
       v.progreso AS viaje_progreso,
       v.created_at,
 
@@ -390,39 +616,6 @@ const getViajesRows = async () => {
   });
 };
 
-const getDepositosRows = async () => {
-  const [rows] = await pool.query(`
-    SELECT
-      d.id,
-      d.codigo,
-      d.nombre_deposito,
-      d.ubicacion_id,
-      d.direccion,
-      d.capacidad,
-      d.unidad_medida,
-      d.tipo_id,
-      d.activo,
-      d.created_at,
-      u.nombre_ubicacion,
-      u.pais,
-      td.nombre_tipo_deposito,
-      td.codigo_tipo_deposito
-    FROM \`${T.deposito}\` d
-    LEFT JOIN \`${T.ubicacion}\` u ON u.id = d.ubicacion_id
-    LEFT JOIN \`${T.tipoDeposito}\` td ON td.id = d.tipo_id
-    ORDER BY d.id DESC
-  `);
-
-  return rows.map((row) => ({
-    ...row,
-    nombre: row.nombre_deposito,
-    ubicacion: row.nombre_ubicacion
-      ? `${row.nombre_ubicacion}, ${row.pais || ""}`.replace(/,\s*$/, "")
-      : row.direccion || "",
-    tipo: row.nombre_tipo_deposito,
-    estado: Number(row.activo) === 1 ? "Activo" : "Inactivo",
-  }));
-};
 
 const syncAlertaOperativa = async (connection, viajeId, codigo, estadoVisual) => {
   await connection.query(
@@ -481,6 +674,14 @@ const saveEnvio = async (connection, body, id = null) => {
   const fecha = asDate(body.fecha);
   if (!fecha) throw new Error("Selecciona la fecha del envío.");
 
+  // El origen + destino del envío son la fuente de verdad de la ruta.
+  // Si la ruta ya existe se reutiliza; si no existe se crea aquí mismo.
+  const ruta = await getOrCreateRouteByLocations(
+    connection,
+    origenId,
+    destinoId
+  );
+
   const estadoId = asId(body.estado_id) || (await estadoIdDesdeVisual(connection, body.estado || "Pendiente"));
 
   const payload = [
@@ -509,7 +710,13 @@ const saveEnvio = async (connection, body, id = null) => {
       [...payload, id]
     );
 
-    return { id };
+    return {
+      id,
+      ruta_id: ruta.id,
+      codigo_ruta: ruta.codigo_ruta,
+      ruta_texto: ruta.ruta_texto,
+      ruta_creada: Boolean(ruta.created),
+    };
   }
 
   const codigo = limpiar(body.codigo) || (await nextCode(connection, T.envio, "codigo", "ENV", 4));
@@ -523,13 +730,19 @@ const saveEnvio = async (connection, body, id = null) => {
     [codigo, ...payload]
   );
 
-  return { id: result.insertId, codigo };
+  return {
+    id: result.insertId,
+    codigo,
+    ruta_id: ruta.id,
+    codigo_ruta: ruta.codigo_ruta,
+    ruta_texto: ruta.ruta_texto,
+    ruta_creada: Boolean(ruta.created),
+  };
 };
 
 const saveViaje = async (connection, body, id = null) => {
   const clienteId = asId(body.cliente_id);
   const envioId = asId(body.envio_id);
-  const rutaId = asId(body.ruta_id);
   const unidadId = asId(body.unidad_id);
   const pilotoId = asId(body.piloto_id);
   const fechaSalida = asDateTime(body.fecha_salida || body.fechaSalida);
@@ -538,13 +751,21 @@ const saveViaje = async (connection, body, id = null) => {
   if (!envioId) {
     throw new Error("Para guardar un viaje primero debés seleccionar un envío relacionado. Si el cliente no tiene envíos, registrá el envío y luego regresá a Nuevo Viaje.");
   }
-  if (!rutaId) throw new Error("Selecciona una ruta.");
+  // La ruta se deriva automáticamente del envío seleccionado.
   if (!unidadId) throw new Error("Selecciona una unidad.");
   if (!pilotoId) throw new Error("Selecciona un piloto.");
   if (!fechaSalida) throw new Error("Selecciona fecha y hora de salida.");
 
   const [[envio]] = await connection.query(
-    `SELECT cliente_id FROM \`${T.envio}\` WHERE id = ? LIMIT 1`,
+    `
+    SELECT
+      cliente_id,
+      origen_id,
+      destino_id
+    FROM \`${T.envio}\`
+    WHERE id = ?
+    LIMIT 1
+    `,
     [envioId]
   );
 
@@ -552,6 +773,15 @@ const saveViaje = async (connection, body, id = null) => {
   if (Number(envio.cliente_id) !== Number(clienteId)) {
     throw new Error("El envío seleccionado pertenece a otro cliente.");
   }
+
+  // Garantía de consistencia:
+  // un Viaje siempre usa la ruta formada por Origen + Destino de su Envío.
+  const ruta = await getOrCreateRouteByLocations(
+    connection,
+    envio.origen_id,
+    envio.destino_id
+  );
+  const rutaId = ruta.id;
 
   const eta = normalizarEtaDateTime(body.eta, fechaSalida);
   if (!eta) throw new Error("Ingresa una ETA válida.");
@@ -609,56 +839,6 @@ const saveViaje = async (connection, body, id = null) => {
   return { id: viajeId, codigo };
 };
 
-const saveDeposito = async (connection, body, id = null) => {
-  const nombre = textoComercial(body.nombre_deposito || body.nombre, 120);
-  const ubicacionId = asId(body.ubicacion_id);
-  const tipoId = asId(body.tipo_id);
-
-  if (!nombre) throw new Error("Ingresa el nombre del depósito.");
-  if (!ubicacionId) throw new Error("Selecciona la ubicación.");
-  if (!tipoId) throw new Error("Selecciona el tipo de depósito.");
-
-  const capacidad = numeroDecimal(body.capacidad, 0);
-  if (capacidad <= 0) throw new Error("Ingresa una capacidad válida.");
-
-  const unidadMedida = limpiar(body.unidad_medida || "m³").slice(0, 20);
-  const activo = body.activo === false || body.estado === "Inactivo" ? 0 : 1;
-  const direccion = textoComercial(body.direccion, 180) || null;
-
-  const payload = [nombre, ubicacionId, direccion, capacidad, unidadMedida, tipoId, activo];
-
-  if (id) {
-    await connection.query(
-      `
-      UPDATE \`${T.deposito}\`
-      SET nombre_deposito = ?,
-          ubicacion_id = ?,
-          direccion = ?,
-          capacidad = ?,
-          unidad_medida = ?,
-          tipo_id = ?,
-          activo = ?
-      WHERE id = ?
-      `,
-      [...payload, id]
-    );
-
-    return { id };
-  }
-
-  const codigo = limpiar(body.codigo) || (await nextCode(connection, T.deposito, "codigo", "DEP", 3));
-
-  const [result] = await connection.query(
-    `
-    INSERT INTO \`${T.deposito}\`
-    (codigo, nombre_deposito, ubicacion_id, direccion, capacidad, unidad_medida, tipo_id, activo)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [codigo, ...payload]
-  );
-
-  return { id: result.insertId, codigo };
-};
 
 const safeDelete = async (connection, sql, params = []) => {
   try {
@@ -684,18 +864,16 @@ const safeDelete = async (connection, sql, params = []) => {
 
 router.get("/logistica/bootstrap", async (req, res) => {
   try {
-    const [catalogos, envios, viajes, depositos] = await Promise.all([
+    const [catalogos, envios, viajes] = await Promise.all([
       queryCatalogos(),
       getEnviosRows(),
       getViajesRows(),
-      getDepositosRows(),
     ]);
 
     return ok(res, {
       ...catalogos,
       envios,
       viajes,
-      depositos,
     });
   } catch (error) {
     console.error("Error /logistica/bootstrap:", error);
@@ -913,71 +1091,354 @@ router.delete("/logistica/viajes/:id", async (req, res) => {
   }
 });
 
-router.get("/logistica/depositos", async (req, res) => {
-  try {
-    return ok(res, await getDepositosRows());
-  } catch (error) {
-    console.error("Error GET depositos:", error);
-    return fail(res, 500, "No se pudieron obtener los depósitos.", error);
-  }
-});
 
-router.post("/logistica/depositos", async (req, res) => {
+
+/* =====================================================
+   Altas rápidas desde Logística
+   Botones "Nuevo": cliente, ubicación, ruta, unidad y piloto
+===================================================== */
+
+router.post("/logistica/catalogos/clientes", async (req, res) => {
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
-    const result = await saveDeposito(connection, req.body);
+
+    const nombreEmpresa = textoComercial(req.body.nombre_empresa, 120);
+    const nit = limpiar(req.body.nit).slice(0, 20);
+    const direccion = textoComercial(req.body.direccion, 180) || null;
+
+    if (!nombreEmpresa) {
+      await connection.rollback();
+      return fail(res, 400, "Ingresa el nombre de la empresa.");
+    }
+
+    if (!nit) {
+      await connection.rollback();
+      return fail(res, 400, "Ingresa el NIT.");
+    }
+
+    const [duplicados] = await connection.query(
+      `SELECT id FROM \`${T.cliente}\` WHERE LOWER(nit) = LOWER(?) LIMIT 1`,
+      [nit]
+    );
+
+    if (duplicados.length) {
+      await connection.rollback();
+      return fail(res, 409, "Ya existe un cliente con ese NIT.");
+    }
+
+    const codigo = await nextFlexibleCode(
+      connection,
+      T.cliente,
+      "codigo_cliente",
+      "CLI",
+      3,
+      "-"
+    );
+
+    const estadoClienteId = await activeClienteEstadoId(connection);
+
+    const [result] = await connection.query(
+      `
+      INSERT INTO \`${T.cliente}\`
+      (codigo_cliente, nombre_empresa, nit, direccion, estado_cliente_id)
+      VALUES (?, ?, ?, ?, ?)
+      `,
+      [codigo, nombreEmpresa, nit, direccion, estadoClienteId]
+    );
+
+    const [[row]] = await connection.query(
+      `
+      SELECT id, codigo_cliente, nombre_empresa, nit, direccion, estado_cliente_id
+      FROM \`${T.cliente}\`
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [result.insertId]
+    );
+
     await connection.commit();
-    return ok(res, result, "Depósito guardado correctamente.");
+    return ok(res, row, "Cliente creado y seleccionado correctamente.");
   } catch (error) {
     await connection.rollback();
-    console.error("Error POST deposito:", error);
-    return fail(res, 500, "No se pudo guardar el depósito.", error);
+    console.error("Error alta rápida cliente:", error);
+
+    if (error?.code === "ER_DUP_ENTRY") {
+      return fail(res, 409, "El código o NIT del cliente ya existe.", error);
+    }
+
+    return fail(res, 500, "No se pudo crear el cliente.", error);
   } finally {
     connection.release();
   }
 });
 
-router.put("/logistica/depositos/:id", async (req, res) => {
+router.post("/logistica/catalogos/ubicaciones", async (req, res) => {
   const connection = await pool.getConnection();
 
   try {
-    const id = asId(req.params.id);
-    if (!id) return fail(res, 400, "ID de depósito inválido.");
-
     await connection.beginTransaction();
-    const result = await saveDeposito(connection, req.body, id);
+
+    const nombre = textoComercial(req.body.nombre_ubicacion, 80);
+    const pais = textoComercial(req.body.pais || "Guatemala", 60);
+
+    if (!nombre) {
+      await connection.rollback();
+      return fail(res, 400, "Ingresa el nombre de la ubicación.");
+    }
+
+    const [existentes] = await connection.query(
+      `
+      SELECT id, codigo_ubicacion, nombre_ubicacion, pais
+      FROM \`${T.ubicacion}\`
+      WHERE LOWER(nombre_ubicacion) = LOWER(?)
+        AND LOWER(pais) = LOWER(?)
+      LIMIT 1
+      `,
+      [nombre, pais]
+    );
+
+    if (existentes[0]) {
+      await connection.commit();
+      return ok(
+        res,
+        existentes[0],
+        "La ubicación ya existía y fue seleccionada."
+      );
+    }
+
+    // La BD existente usa códigos OP001, OP002... sin guion.
+    const codigo = await nextCompactCode(
+      connection,
+      T.ubicacion,
+      "codigo_ubicacion",
+      "OP",
+      3
+    );
+
+    const [result] = await connection.query(
+      `
+      INSERT INTO \`${T.ubicacion}\`
+      (codigo_ubicacion, nombre_ubicacion, pais)
+      VALUES (?, ?, ?)
+      `,
+      [codigo, nombre, pais]
+    );
+
+    const [[row]] = await connection.query(
+      `
+      SELECT id, codigo_ubicacion, nombre_ubicacion, pais
+      FROM \`${T.ubicacion}\`
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [result.insertId]
+    );
+
     await connection.commit();
-    return ok(res, result, "Depósito actualizado correctamente.");
+    return ok(res, row, "Ubicación creada y seleccionada correctamente.");
   } catch (error) {
     await connection.rollback();
-    console.error("Error PUT deposito:", error);
-    return fail(res, 500, "No se pudo actualizar el depósito.", error);
+    console.error("Error alta rápida ubicación:", error);
+    return fail(res, 500, "No se pudo crear la ubicación.", error);
   } finally {
     connection.release();
   }
 });
 
-router.delete("/logistica/depositos/:id", async (req, res) => {
+router.post("/logistica/catalogos/rutas", async (req, res) => {
   const connection = await pool.getConnection();
 
   try {
-    const id = asId(req.params.id);
-    if (!id) return fail(res, 400, "ID de depósito inválido.");
-
     await connection.beginTransaction();
 
-    // Se inactiva para evitar problemas si hay relaciones futuras.
-    await connection.query(`UPDATE \`${T.deposito}\` SET activo = 0 WHERE id = ?`, [id]);
+    const origenId = asId(req.body.origen_id);
+    const destinoId = asId(req.body.destino_id);
+
+    if (!origenId || !destinoId) {
+      await connection.rollback();
+      return fail(res, 400, "Selecciona origen y destino.");
+    }
+
+    const ruta = await getOrCreateRouteByLocations(
+      connection,
+      origenId,
+      destinoId
+    );
 
     await connection.commit();
 
-    return ok(res, { id, inactivado: true }, "Depósito inactivado correctamente.");
+    return ok(
+      res,
+      ruta,
+      ruta.created
+        ? "Ruta creada y seleccionada correctamente."
+        : "La ruta ya existía y fue seleccionada."
+    );
   } catch (error) {
     await connection.rollback();
-    console.error("Error DELETE deposito:", error);
-    return fail(res, 500, "No se pudo inactivar el depósito.", error);
+    console.error("Error alta rápida ruta:", error);
+    return fail(res, 500, error.message || "No se pudo crear la ruta.", error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.post("/logistica/catalogos/unidades", async (req, res) => {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const tipo = textoComercial(req.body.tipo, 40);
+    let codigo = limpiar(req.body.codigo)
+      .toUpperCase()
+      .replace(/[^A-Z0-9-]/g, "")
+      .slice(0, 20);
+
+    if (!tipo) {
+      await connection.rollback();
+      return fail(res, 400, "Ingresa el tipo de unidad.");
+    }
+
+    if (!codigo) {
+      codigo = await nextFlexibleCode(
+        connection,
+        T.unidad,
+        "codigo",
+        "UNI",
+        3,
+        "-"
+      );
+    }
+
+    const [duplicados] = await connection.query(
+      `SELECT id FROM \`${T.unidad}\` WHERE codigo = ? LIMIT 1`,
+      [codigo]
+    );
+
+    if (duplicados.length) {
+      await connection.rollback();
+      return fail(res, 409, "Ya existe una unidad con ese código.");
+    }
+
+    const [result] = await connection.query(
+      `INSERT INTO \`${T.unidad}\` (codigo, tipo) VALUES (?, ?)`,
+      [codigo, tipo]
+    );
+
+    const [[row]] = await connection.query(
+      `SELECT id, codigo, tipo FROM \`${T.unidad}\` WHERE id = ? LIMIT 1`,
+      [result.insertId]
+    );
+
+    await connection.commit();
+    return ok(res, row, "Unidad creada y seleccionada correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    console.error("Error alta rápida unidad:", error);
+    return fail(res, 500, "No se pudo crear la unidad.", error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.post("/logistica/catalogos/pilotos", async (req, res) => {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const primerNombre = textoComercial(req.body.primer_nombre, 30);
+    const segundoNombre = textoComercial(req.body.segundo_nombre, 30) || null;
+    const primerApellido = textoComercial(req.body.primer_apellido, 35);
+    const segundoApellido = textoComercial(req.body.segundo_apellido, 35) || null;
+    const licencia = limpiar(req.body.licencia)
+      .toUpperCase()
+      .replace(/[^A-Z0-9-]/g, "")
+      .slice(0, 25);
+
+    if (!primerNombre || !primerApellido || !licencia) {
+      await connection.rollback();
+      return fail(
+        res,
+        400,
+        "Primer nombre, primer apellido y licencia son obligatorios."
+      );
+    }
+
+    const [duplicados] = await connection.query(
+      `SELECT id FROM \`${T.piloto}\` WHERE licencia = ? LIMIT 1`,
+      [licencia]
+    );
+
+    if (duplicados.length) {
+      await connection.rollback();
+      return fail(res, 409, "Ya existe un piloto con esa licencia.");
+    }
+
+    const codigo = await nextFlexibleCode(
+      connection,
+      T.piloto,
+      "codigo_piloto",
+      "PIL",
+      3,
+      "-"
+    );
+
+    const [result] = await connection.query(
+      `
+      INSERT INTO \`${T.piloto}\`
+      (
+        codigo_piloto,
+        primer_nombre,
+        segundo_nombre,
+        primer_apellido,
+        segundo_apellido,
+        licencia
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      [
+        codigo,
+        primerNombre,
+        segundoNombre,
+        primerApellido,
+        segundoApellido,
+        licencia,
+      ]
+    );
+
+    const [[row]] = await connection.query(
+      `
+      SELECT
+        id,
+        codigo_piloto,
+        primer_nombre,
+        segundo_nombre,
+        primer_apellido,
+        segundo_apellido,
+        licencia,
+        ${fullNameSQL("p")} AS nombre_piloto
+      FROM \`${T.piloto}\` p
+      WHERE p.id = ?
+      LIMIT 1
+      `,
+      [result.insertId]
+    );
+
+    await connection.commit();
+    return ok(res, row, "Piloto creado y seleccionado correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    console.error("Error alta rápida piloto:", error);
+
+    if (error?.code === "ER_DUP_ENTRY") {
+      return fail(res, 409, "El código o licencia del piloto ya existe.", error);
+    }
+
+    return fail(res, 500, "No se pudo crear el piloto.", error);
   } finally {
     connection.release();
   }

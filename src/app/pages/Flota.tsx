@@ -193,6 +193,126 @@ const safeDate = (value: any) => {
   return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : "";
 };
 
+const MAINTENANCE_WARNING_DAYS = 15;
+
+type MaintenanceAlertInfo = {
+  status: "overdue" | "today" | "upcoming" | "ok" | "none";
+  days: number | null;
+  label: string;
+  date: string;
+};
+
+const maintenanceDateInfo = (value: any): MaintenanceAlertInfo => {
+  const date = safeDate(value);
+
+  if (!date) {
+    return {
+      status: "none",
+      days: null,
+      label: "Sin fecha programada",
+      date: "",
+    };
+  }
+
+  const [year, month, day] = date.split("-").map(Number);
+  const now = new Date();
+
+  const todayUtc = Date.UTC(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+
+  const targetUtc = Date.UTC(year, month - 1, day);
+  const days = Math.round((targetUtc - todayUtc) / 86400000);
+
+  if (days < 0) {
+    const overdueDays = Math.abs(days);
+
+    return {
+      status: "overdue",
+      days,
+      label:
+        overdueDays === 1
+          ? "Vencido hace 1 día"
+          : `Vencido hace ${overdueDays} días`,
+      date,
+    };
+  }
+
+  if (days === 0) {
+    return {
+      status: "today",
+      days,
+      label: "Vence hoy",
+      date,
+    };
+  }
+
+  if (days <= MAINTENANCE_WARNING_DAYS) {
+    return {
+      status: "upcoming",
+      days,
+      label:
+        days === 1
+          ? "Próximo en 1 día"
+          : `Próximo en ${days} días`,
+      date,
+    };
+  }
+
+  return {
+    status: "ok",
+    days,
+    label: `Programado en ${days} días`,
+    date,
+  };
+};
+
+const formatMaintenanceDate = (value: any) => {
+  const date = safeDate(value);
+  if (!date) return "-";
+
+  const [year, month, day] = date.split("-");
+  return `${day}/${month}/${year}`;
+};
+
+const maintenanceAlertTone = (status: MaintenanceAlertInfo["status"]) => {
+  if (status === "overdue") {
+    return {
+      card: "border-red-200 bg-red-50",
+      badge: "border-red-200 bg-red-100 text-red-700",
+      date: "text-red-700",
+      bar: "bg-red-500",
+    };
+  }
+
+  if (status === "today") {
+    return {
+      card: "border-orange-200 bg-orange-50",
+      badge: "border-orange-200 bg-orange-100 text-orange-700",
+      date: "text-orange-700",
+      bar: "bg-orange-500",
+    };
+  }
+
+  if (status === "upcoming") {
+    return {
+      card: "border-yellow-200 bg-yellow-50",
+      badge: "border-yellow-200 bg-yellow-100 text-yellow-700",
+      date: "text-yellow-700",
+      bar: "bg-yellow-500",
+    };
+  }
+
+  return {
+    card: "border-gray-200 bg-white",
+    badge: "border-gray-200 bg-gray-100 text-gray-600",
+    date: "text-gray-800",
+    bar: "bg-gray-300",
+  };
+};
+
 
 const loadImageDataUrl = async (src: string): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -607,6 +727,39 @@ export function Flota() {
     }
   }, [page, totalPages]);
 
+  const maintenanceAlerts = useMemo(() => {
+    const severity: Record<MaintenanceAlertInfo["status"], number> = {
+      overdue: 0,
+      today: 1,
+      upcoming: 2,
+      ok: 3,
+      none: 4,
+    };
+
+    return vehiculos
+      .map((vehiculo) => ({
+        vehiculo,
+        info: maintenanceDateInfo(vehiculo.proximo_mantenimiento),
+      }))
+      .filter(({ info }) =>
+        ["overdue", "today", "upcoming"].includes(info.status)
+      )
+      .sort((a, b) => {
+        const bySeverity = severity[a.info.status] - severity[b.info.status];
+        if (bySeverity !== 0) return bySeverity;
+
+        return String(a.info.date).localeCompare(String(b.info.date));
+      });
+  }, [vehiculos]);
+
+  const overdueMaintenanceCount = maintenanceAlerts.filter(
+    ({ info }) => info.status === "overdue"
+  ).length;
+
+  const upcomingMaintenanceCount = maintenanceAlerts.filter(
+    ({ info }) => info.status === "today" || info.status === "upcoming"
+  ).length;
+
   const kpis = [
     {
       title: "Vehículos",
@@ -677,8 +830,8 @@ export function Flota() {
     const nextErrors: FormErrors = {};
     const mantenimientoId = selected.estado_mantenimiento_id || selected.estados_mantenimiento_id;
 
-    if (modo === "editar" && !cleanCode(selected.codigo || "")) {
-      nextErrors.codigo = "Ingresa código o placa válida.";
+    if (!cleanCode(selected.codigo || "")) {
+      nextErrors.codigo = "Ingresa una placa válida.";
     }
 
     if (!selected.tipo_id) nextErrors.tipo_id = "Selecciona el tipo de vehículo.";
@@ -716,7 +869,7 @@ export function Flota() {
 
     try {
       const payload = {
-        codigo: modo === "nuevo" ? selected.codigo : cleanCode(selected.codigo || ""),
+        placa: cleanCode(selected.codigo || ""),
         tipo_id: selected.tipo_id,
         estado_id: selected.estado_id,
         eficiencia: numeric(selected.eficiencia),
@@ -796,7 +949,7 @@ export function Flota() {
         body: JSON.stringify({
           vehiculo_id: maintenanceForm.vehiculo_id,
           tipo: cleanMaintenanceText(maintenanceForm.tipo, 60),
-          descripcion: cleanMaintenanceText(maintenanceForm.descripcion, 250),
+          descripcion: cleanMaintenanceText(maintenanceForm.descripcion, 200),
           fecha: maintenanceForm.fecha,
           proximo: maintenanceForm.proximo,
           costo: numeric(maintenanceForm.costo),
@@ -866,13 +1019,13 @@ export function Flota() {
       y += 9;
     };
 
-    line("Código / placa", vehiculo.codigo);
+    line("Placa", vehiculo.codigo);
     line("Tipo", tipo);
     line("Estado", estado);
     line("Eficiencia", `${vehiculo.eficiencia || 0}%`);
     line("Kilometraje", `${formatKm(vehiculo.kilometraje)} km`);
     line("Mantenimiento", mantenimiento);
-    line("Próximo mantenimiento", dateText(vehiculo.proximo_mantenimiento));
+    line("Próximo mantenimiento", formatMaintenanceDate(vehiculo.proximo_mantenimiento));
 
     if (vehiculo.ultimo_mantenimiento_id) {
       y += 6;
@@ -913,7 +1066,7 @@ export function Flota() {
         vehiculo.mantenimiento || nombreMantenimiento(vehiculo.estado_mantenimiento_id || vehiculo.estados_mantenimiento_id);
 
       return {
-        Código: vehiculo.codigo,
+        Placa: vehiculo.codigo,
         Tipo: tipo,
         Estado: estado,
         Eficiencia: `${numeric(vehiculo.eficiencia)}%`,
@@ -971,7 +1124,7 @@ export function Flota() {
       58
     );
 
-    const columns = ["Código", "Tipo", "Estado", "Eficiencia", "Kilometraje", "Mantenimiento", "Próximo"];
+    const columns = ["Placa", "Tipo", "Estado", "Eficiencia", "Kilometraje", "Mantenimiento", "Próximo"];
     const rows = sortedVehiculos.map((vehiculo) => {
       const tipo = vehiculo.tipo || nombreTipo(vehiculo.tipo_id);
       const estado = vehiculo.estado || nombreEstado(vehiculo.estado_id);
@@ -1097,6 +1250,115 @@ export function Flota() {
         ))}
       </div>
 
+      {maintenanceAlerts.length > 0 && (
+        <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-600">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-bold text-[#0C2D6B]">
+                    Alertas de mantenimiento
+                  </h2>
+
+                  <span className="rounded-full border border-red-100 bg-red-50 px-2.5 py-1 text-[10px] font-bold text-red-700">
+                    {maintenanceAlerts.length} alerta
+                    {maintenanceAlerts.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+
+                <p className="mt-1 text-xs text-gray-500">
+                  Se notifican mantenimientos vencidos y los programados para los próximos{" "}
+                  {MAINTENANCE_WARNING_DAYS} días.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-xs font-semibold">
+              {overdueMaintenanceCount > 0 && (
+                <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-red-700">
+                  {overdueMaintenanceCount} vencido
+                  {overdueMaintenanceCount === 1 ? "" : "s"}
+                </span>
+              )}
+
+              {upcomingMaintenanceCount > 0 && (
+                <span className="rounded-full border border-yellow-200 bg-yellow-50 px-3 py-1.5 text-yellow-700">
+                  {upcomingMaintenanceCount} próximo
+                  {upcomingMaintenanceCount === 1 ? "" : "s"}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 p-4 lg:grid-cols-2 xl:grid-cols-3">
+            {maintenanceAlerts.map(({ vehiculo, info }) => {
+              const tone = maintenanceAlertTone(info.status);
+              const tipo = vehiculo.tipo || nombreTipo(vehiculo.tipo_id);
+
+              return (
+                <article
+                  key={`maintenance-alert-${vehiculo.id}`}
+                  className={`relative overflow-hidden rounded-2xl border p-4 ${tone.card}`}
+                >
+                  <div className={`absolute left-0 top-0 h-full w-1.5 ${tone.bar}`} />
+
+                  <div className="flex items-start justify-between gap-3 pl-1">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                        Vehículo
+                      </p>
+                      <h3 className="mt-0.5 truncate text-base font-bold text-[#0C2D6B]">
+                        {vehiculo.codigo}
+                      </h3>
+                      <p className="truncate text-xs text-gray-500">{tipo}</p>
+                    </div>
+
+                    <span
+                      className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold ${tone.badge}`}
+                    >
+                      {info.label}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 rounded-xl bg-white/80 px-3 py-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                      Próximo mantenimiento
+                    </p>
+                    <p className={`mt-1 text-sm font-bold ${tone.date}`}>
+                      {formatMaintenanceDate(vehiculo.proximo_mantenimiento)}
+                    </p>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openVer(vehiculo)}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-blue-100 bg-white px-3 text-xs font-bold text-[#0C2D6B] shadow-sm hover:bg-blue-50"
+                    >
+                      <Eye className="h-4 w-4" />
+                      Ver
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => openMantenimiento(vehiculo)}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#0C2D6B] px-3 text-xs font-bold text-white shadow-sm hover:bg-[#143C8C]"
+                    >
+                      <Wrench className="h-4 w-4" />
+                      Registrar mantenimiento
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       <section className="pt-2">
         <div className="mb-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -1126,7 +1388,7 @@ export function Flota() {
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por código, tipo, estado..."
+              placeholder="Buscar por placa, tipo, estado..."
               className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
             />
           </div>
@@ -1175,7 +1437,7 @@ export function Flota() {
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-xs font-bold uppercase text-gray-400">Ordenar por:</span>
-          <SortChip field="codigo" label="Código" />
+          <SortChip field="codigo" label="Placa" />
           <SortChip field="tipo" label="Tipo" />
           <SortChip field="estado" label="Estado" />
           <SortChip field="eficiencia" label="Eficiencia" />
@@ -1213,6 +1475,8 @@ export function Flota() {
           const mantenimiento =
             vehiculo.mantenimiento || nombreMantenimiento(vehiculo.estado_mantenimiento_id || vehiculo.estados_mantenimiento_id);
           const efficiency = Math.max(0, Math.min(100, numeric(vehiculo.eficiencia)));
+          const maintenanceInfo = maintenanceDateInfo(vehiculo.proximo_mantenimiento);
+          const maintenanceTone = maintenanceAlertTone(maintenanceInfo.status);
 
           return (
             <article key={vehiculo.id} className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition hover:shadow-md">
@@ -1249,7 +1513,18 @@ export function Flota() {
                 <div className="rounded-2xl bg-gray-50 p-3 mb-4">
                   <div className="flex justify-between gap-3 text-sm">
                     <span className="text-gray-500">Próximo:</span>
-                    <b className="text-gray-800">{dateText(vehiculo.proximo_mantenimiento)}</b>
+
+                    <div className="text-right">
+                      <b className={maintenanceTone.date}>
+                        {formatMaintenanceDate(vehiculo.proximo_mantenimiento)}
+                      </b>
+
+                      {["overdue", "today", "upcoming"].includes(maintenanceInfo.status) && (
+                        <p className={`mt-0.5 text-[10px] font-bold ${maintenanceTone.date}`}>
+                          {maintenanceInfo.label}
+                        </p>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex justify-between gap-3 text-sm mt-2">
@@ -1455,7 +1730,7 @@ function VehicleModal({
               {modo === "nuevo" ? "Nuevo Vehículo" : modo === "editar" ? "Editar Vehículo" : "Detalle de Vehículo"}
             </h2>
             <p className="mt-0.5 text-xs text-gray-400">
-              {modo === "nuevo" ? "El código se genera automáticamente al guardar" : selected.codigo}
+              {modo === "nuevo" ? "Ingresa la placa de la unidad" : `Placa: ${selected.codigo}`}
             </p>
           </div>
 
@@ -1475,31 +1750,21 @@ function VehicleModal({
         )}
 
         <div data-form onKeyDown={moveOnEnter} className="overflow-y-auto p-5">
-          {modo === "nuevo" && (
-            <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-              <p className="text-sm font-bold text-[#0C2D6B]">Código automático</p>
-              <p className="mt-1 text-xs text-gray-600">
-                El sistema generará un código tipo FL-001. Después podrás editarlo como placa/código si es necesario.
-              </p>
-            </div>
-          )}
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {modo !== "nuevo" && (
-              <Field label="Código / placa *" error={errors.codigo}>
-                <input
-                  value={selected.codigo || ""}
-                  disabled={readonly}
-                  maxLength={15}
-                  onChange={(event) => {
-                    setSelected({ ...selected, codigo: cleanCode(event.target.value) });
-                    clearError("codigo");
-                  }}
-                  className={`${inputClass} ${errors.codigo ? errorInput : ""}`}
-                  placeholder="Ej. C-484BZD"
-                />
-              </Field>
-            )}
+            <Field label="Placa *" error={errors.codigo}>
+              <input
+                value={selected.codigo || ""}
+                disabled={readonly}
+                maxLength={15}
+                onChange={(event) => {
+                  setSelected({ ...selected, codigo: cleanCode(event.target.value) });
+                  clearError("codigo");
+                }}
+                className={`${inputClass} ${errors.codigo ? errorInput : ""}`}
+                placeholder="Ej. C-484BZD"
+                autoComplete="off"
+              />
+            </Field>
 
             <Field label="Tipo de vehículo *" error={errors.tipo_id}>
               <select
@@ -1627,7 +1892,7 @@ function VehicleModal({
                 <Info label="Eficiencia" value={`${selected.eficiencia || 0}%`} />
                 <Info label="Kilometraje" value={`${formatKm(selected.kilometraje)} km`} />
                 <Info label="Mantenimiento" value={selected.mantenimiento || nombreMantenimiento(mantenimientoId)} />
-                <Info label="Próximo mantenimiento" value={dateText(selected.proximo_mantenimiento)} />
+                <Info label="Próximo mantenimiento" value={formatMaintenanceDate(selected.proximo_mantenimiento)} />
               </div>
 
               <div className="mt-4 rounded-2xl border border-blue-100 bg-white p-4">
@@ -1719,7 +1984,7 @@ function MaintenanceModal({
           <div>
             <h2 className="text-xl font-bold text-[#0C2D6B]">Agregar mantenimiento</h2>
             <p className="mt-0.5 text-xs text-gray-400">
-              Vehículo seleccionado: {form.codigo_vehiculo}
+              Placa del vehículo: {form.codigo_vehiculo}
             </p>
           </div>
 
@@ -1822,9 +2087,10 @@ function MaintenanceModal({
             <Field label="Descripción *" error={errors.descripcion} className="md:col-span-2">
               <textarea
                 rows={4}
+                maxLength={200}
                 value={form.descripcion}
                 onChange={(event) => {
-                  updateForm({ descripcion: cleanMaintenanceText(event.target.value, 250) });
+                  updateForm({ descripcion: cleanMaintenanceText(event.target.value, 200) });
                   clearError("descripcion");
                 }}
                 className={`${inputClass} h-auto resize-none py-3 ${errors.descripcion ? errorInput : ""}`}
@@ -1888,7 +2154,7 @@ function ConfirmDelete({
 
               <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">
-                  Vehículo seleccionado
+                  Placa del vehículo
                 </p>
                 <p className="mt-1 font-mono text-sm font-bold text-gray-800">{vehiculo.codigo}</p>
               </div>

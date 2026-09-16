@@ -316,9 +316,12 @@ export const generarPDFCotizacion = async (quote: Quote) => {
 
   const ejecutivoVentas =
     q.salesExecutive ||
+    q.executive ||
+    q.executivo ||
     q.ejecutivo_ventas ||
     q.ejecutivo ||
-    'ENMA GARCIA BACHEZ';
+    q.nombre_ejecutivo ||
+    'SIN EJECUTIVO';
 
   const modalidad =
     q.eximp ||
@@ -648,6 +651,28 @@ export const generarPDFCotizacion = async (quote: Quote) => {
   });
   yPos += 10;
 
+  // === DÍAS DE CRÉDITO ===
+  // Usa la forma de pago seleccionada en CRM: Contado, 15 días, 30 días, etc.
+  if (yPos + 9 > 270) {
+    doc.addPage();
+    yPos = 20;
+  }
+
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.25);
+  doc.rect(margin, yPos, tableWidth, 8);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(0, 0, 0);
+  doc.text('DÍAS DE CRÉDITO:', margin + 3, yPos + 5.2);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(12, 45, 107);
+  doc.text(String(formaPago || 'CONTADO'), margin + 31, yPos + 5.2);
+
+  yPos += 12;
+
   // === NOTAS Y FIRMA ===
   doc.setFontSize(7);
   doc.setTextColor(217, 119, 6);
@@ -656,18 +681,37 @@ export const generarPDFCotizacion = async (quote: Quote) => {
   yPos += 4;
 
   doc.setFont('helvetica', 'normal');
-  const exclusiones = [
-    '• Maniobras (carga y descarga)',
-    '• Seguro de cargas',
-    '• Custodios y/o patrullas para unidades en modalidad FTL',
-    '• Estadías',
-    '• Selectivos rojos',
-    '• Gastos por cuenta ajena',
+
+  // Estas condiciones pueden venir editadas desde CRM.
+  // Si no vienen, se conservan las condiciones por defecto.
+  const exclusionesBase = [
+    'Maniobras (carga y descarga)',
+    'Seguro de cargas',
+    'Custodios y/o patrullas para unidades en modalidad FTL (cotizado por aparte)',
+    'Estadías',
+    'Selectivos rojos',
+    'Gastos por cuenta ajena',
   ];
 
-  exclusiones.forEach((item) => {
-    doc.text(item, margin + 5, yPos);
-    yPos += 3;
+  const exclusiones = (
+    Array.isArray(q.noIncluye) && q.noIncluye.length > 0
+      ? q.noIncluye
+      : exclusionesBase
+  )
+    .map((item: any) => String(item || '').trim())
+    .filter(Boolean);
+
+  exclusiones.forEach((item: string) => {
+    const lineas = doc.splitTextToSize(`• ${item}`, 92);
+
+    // Si no cabe, crea una página nueva manteniendo margen superior.
+    if (yPos + lineas.length * 3.4 > 270) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    doc.text(lineas, margin + 5, yPos);
+    yPos += Math.max(3.4, lineas.length * 3.4);
   });
 
   yPos += 3;
@@ -677,29 +721,56 @@ export const generarPDFCotizacion = async (quote: Quote) => {
   yPos += 4;
 
   doc.setFont('helvetica', 'normal');
-  const notas = [
-    '• Cotización basada en datos proporcionados.',
-    '• Para movimientos locales deberán reservar las unidades con 24 Hrs de anticipación.',
-    '• En temporada alta las unidades deberán ser reservadas con 48 Hrs antes del posicionamiento.',
-    '• Logistics Group 365 no asume penalizaciones por atrasos, conflictos sociales o clima.',
-    '• Todo movimiento en falso se cobrará el flete.',
-    '• Los custodios y/o patrullas se cotizan por evento dependiendo la ruta.',
+
+  // Estas notas también pueden venir editadas desde CRM.
+  const notasBase = [
+    'Cotización basada en datos proporcionados.',
+    'Para movimientos locales deberán reservar las unidades con 24 Hrs de anticipación.',
+    'En temporada alta las unidades deberán ser reservadas con un promedio de 48 Hrs antes del posicionamiento.',
+    'Logistics Group 365 no asume penalizaciones por atrasos, conflictos sociales, clima, etc.',
+    'Todo movimiento en falso se cobrará el flete.',
+    'Los custodios se cotizan por evento dependiendo la ruta.',
   ];
 
-  notas.forEach((item) => {
-    doc.text(item, margin + 5, yPos);
-    yPos += 3;
+  const notas = (
+    Array.isArray(q.notasImportantes) && q.notasImportantes.length > 0
+      ? q.notasImportantes
+      : notasBase
+  )
+    .map((item: any) => String(item || '').trim())
+    .filter(Boolean);
+
+  notas.forEach((item: string) => {
+    const lineas = doc.splitTextToSize(`• ${item}`, 92);
+
+    if (yPos + lineas.length * 3.4 > 270) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    doc.text(lineas, margin + 5, yPos);
+    yPos += Math.max(3.4, lineas.length * 3.4);
   });
 
   // === FIRMA ===
-  const firmaY = yPos - 36;
+  // Se coloca de forma independiente para que las listas editables
+  // no se crucen con la línea de aceptación.
+  let firmaY = Math.max(yPos + 7, 225);
+
+  if (firmaY + 25 > 278) {
+    doc.addPage();
+    firmaY = 35;
+    yPos = 20;
+  }
+
   doc.setTextColor(12, 45, 107);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
-  doc.text('FIRMA DE ACEPTACIÓN DE TARIFA:', 140, firmaY);
+  doc.text('FIRMA DE ACEPTACIÓN DE TARIFA:', 130, firmaY);
 
   doc.setDrawColor(12, 45, 107);
-  doc.line(135, firmaY + 15, 190, firmaY + 15);
+  doc.setLineWidth(0.3);
+  doc.line(125, firmaY + 15, 190, firmaY + 15);
 
   // === PIE DE PÁGINA ===
   const pageHeight = doc.internal.pageSize.height;

@@ -14,7 +14,7 @@ const rolesPorId = {
   2: "facturacion",
   3: "facturacion",
   4: "facturacion",
-  5: "compras",
+  5: "operaciones",
   6: "logistica",
   7: "mensajeria",
   8: "ventas",
@@ -23,7 +23,7 @@ const rolesPorId = {
 const cargoPorRol = {
   gerencia: "Gerente General",
   facturacion: "Comprobantes / Área Contable",
-  compras: "Encargado de Compras",
+  operaciones: "Encargado de Operaciones",
   logistica: "Encargado de Logística",
   mensajeria: "Mensajería Externa",
   ventas: "Asesor de Ventas",
@@ -215,12 +215,20 @@ const resolverRole = (usuario) => {
     return "facturacion";
   }
 
-  if (textoRol.includes("compra")) return "compras";
+  // Compatibilidad: si la BD todavía conserva el nombre "compras",
+  // el frontend lo tratará como el nuevo rol "operaciones".
+  if (
+    textoRol.includes("compra") ||
+    textoRol.includes("operacion") ||
+    textoRol.includes("operación") ||
+    textoRol.includes("operaciones")
+  ) {
+    return "operaciones";
+  }
+
   if (textoRol.includes("log") || textoRol.includes("logistica") || textoRol.includes("logística")) return "logistica";
   if (textoRol.includes("msg") || textoRol.includes("mensaje") || textoRol.includes("mensajeria") || textoRol.includes("mensajería")) return "mensajeria";
   if (textoRol.includes("vent") || textoRol.includes("venta")) return "ventas";
-  if (textoRol.includes("op") || textoRol.includes("operacion") || textoRol.includes("operación") || textoRol.includes("operaciones")) return "operaciones";
-
   return rolesPorId[Number(usuario.rol_id)] || "gerencia";
 };
 

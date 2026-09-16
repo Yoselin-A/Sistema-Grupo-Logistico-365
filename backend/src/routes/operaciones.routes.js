@@ -3,20 +3,6 @@ const pool = require("../config/db");
 
 const router = express.Router();
 
-/*
-  OPERACIONES GL365 - Base nueva en singular
-  Montaje recomendado en src/server.js:
-
-  const operacionesRoutes = require("./routes/operaciones.routes");
-  app.use("/api", operacionesRoutes);
-
-  Este archivo reemplaza rutas viejas que buscaban tablas en plural:
-  asignaciones, proveedores, envios, viajes, rutas, clientes, vehiculos, pilotos, etc.
-
-  La base nueva usa:
-  asignacion, proveedor, envio, viaje, ruta, cliente, vehiculo, piloto, etc.
-*/
-
 const T = {
   asignacion: "asignacion",
   costoAsignacion: "costo_asignacion",
@@ -114,6 +100,8 @@ const TABLE_MAP = {
 
 const EXTRA_COLUMNS = {
   asignaciones: [
+    "tipo_asignacion",
+    "detalle_operativo_json",
     "pilotos_id",
     "clienteId",
     "rutaId",
@@ -240,6 +228,149 @@ const asId = (valor) => {
 const asMoney = (valor) => {
   const n = Number(String(valor ?? 0).replace(/,/g, ""));
   return Number.isFinite(n) ? n : 0;
+};
+
+const TIPOS_ASIGNACION = new Set([
+  "local",
+  "fiduca",
+  "centroamerica",
+  "internacional",
+]);
+
+const normalizeTipoAsignacion = (valor) => {
+  const tipo = limpiar(valor).toLowerCase();
+
+  if (!tipo) return "local";
+
+  if (!TIPOS_ASIGNACION.has(tipo)) {
+    throw new Error(
+      "Tipo de asignación inválido. Usa: local, fiduca, centroamerica o internacional."
+    );
+  }
+
+  return tipo;
+};
+
+const parseJsonSeguro = (valor, fallback = {}) => {
+  if (valor == null || valor === "") return fallback;
+
+  if (typeof valor === "object") {
+    return valor;
+  }
+
+  try {
+    return JSON.parse(String(valor));
+  } catch {
+    return fallback;
+  }
+};
+
+const detalleOperativoJson = (body, tipoAsignacion) => {
+  const recibido = parseJsonSeguro(body.detalle_operativo_json, {});
+
+  const detalle = {
+    ...recibido,
+
+    // Siempre se conserva el tipo dentro del JSON para compatibilidad
+    // con registros anteriores y con el frontend.
+    tipo_asignacion: tipoAsignacion,
+
+    hora_carga:
+      limpiar(recibido.hora_carga || body.hora_carga) || null,
+    hora_descarga:
+      limpiar(recibido.hora_descarga || body.hora_descarga) || null,
+
+    estatus_operativo:
+      limpiar(recibido.estatus_operativo || body.estatus_operativo) || null,
+    marchamo:
+      limpiar(recibido.marchamo || body.marchamo) || null,
+
+    pais_piloto:
+      limpiar(recibido.pais_piloto || body.pais_piloto) || null,
+    dpi_piloto:
+      limpiar(recibido.dpi_piloto || body.dpi_piloto) || null,
+    fecha_nacimiento_piloto:
+      asDate(
+        recibido.fecha_nacimiento_piloto ||
+          body.fecha_nacimiento_piloto
+      ),
+    nit_piloto:
+      limpiar(recibido.nit_piloto || body.nit_piloto) || null,
+
+    empresa_transporte:
+      limpiar(
+        recibido.empresa_transporte ||
+          body.empresa_transporte
+      ) || null,
+    nit_transportista:
+      limpiar(
+        recibido.nit_transportista ||
+          body.nit_transportista
+      ) || null,
+    pais_transportista:
+      limpiar(
+        recibido.pais_transportista ||
+          body.pais_transportista
+      ) || null,
+
+    caat:
+      limpiar(recibido.caat || body.caat) || null,
+    numero_economico:
+      limpiar(
+        recibido.numero_economico ||
+          body.numero_economico
+      ) || null,
+    fianza:
+      limpiar(recibido.fianza || body.fianza) || null,
+    codigo_aduanero:
+      limpiar(
+        recibido.codigo_aduanero ||
+          body.codigo_aduanero
+      ) || null,
+    pasaporte:
+      limpiar(recibido.pasaporte || body.pasaporte) || null,
+    codigo_equipo:
+      limpiar(
+        recibido.codigo_equipo ||
+          body.codigo_equipo
+      ) || null,
+    tamano_equipo:
+      limpiar(
+        recibido.tamano_equipo ||
+          body.tamano_equipo
+      ) || null,
+
+    fecha_posicionamiento:
+      asDate(
+        recibido.fecha_posicionamiento ||
+          body.fecha_posicionamiento
+      ),
+    hora_posicionamiento:
+      limpiar(
+        recibido.hora_posicionamiento ||
+          body.hora_posicionamiento
+      ) || null,
+
+    dias_servicio:
+      Math.max(
+        1,
+        Number(
+          recibido.dias_servicio ??
+            body.dias_servicio ??
+            1
+        ) || 1
+      ),
+
+    estatus_seguimiento: Array.isArray(
+      recibido.estatus_seguimiento
+    )
+      ? recibido.estatus_seguimiento
+      : Array.isArray(body.estatus_seguimiento)
+      ? body.estatus_seguimiento
+      : [],
+  };
+
+  return JSON.stringify(detalle);
 };
 
 const asDate = (valor) => {
@@ -471,6 +602,9 @@ const findOrCreateCliente = async (connection, body) => {
   if (direct) return direct;
 
   const nombre = limpiar(body.cliente || body.nombre_empresa || body.name);
+  const nit = limpiar(body.nit);
+  const direccion = limpiar(body.direccion) || "Guatemala";
+
   if (!nombre) return await firstId(connection, T.cliente);
 
   const [rows] = await connection.query(
@@ -478,10 +612,11 @@ const findOrCreateCliente = async (connection, body) => {
     SELECT id
     FROM \`${T.cliente}\`
     WHERE LOWER(nombre_empresa) = LOWER(?)
+       OR (? <> '' AND LOWER(nit) = LOWER(?))
     ORDER BY id
     LIMIT 1
     `,
-    [nombre]
+    [nombre, nit, nit]
   );
 
   if (rows[0]?.id) return rows[0].id;
@@ -494,7 +629,12 @@ const findOrCreateCliente = async (connection, body) => {
     (codigo_cliente, nombre_empresa, nit, direccion, estado_cliente_id)
     VALUES (?, ?, ?, ?, 1)
     `,
-    [codigo, nombre, `CF-${Date.now().toString().slice(-8)}`, "Guatemala"]
+    [
+      codigo,
+      nombre,
+      nit || `CF-${Date.now().toString().slice(-8)}`,
+      direccion,
+    ]
   );
 
   return insert.insertId;
@@ -562,7 +702,9 @@ const findOrCreateRuta = async (connection, body) => {
 
   if (rows[0]?.id) return rows[0].id;
 
-  const codigo = await nextCode(connection, T.ruta, "codigo_ruta", "RUT");
+  const codigo =
+    limpiar(body.codigo_ruta || body.ruta_codigo) ||
+    (await nextCode(connection, T.ruta, "codigo_ruta", "RUT"));
 
   const frecuenciaId = await firstId(connection, "frecuencia_ruta");
   const estadoId = await firstId(connection, "estado_ruta");
@@ -977,12 +1119,107 @@ const saveProvider = async (connection, body, id = null) => {
 
 const saveAssignment = async (connection, body, id = null) => {
   const asignacionIdEdit = asId(id || body.id);
+  const tipoAsignacion = normalizeTipoAsignacion(body.tipo_asignacion);
+  const detalleJson = detalleOperativoJson(body, tipoAsignacion);
+  const detalle = parseJsonSeguro(detalleJson, {});
+
+  // Validaciones específicas de cada expediente operativo.
+  // Los campos opcionales pueden guardar literalmente "N/A".
+  const nonEmpty = (value) => limpiar(value).length > 0;
+
+  if (tipoAsignacion === "local") {
+    const timeline = Array.isArray(detalle.estatus_seguimiento)
+      ? detalle.estatus_seguimiento
+      : [];
+
+    if (!asId(body.cliente_id || body.clienteId)) {
+      throw new Error("Local requiere cliente.");
+    }
+
+    if (!asId(body.piloto_id || body.pilotos_id || body.pilotoId)) {
+      throw new Error("Local requiere piloto.");
+    }
+
+    if (!nonEmpty(detalle.placa_operativa || body.placa || body.cabezal)) {
+      throw new Error("Local requiere placa o unidad.");
+    }
+
+    if (!nonEmpty(detalle.tipo || body.tipo)) {
+      throw new Error("Local requiere tipo de unidad.");
+    }
+
+    if (!asId(body.ruta_id || body.rutaId) && !(nonEmpty(detalle.origen || body.origen) && nonEmpty(detalle.destino || body.destino))) {
+      throw new Error("Local requiere ruta, origen y destino.");
+    }
+
+    if (!timeline.some((row) => nonEmpty(row?.estatus))) {
+      throw new Error("Local requiere al menos un estatus operativo.");
+    }
+  }
+
+  if (tipoAsignacion === "fiduca") {
+    if (!asId(body.piloto_id || body.pilotos_id || body.pilotoId)) {
+      throw new Error("FIDUCA requiere piloto.");
+    }
+    if (!nonEmpty(detalle.placa_piloto)) throw new Error("FIDUCA requiere placa del piloto / unidad.");
+    if (!nonEmpty(detalle.dpi_piloto)) throw new Error("FIDUCA requiere DPI del piloto.");
+    if (!nonEmpty(detalle.fecha_nacimiento_piloto)) throw new Error("FIDUCA requiere fecha de nacimiento.");
+    if (!nonEmpty(detalle.nit_piloto)) throw new Error("FIDUCA requiere NIT del piloto.");
+    if (!nonEmpty(detalle.empresa_transporte)) throw new Error("FIDUCA requiere nombre del transporte.");
+    if (!nonEmpty(detalle.nit_transportista)) throw new Error("FIDUCA requiere NIT del transportista.");
+    if (!nonEmpty(detalle.caat)) throw new Error("FIDUCA requiere CAAT.");
+    if (!nonEmpty(detalle.numero_economico)) throw new Error("FIDUCA requiere número económico.");
+    if (!nonEmpty(detalle.fianza)) throw new Error("FIDUCA requiere fianza o N/A.");
+    if (!nonEmpty(detalle.codigo_aduanero)) throw new Error("FIDUCA requiere código aduanero o N/A.");
+  }
+
+  if (tipoAsignacion === "centroamerica") {
+    if (!asId(body.ruta_id || body.rutaId) && !(nonEmpty(detalle.origen || body.origen) && nonEmpty(detalle.destino || body.destino))) {
+      throw new Error("Centroamérica requiere ruta.");
+    }
+    if (!asId(body.piloto_id || body.pilotos_id || body.pilotoId)) {
+      throw new Error("Centroamérica requiere piloto.");
+    }
+    if (!nonEmpty(detalle.dpi_piloto)) throw new Error("Centroamérica requiere DPI.");
+    if (!nonEmpty(detalle.pasaporte)) throw new Error("Centroamérica requiere pasaporte o N/A.");
+    if (!nonEmpty(detalle.cabezal || body.cabezal)) throw new Error("Centroamérica requiere cabezal.");
+    if (!nonEmpty(detalle.furgon)) throw new Error("Centroamérica requiere furgón o N/A.");
+    if (!nonEmpty(detalle.codigo_equipo)) throw new Error("Centroamérica requiere código o N/A.");
+    if (!nonEmpty(detalle.fianza)) throw new Error("Centroamérica requiere fianza o N/A.");
+    if (!nonEmpty(detalle.tamano_equipo)) throw new Error("Centroamérica requiere tamaño o tipo de equipo.");
+    if (!nonEmpty(detalle.empresa_transporte)) throw new Error("Centroamérica requiere nombre del transporte.");
+    if (!nonEmpty(detalle.fecha_posicionamiento)) throw new Error("Centroamérica requiere fecha de posicionamiento.");
+  }
+
+  if (tipoAsignacion === "internacional") {
+    const timeline = Array.isArray(detalle.estatus_seguimiento)
+      ? detalle.estatus_seguimiento
+      : [];
+
+    if (!asId(body.cliente_id || body.clienteId)) {
+      throw new Error("Internacional requiere cliente.");
+    }
+    if (!asId(body.piloto_id || body.pilotos_id || body.pilotoId)) {
+      throw new Error("Internacional requiere piloto.");
+    }
+    if (!nonEmpty(detalle.caat)) throw new Error("Internacional requiere CAAT.");
+    if (!nonEmpty(detalle.empresa_transporte)) throw new Error("Internacional requiere nombre del transporte.");
+    if (!asId(body.ruta_id || body.rutaId) && !(nonEmpty(detalle.origen || body.origen) && nonEmpty(detalle.destino || body.destino))) {
+      throw new Error("Internacional requiere ruta, origen y destino.");
+    }
+    if (!nonEmpty(detalle.numero_economico)) throw new Error("Internacional requiere número económico.");
+    if (!nonEmpty(detalle.unidad || body.cabezal || body.placa)) throw new Error("Internacional requiere unidad.");
+    if (!nonEmpty(detalle.tamano_equipo)) throw new Error("Internacional requiere tamaño.");
+    if (Number(detalle.dias_servicio || 0) <= 0) throw new Error("Los días de servicio deben ser mayores a 0.");
+    if (!timeline.some((row) => nonEmpty(row?.estatus))) {
+      throw new Error("Internacional requiere al menos un estatus del servicio.");
+    }
+  }
 
   const clienteId = await findOrCreateCliente(connection, body);
   const rutaId = await findOrCreateRuta(connection, body);
   const vehiculoId = await findOrCreateVehiculo(connection, body);
   const pilotoId = await findOrCreatePiloto(connection, body);
-  const proveedorId = await findOrCreateProveedor(connection, body);
   const estadoId = asId(body.estado_asignacion_id || body.estado_id) || 1;
 
   const fechaCarga = asDate(body.fecha_carga || body.carga) || new Date().toISOString().slice(0, 10);
@@ -990,19 +1227,27 @@ const saveAssignment = async (connection, body, id = null) => {
 
   let asignacionId = asignacionIdEdit;
   let codigo = limpiar(body.codigo_asignacion);
+  let proveedorId = asId(body.proveedor_id || body.proveedorId);
 
   if (asignacionId) {
     const [[actual]] = await connection.query(
-      `SELECT codigo_asignacion FROM \`${T.asignacion}\` WHERE id = ?`,
+      `SELECT codigo_asignacion, proveedor_id FROM \`${T.asignacion}\` WHERE id = ?`,
       [asignacionId]
     );
 
-    codigo = codigo || actual?.codigo_asignacion || (await nextCode(connection, T.asignacion, "codigo_asignacion", "ASG"));
+    if (!actual) throw new Error("La asignación no existe.");
+
+    codigo = codigo || actual.codigo_asignacion || (await nextCode(connection, T.asignacion, "codigo_asignacion", "ASG"));
+    // En el CRUD operativo NO obligamos a seleccionar proveedor.
+    // Si el registro ya tenía proveedor porque fue cerrado, lo conservamos.
+    if (!proveedorId) proveedorId = actual.proveedor_id || null;
 
     await connection.query(
       `
       UPDATE \`${T.asignacion}\`
       SET codigo_asignacion = ?,
+          tipo_asignacion = ?,
+          detalle_operativo_json = ?,
           cliente_id = ?,
           ruta_id = ?,
           vehiculo_id = ?,
@@ -1015,11 +1260,13 @@ const saveAssignment = async (connection, body, id = null) => {
       `,
       [
         codigo,
+        tipoAsignacion,
+        detalleJson,
         clienteId,
         rutaId,
         vehiculoId,
         pilotoId,
-        proveedorId,
+        proveedorId || null,
         fechaCarga,
         fechaDescarga,
         estadoId,
@@ -1032,16 +1279,30 @@ const saveAssignment = async (connection, body, id = null) => {
     const [insert] = await connection.query(
       `
       INSERT INTO \`${T.asignacion}\`
-      (codigo_asignacion, cliente_id, ruta_id, vehiculo_id, piloto_id, proveedor_id, fecha_carga, fecha_descarga, estado_asignacion_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (
+        codigo_asignacion,
+        tipo_asignacion,
+        detalle_operativo_json,
+        cliente_id,
+        ruta_id,
+        vehiculo_id,
+        piloto_id,
+        proveedor_id,
+        fecha_carga,
+        fecha_descarga,
+        estado_asignacion_id
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         codigo,
+        tipoAsignacion,
+        detalleJson,
         clienteId,
         rutaId,
         vehiculoId,
         pilotoId,
-        proveedorId,
+        proveedorId || null,
         fechaCarga,
         fechaDescarga,
         estadoId,
@@ -1051,36 +1312,28 @@ const saveAssignment = async (connection, body, id = null) => {
     asignacionId = insert.insertId;
   }
 
-  await upsertByAsignacion(connection, T.costoAsignacion, asignacionId, {
-    asignacion_id: asignacionId,
-    flete: asMoney(body.flete),
-    parada_adicional: asMoney(body.paradaAdicional || body.parada_adicional),
-    movimiento_falso: asMoney(body.movFalso || body.movimiento_falso),
-    estadia: asMoney(body.estadia),
-    viaje_doble: asMoney(body.viajeDoble || body.viaje_doble),
-    otros: asMoney(body.otros),
-    total:
-      asMoney(body.total) ||
-      asMoney(body.flete) +
-        asMoney(body.paradaAdicional || body.parada_adicional) +
-        asMoney(body.movFalso || body.movimiento_falso) +
-        asMoney(body.estadia) +
-        asMoney(body.viajeDoble || body.viaje_doble) +
-        asMoney(body.otros),
-  });
+  // Datos operativos comunes. Se guardan desde el CRUD individual.
+  const vendedorId = body.vendedor_id || body.vendedor
+    ? await resolveUsuario(connection, body.vendedor_id || body.vendedor)
+    : null;
 
-  const vendedorId = await resolveUsuario(connection, body.vendedor || body.vendedor_id);
   const licencia =
     limpiar(body.licencia) ||
     (
-      await connection.query(`SELECT licencia FROM \`${T.piloto}\` WHERE id = ? LIMIT 1`, [pilotoId])
+      await connection.query(
+        `SELECT licencia FROM \`${T.piloto}\` WHERE id = ? LIMIT 1`,
+        [pilotoId]
+      )
     )[0]?.[0]?.licencia ||
     null;
 
   const cabezal =
     limpiar(body.cabezal) ||
     (
-      await connection.query(`SELECT codigo FROM \`${T.vehiculo}\` WHERE id = ? LIMIT 1`, [vehiculoId])
+      await connection.query(
+        `SELECT codigo FROM \`${T.vehiculo}\` WHERE id = ? LIMIT 1`,
+        [vehiculoId]
+      )
     )[0]?.[0]?.codigo ||
     null;
 
@@ -1095,33 +1348,112 @@ const saveAssignment = async (connection, body, id = null) => {
     vendedor_id: vendedorId,
   });
 
-  await upsertByAsignacion(connection, T.proveedorAsignacion, asignacionId, {
-    asignacion_id: asignacionId,
+  // MUY IMPORTANTE:
+  // Los costos, proveedor y facturas NO se crean durante la asignación operativa.
+  // Se llenan únicamente en el cierre, después de que la operación fue finalizada.
+
+  return {
+    id: asignacionId,
+    codigo_asignacion: codigo,
+    tipo_asignacion: tipoAsignacion,
+  };
+};
+
+const saveAssignmentClosing = async (connection, asignacionId, body) => {
+  const id = asId(asignacionId);
+  if (!id) throw new Error("ID de asignación inválido.");
+
+  const [[actual]] = await connection.query(
+    `SELECT id, proveedor_id FROM \`${T.asignacion}\` WHERE id = ? LIMIT 1`,
+    [id]
+  );
+
+  if (!actual) throw new Error("La asignación no existe.");
+
+  const proveedorId = asId(body.proveedor_id || body.proveedorId);
+  if (!proveedorId) throw new Error("Selecciona el proveedor antes de guardar el cierre.");
+
+  await connection.query(
+    `UPDATE \`${T.asignacion}\` SET proveedor_id = ? WHERE id = ?`,
+    [proveedorId, id]
+  );
+
+  const totalCliente =
+    asMoney(body.total) ||
+    asMoney(body.costo_auxiliar || body.auxiliar) +
+      asMoney(body.flete) +
+      asMoney(body.paradaAdicional || body.parada_adicional) +
+      asMoney(body.movFalso || body.movimiento_falso) +
+      asMoney(body.estadia) +
+      asMoney(body.viajeDoble || body.viaje_doble) +
+      asMoney(body.otros);
+
+  const totalProveedor =
+    asMoney(body.totalProveedor || body.total_proveedor) ||
+    asMoney(body.fleteProveedor || body.flete_proveedor) +
+      asMoney(body.cuadrilla) +
+      asMoney(body.estadiaProveedor || body.estadia_proveedor);
+
+  await upsertByAsignacion(connection, T.costoAsignacion, id, {
+    asignacion_id: id,
+    costo_auxiliar: asMoney(body.costo_auxiliar || body.auxiliar),
+    flete: asMoney(body.flete),
+    parada_adicional: asMoney(body.paradaAdicional || body.parada_adicional),
+    movimiento_falso: asMoney(body.movFalso || body.movimiento_falso),
+    estadia: asMoney(body.estadia),
+    viaje_doble: asMoney(body.viajeDoble || body.viaje_doble),
+    otros: asMoney(body.otros),
+    total: totalCliente,
+  });
+
+  const vendedorId = body.vendedor_id || body.vendedor
+    ? await resolveUsuario(connection, body.vendedor_id || body.vendedor)
+    : null;
+
+  // Conserva unidad/piloto y actualiza únicamente datos del cierre.
+  const [[uo]] = await connection.query(
+    `SELECT id FROM \`${T.unidadOperacion}\` WHERE asignacion_id = ? LIMIT 1`,
+    [id]
+  );
+
+  const unidadData = {
+    asignacion_id: id,
+    km: asMoney(body.km),
+    documentos: limpiar(body.doc || body.documentos) || "Pendiente",
+    vendedor_id: vendedorId,
+  };
+
+  if (uo?.id) await updateGeneric(connection, T.unidadOperacion, uo.id, unidadData);
+  else await insertGeneric(connection, T.unidadOperacion, unidadData);
+
+  await upsertByAsignacion(connection, T.proveedorAsignacion, id, {
+    asignacion_id: id,
     proveedor_id: proveedorId,
-    fecha: asDate(body.fechaProveedor || body.fecha_proveedor) || fechaCarga,
+    fecha: asDate(body.fechaProveedor || body.fecha_proveedor),
     serie: limpiar(body.serieProveedor || body.serie_proveedor) || null,
     numero: limpiar(body.numeroProveedor || body.numero_proveedor) || null,
     flete: asMoney(body.fleteProveedor || body.flete_proveedor),
     cuadrilla: asMoney(body.cuadrilla),
     estadia: asMoney(body.estadiaProveedor || body.estadia_proveedor),
-    total:
-      asMoney(body.totalProveedor || body.total_proveedor) ||
-      asMoney(body.fleteProveedor || body.flete_proveedor) +
-        asMoney(body.cuadrilla) +
-        asMoney(body.estadiaProveedor || body.estadia_proveedor),
+    total: totalProveedor,
     fecha_pago: asDate(body.fechaPagoProveedor || body.fecha_pago_proveedor),
   });
 
-  await upsertByAsignacion(connection, T.facturaAsignacion, asignacionId, {
-    asignacion_id: asignacionId,
+  await upsertByAsignacion(connection, T.facturaAsignacion, id, {
+    asignacion_id: id,
     fecha: asDate(body.fechaFactura || body.fecha_factura),
     serie: limpiar(body.serieFactura || body.serie_factura) || null,
     numero: limpiar(body.numeroFactura || body.numero_factura) || null,
-    valor: asMoney(body.valorFactura || body.valor_factura || body.total),
+    valor: asMoney(body.valorFactura || body.valor_factura || totalCliente),
     fecha_pago: asDate(body.fechaPagoFactura || body.fecha_pago_factura),
   });
 
-  return { id: asignacionId, codigo_asignacion: codigo };
+  return {
+    id,
+    total: totalCliente,
+    total_proveedor: totalProveedor,
+    margen: totalCliente - totalProveedor,
+  };
 };
 
 const deleteAssignment = async (connection, id) => {
@@ -1162,6 +1494,8 @@ const queryAsignaciones = `
   SELECT
     a.id,
     a.codigo_asignacion,
+    a.tipo_asignacion,
+    a.detalle_operativo_json,
     a.cliente_id,
     a.ruta_id,
     a.vehiculo_id,
@@ -1193,9 +1527,12 @@ const queryAsignaciones = `
     uo.auxiliar_id,
     uo.km,
     uo.documentos AS doc,
+    uo.vendedor_id,
     uv.nombre_usuario AS vendedor,
     ${fullNameSQL("uv")} AS vendedor_nombre,
 
+    ca.costo_auxiliar,
+    ca.costo_auxiliar AS auxiliar,
     ca.flete,
     ca.parada_adicional,
     ca.movimiento_falso,
@@ -1349,6 +1686,92 @@ const queryPilotos = `
   FROM \`${T.piloto}\` p
 `;
 
+router.get("/operaciones/tipos-asignacion", (req, res) => {
+  return ok(res, [
+    {
+      value: "local",
+      label: "Local",
+      descripcion:
+        "Asignación nacional de unidad, piloto, ruta y estatus operativo.",
+    },
+    {
+      value: "fiduca",
+      label: "FIDUCA",
+      descripcion:
+        "Asignación con información de piloto, transportista, CAAT, fianza y código aduanero.",
+    },
+    {
+      value: "centroamerica",
+      label: "Centroamérica",
+      descripcion:
+        "Asignación regional con datos de equipo, transportista y posicionamiento.",
+    },
+    {
+      value: "internacional",
+      label: "Internacional",
+      descripcion:
+        "Asignación internacional con CAAT, número económico, días de servicio y seguimiento por fecha/hora.",
+    },
+  ]);
+});
+
+router.post("/operaciones/catalogos/clientes", async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const id = await findOrCreateCliente(connection, req.body);
+    const [[row]] = await connection.query(
+      `SELECT * FROM \`${T.cliente}\` WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    await connection.commit();
+    return ok(res, row, "Cliente creado correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    return fail(res, 500, "No se pudo crear el cliente.", error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.post("/operaciones/catalogos/pilotos", async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const id = await findOrCreatePiloto(connection, req.body);
+    const [[row]] = await connection.query(
+      `${queryPilotos} WHERE p.id = ? LIMIT 1`,
+      [id]
+    );
+    await connection.commit();
+    return ok(res, row, "Piloto creado correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    return fail(res, 500, "No se pudo crear el piloto.", error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.post("/operaciones/catalogos/rutas", async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const id = await findOrCreateRuta(connection, req.body);
+    const [[row]] = await connection.query(
+      `${queryRutas} WHERE r.id = ? LIMIT 1`,
+      [id]
+    );
+    await connection.commit();
+    return ok(res, row, "Ruta creada correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    return fail(res, 500, "No se pudo crear la ruta.", error);
+  } finally {
+    connection.release();
+  }
+});
+
 router.get("/operaciones/bootstrap", async (req, res) => {
   try {
     const [asignaciones] = await pool.query(`${queryAsignaciones} ORDER BY a.id DESC`);
@@ -1438,9 +1861,98 @@ router.put("/operaciones/asignaciones/:id", async (req, res) => {
   }
 });
 
-router.patch("/operaciones/asignaciones/:id", async (req, res) => {
-  req.method = "PUT";
-  return router.handle(req, res);
+const updateAssignment = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const result = await saveAssignment(connection, req.body, req.params.id);
+    await connection.commit();
+    return ok(res, result, "Asignación actualizada correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    console.error("Error al actualizar asignación:", error);
+    return fail(res, 500, "No se pudo actualizar la asignación.", error);
+  } finally {
+    connection.release();
+  }
+};
+
+router.patch("/operaciones/asignaciones/:id", updateAssignment);
+
+router.patch("/operaciones/asignaciones/:id/finalizar", async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const id = asId(req.params.id);
+    if (!id) {
+      await connection.rollback();
+      return fail(res, 400, "ID de asignación inválido.");
+    }
+
+    const [states] = await connection.query(
+      `
+      SELECT id, nombre_estado_asignacion
+      FROM \`${T.estadoAsignacion}\`
+      WHERE LOWER(nombre_estado_asignacion) LIKE '%final%'
+      ORDER BY id
+      LIMIT 1
+      `
+    );
+
+    const finalState = states[0];
+    if (!finalState?.id) {
+      await connection.rollback();
+      return fail(
+        res,
+        400,
+        "No existe un estado Finalizado en estado_asignacion. Créalo antes de finalizar operaciones."
+      );
+    }
+
+    await connection.query(
+      `UPDATE \`${T.asignacion}\` SET estado_asignacion_id = ? WHERE id = ?`,
+      [finalState.id, id]
+    );
+
+    await connection.commit();
+    return ok(res, { id, estado_asignacion_id: finalState.id }, "Operación finalizada correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    console.error("Error al finalizar asignación:", error);
+    return fail(res, 500, "No se pudo finalizar la operación.", error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.put("/operaciones/asignaciones/:id/cierre", async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const result = await saveAssignmentClosing(connection, req.params.id, req.body);
+    await connection.commit();
+    return ok(res, result, "Cierre de operación guardado correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    console.error("Error al guardar cierre de asignación:", error);
+    return fail(res, 500, "No se pudo guardar el cierre de la operación.", error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.get("/operaciones/asignaciones-finalizadas", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `${queryAsignaciones}
+       WHERE LOWER(ea.nombre_estado_asignacion) LIKE '%final%'
+       ORDER BY a.id DESC`
+    );
+    return ok(res, rows);
+  } catch (error) {
+    console.error("Error asignaciones finalizadas:", error);
+    return fail(res, 500, "No se pudieron obtener las operaciones finalizadas.", error);
+  }
 });
 
 router.delete("/operaciones/asignaciones/:id", async (req, res) => {

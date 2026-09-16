@@ -7,16 +7,6 @@ const {
 
 const router = express.Router();
 
-/*
-  =====================================================
-  SEGURIDAD DEL MÓDULO CRM Y VENTAS
-  =====================================================
-
-  Este router está montado en /api, por lo que NO se debe
-  aplicar autorizarRoles() de forma global al router completo.
-
-  Se protegen únicamente las rutas que pertenecen al CRM.
-*/
 const soloCRM = autorizarRoles("gerencia", "ventas");
 
 router.use("/crm", soloCRM);
@@ -26,6 +16,8 @@ router.use("/telefonos-contacto", soloCRM);
 router.use("/oportunidades", soloCRM);
 router.use("/cotizaciones", soloCRM);
 router.use("/prefijos-telefonicos", soloCRM);
+router.use("/proveedores", soloCRM);
+router.use("/rutas-crm", soloCRM);
 
 const T = {
   cliente: "cliente",
@@ -42,6 +34,19 @@ const T = {
   ubicacion: "ubicacion",
   cotizacion: "cotizacion",
   cotizacionDetalle: "cotizacion_detalle",
+
+  proveedor: "proveedor",
+  contactoProveedor: "contacto_proveedor",
+  servicioProveedor: "servicio_proveedor",
+  cumplimientoProveedor: "cumplimiento_proveedor",
+  desempenoProveedor: "desempeno_proveedor",
+  estadoProveedor: "estado_proveedor",
+  asignacion: "asignacion",
+  proveedorAsignacion: "proveedor_asignacion",
+
+  ruta: "ruta",
+  frecuenciaRuta: "frecuencia_ruta",
+  estadoRuta: "estado_ruta",
 };
 
 const ok = (res, data = null, message = "Operación realizada correctamente.") =>
@@ -55,6 +60,16 @@ const fail = (res, status, message, error = null) =>
   });
 
 const limpiar = (valor) => String(valor ?? "").trim();
+const primeraMayuscula = (valor) => {
+  const texto = String(valor ?? "");
+
+  return texto.replace(
+    /(^\s*)([a-záéíóúüñ])/i,
+    (_m, espacios, letra) =>
+      `${espacios}${String(letra).toLocaleUpperCase("es-GT")}`
+  );
+};
+
 const soloLetras = (valor, max = 60) =>
   limpiar(valor)
     .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s'-]/g, "")
@@ -65,14 +80,22 @@ const soloLetras = (valor, max = 60) =>
     .slice(0, max);
 const soloNumeros = (valor, max = 15) => limpiar(valor).replace(/\D/g, "").slice(0, max);
 const textoComercial = (valor, max = 120) =>
-  limpiar(valor)
-    .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\s.,&()'/-]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
+  primeraMayuscula(
+    limpiar(valor)
+      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\s.,&()'/-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+  ).slice(0, max);
 const textoDireccion = (valor, max = 180) =>
+  primeraMayuscula(
+    limpiar(valor)
+      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\s.,#&()'/-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+  ).slice(0, max);
+
+const textoMotivo = (valor, max = 250) =>
   limpiar(valor)
-    .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\s.,#&()'/-]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
@@ -428,7 +451,7 @@ const obtenerContactoPrincipal = async (connection, clienteId) => {
     SELECT id
     FROM \`${T.contacto}\`
     WHERE cliente_id = ?
-    ORDER BY es_principal DESC, id ASC
+    ORDER BY es_principal DESC, id DESC
     LIMIT 1
     `,
     [clienteId]
@@ -447,10 +470,50 @@ const guardarContactoPrincipal = async (connection, clienteId, body) => {
   const cargo = limpiar(body.cargo) || "Contacto principal";
 
   const telefonos = [
-    limpiar(body.telefono1 || body.phone1),
-    limpiar(body.telefono2 || body.phone2),
-    limpiar(body.telefono3 || body.phone3),
-  ].filter(Boolean);
+    {
+      numero: limpiar(
+        body.telefono1 || body.phone1
+      ),
+      prefijoId:
+        asId(
+          body.prefijo_telefonico_id1 ||
+          body.prefijo_telefonico_id ||
+          body.phonePrefixId1
+        ) || null,
+      tipo:
+        limpiar(body.tipo_telefono1) ||
+        limpiar(body.phoneType1) ||
+        "Oficina",
+    },
+    {
+      numero: limpiar(
+        body.telefono2 || body.phone2
+      ),
+      prefijoId:
+        asId(
+          body.prefijo_telefonico_id2 ||
+          body.phonePrefixId2
+        ) || null,
+      tipo:
+        limpiar(body.tipo_telefono2) ||
+        limpiar(body.phoneType2) ||
+        "Móvil",
+    },
+    {
+      numero: limpiar(
+        body.telefono3 || body.phone3
+      ),
+      prefijoId:
+        asId(
+          body.prefijo_telefonico_id3 ||
+          body.phonePrefixId3
+        ) || null,
+      tipo:
+        limpiar(body.tipo_telefono3) ||
+        limpiar(body.phoneType3) ||
+        "WhatsApp",
+    },
+  ].filter((item) => item.numero);
 
   if (!representante && !correo && telefonos.length === 0) {
     return await obtenerContactoPrincipal(connection, clienteId);
@@ -515,17 +578,40 @@ const guardarContactoPrincipal = async (connection, clienteId, body) => {
   }
 
   if (telefonos.length > 0) {
-    const prefijoId = await obtenerPrefijoGT();
-    await connection.query(`DELETE FROM \`${T.telefono}\` WHERE contacto_id = ?`, [contactoId]);
+    const prefijoGT =
+      await obtenerPrefijoGT();
+
+    await connection.query(
+      `DELETE FROM \`${T.telefono}\` WHERE contacto_id = ?`,
+      [contactoId]
+    );
 
     for (const [index, tel] of telefonos.entries()) {
+      const telefonoValidado =
+        await validarTelefonoPorPrefijo(
+          tel.prefijoId || prefijoGT,
+          tel.numero
+        );
+
       await connection.query(
         `
         INSERT INTO \`${T.telefono}\`
-        (contacto_id, prefijo_telefonico_id, telefono, tipo_telefono, es_principal)
+        (
+          contacto_id,
+          prefijo_telefonico_id,
+          telefono,
+          tipo_telefono,
+          es_principal
+        )
         VALUES (?, ?, ?, ?, ?)
         `,
-        [contactoId, prefijoId, tel, index === 0 ? "Principal" : `Secundario ${index}`, index === 0 ? 1 : 0]
+        [
+          contactoId,
+          telefonoValidado.prefijoId,
+          telefonoValidado.numero,
+          tel.tipo || (index === 0 ? "Oficina" : "Móvil"),
+          index === 0 ? 1 : 0,
+        ]
       );
     }
   }
@@ -542,6 +628,449 @@ router.get("/prefijos-telefonicos", async (req, res) => {
   }
 });
 
+
+// =====================================================
+// PROVEEDORES Y RUTAS COMERCIALES
+// =====================================================
+
+const queryProveedoresCRM = `
+  SELECT
+    p.id,
+    p.codigo_proveedor,
+    p.razon_social,
+    p.nombre_comercial,
+    p.nit,
+    p.estado_id,
+    p.correo,
+    p.telefono,
+    COALESCE(ep.nombre_estado_proveedor, 'Activo') AS estado,
+    COALESCE(ep.nombre_estado_proveedor, 'Activo') AS nombre_estado_proveedor,
+    COALESCE(sp.nombre_servicio_proveedor, '') AS servicio_principal,
+    COALESCE(dp.nivel, 'Amarillo') AS desempeno,
+    COALESCE(dp.historial, '') AS historial,
+    COALESCE(dp.hallazgos, '') AS hallazgos,
+    dp.fecha AS fecha_evaluacion,
+    COALESCE(cp.estado_sat, 'pendiente') AS estado_sat,
+    COALESCE(cp.lista_clinton, 0) AS lista_clinton,
+    COALESCE(cp.rtu_validado, 0) AS rtu_validado,
+    COALESCE(cp.licencia_validada, 0) AS licencia_validada,
+    COALESCE(cp.cuenta_validada, 0) AS cuenta_validada
+  FROM \`${T.proveedor}\` p
+  LEFT JOIN \`${T.estadoProveedor}\` ep ON ep.id = p.estado_id
+  LEFT JOIN \`${T.servicioProveedor}\` sp
+    ON sp.id = (
+      SELECT x.id
+      FROM \`${T.servicioProveedor}\` x
+      WHERE x.proveedor_id = p.id
+      ORDER BY x.es_principal DESC, x.id ASC
+      LIMIT 1
+    )
+  LEFT JOIN \`${T.cumplimientoProveedor}\` cp ON cp.proveedor_id = p.id
+  LEFT JOIN \`${T.desempenoProveedor}\` dp
+    ON dp.id = (
+      SELECT x.id
+      FROM \`${T.desempenoProveedor}\` x
+      WHERE x.proveedor_id = p.id
+      ORDER BY x.fecha DESC, x.id DESC
+      LIMIT 1
+    )
+`;
+
+const obtenerDatosProveedoresCRM = async (connection = pool) => {
+  const [proveedores] = await connection.query(`${queryProveedoresCRM} ORDER BY p.id DESC`);
+  const [contactosProveedor] = await connection.query(
+    `SELECT * FROM \`${T.contactoProveedor}\` ORDER BY proveedor_id, es_principal DESC, id DESC`
+  );
+  const [serviciosProveedor] = await connection.query(
+    `SELECT * FROM \`${T.servicioProveedor}\` ORDER BY proveedor_id, es_principal DESC, id ASC`
+  );
+  const [cumplimientosProveedor] = await connection.query(
+    `SELECT * FROM \`${T.cumplimientoProveedor}\` ORDER BY proveedor_id, id DESC`
+  );
+  const [desempenosProveedor] = await connection.query(
+    `SELECT * FROM \`${T.desempenoProveedor}\` ORDER BY proveedor_id, fecha DESC, id DESC`
+  );
+  const [estadosProveedor] = await connection.query(
+    `SELECT * FROM \`${T.estadoProveedor}\` ORDER BY id`
+  );
+
+  return {
+    proveedores,
+    contactosProveedor,
+    serviciosProveedor,
+    cumplimientosProveedor,
+    desempenosProveedor,
+    estadosProveedor,
+  };
+};
+
+const guardarProveedorCRM = async (connection, body, proveedorId = null) => {
+  const razonSocial = textoComercial(
+    body.razon_social || body.nombre_proveedor || body.nombre_empresa || body.proveedor,
+    140
+  );
+  const nombreComercial = textoComercial(
+    body.nombre_comercial || body.nombreComercial || razonSocial,
+    120
+  );
+  const nit = limpiar(body.nit);
+  const correo = limpiar(body.correo).toLowerCase() || null;
+  const telefono = soloNumeros(body.telefono, 15) || null;
+  const estadoId = asId(body.estado_id || body.estado_proveedor_id) ||
+    (limpiar(body.estado).toLowerCase().includes('inactivo') ? 2 : 1);
+
+  if (!razonSocial) {
+    const error = new Error('La razón social del proveedor es obligatoria.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!nit) {
+    const error = new Error('El NIT del proveedor es obligatorio.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const [duplicados] = await connection.query(
+    `SELECT id FROM \`${T.proveedor}\` WHERE LOWER(nit)=LOWER(?) AND id <> COALESCE(?, 0) LIMIT 1`,
+    [nit, asId(proveedorId)]
+  );
+  if (duplicados.length) {
+    const error = new Error('Ya existe otro proveedor con ese NIT.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let id = asId(proveedorId);
+  if (id) {
+    const [result] = await connection.query(
+      `UPDATE \`${T.proveedor}\`
+       SET razon_social=?, nombre_comercial=?, nit=?, estado_id=?, correo=?, telefono=?
+       WHERE id=?`,
+      [razonSocial, nombreComercial || null, nit, estadoId, correo, telefono, id]
+    );
+    if (!result.affectedRows) {
+      const error = new Error('No se encontró el proveedor.');
+      error.statusCode = 404;
+      throw error;
+    }
+  } else {
+    const codigo = limpiar(body.codigo_proveedor) || await nextCode(T.proveedor, 'codigo_proveedor', 'PRO');
+    const [insert] = await connection.query(
+      `INSERT INTO \`${T.proveedor}\`
+       (codigo_proveedor, razon_social, nombre_comercial, nit, estado_id, correo, telefono)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [codigo, razonSocial, nombreComercial || null, nit, estadoId, correo, telefono]
+    );
+    id = insert.insertId;
+  }
+
+  // Contactos: el formulario CRM envía el expediente completo.
+  if (Array.isArray(body.contactos)) {
+    await connection.query(`DELETE FROM \`${T.contactoProveedor}\` WHERE proveedor_id=?`, [id]);
+    const contactos = body.contactos.filter((c) => limpiar(c.primer_nombre) || limpiar(c.primer_apellido));
+    for (let index = 0; index < contactos.length; index += 1) {
+      const c = contactos[index];
+      await connection.query(
+        `INSERT INTO \`${T.contactoProveedor}\`
+         (proveedor_id, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, cargo, correo, telefono, es_principal, estado)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          soloLetras(c.primer_nombre, 35) || 'Contacto',
+          soloLetras(c.segundo_nombre, 35) || null,
+          soloLetras(c.primer_apellido, 35) || 'Principal',
+          soloLetras(c.segundo_apellido, 35) || null,
+          textoComercial(c.cargo, 60) || null,
+          limpiar(c.correo).toLowerCase() || null,
+          soloNumeros(c.telefono, 15) || null,
+          c.es_principal || index === 0 ? 1 : 0,
+          c.estado === false ? 0 : 1,
+        ]
+      );
+    }
+  }
+
+  if (Array.isArray(body.servicios)) {
+    await connection.query(`DELETE FROM \`${T.servicioProveedor}\` WHERE proveedor_id=?`, [id]);
+    const servicios = body.servicios.filter((s) => limpiar(s.nombre_servicio_proveedor));
+    for (let index = 0; index < servicios.length; index += 1) {
+      const s = servicios[index];
+      const codigo = limpiar(s.codigo_servicio) || await nextCode(T.servicioProveedor, 'codigo_servicio', 'SRV');
+      await connection.query(
+        `INSERT INTO \`${T.servicioProveedor}\`
+         (codigo_servicio, es_principal, nombre_servicio_proveedor, proveedor_id)
+         VALUES (?, ?, ?, ?)`,
+        [codigo, s.es_principal || index === 0 ? 1 : 0, textoComercial(s.nombre_servicio_proveedor, 100), id]
+      );
+    }
+  }
+
+  const cumplimiento = body.cumplimiento || {};
+  const estadoSatRaw = limpiar(cumplimiento.estado_sat || body.estado_sat || 'pendiente').toLowerCase();
+  const estadoSat = estadoSatRaw.includes('no') ? 'no_vigente' : estadoSatRaw.includes('vig') ? 'vigente' : 'pendiente';
+  const [[cumActual]] = await connection.query(
+    `SELECT id FROM \`${T.cumplimientoProveedor}\` WHERE proveedor_id=? ORDER BY id DESC LIMIT 1`,
+    [id]
+  );
+  const cumValues = [
+    estadoSat,
+    cumplimiento.lista_clinton ? 1 : 0,
+    cumplimiento.rtu_validado ? 1 : 0,
+    cumplimiento.licencia_validada ? 1 : 0,
+    cumplimiento.cuenta_validada ? 1 : 0,
+  ];
+  if (cumActual?.id) {
+    await connection.query(
+      `UPDATE \`${T.cumplimientoProveedor}\`
+       SET estado_sat=?, lista_clinton=?, rtu_validado=?, licencia_validada=?, cuenta_validada=?
+       WHERE id=?`,
+      [...cumValues, cumActual.id]
+    );
+  } else {
+    await connection.query(
+      `INSERT INTO \`${T.cumplimientoProveedor}\`
+       (proveedor_id, estado_sat, lista_clinton, rtu_validado, licencia_validada, cuenta_validada)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, ...cumValues]
+    );
+  }
+
+  const desempeño = body.desempeno || body.desempenio || {};
+  const nivelRaw = limpiar(desempeño.nivel || body.nivel || 'Amarillo').toLowerCase();
+  const nivel = nivelRaw.includes('verd') ? 'Verde' : nivelRaw.includes('roj') ? 'Rojo' : 'Amarillo';
+  const [[desActual]] = await connection.query(
+    `SELECT id FROM \`${T.desempenoProveedor}\` WHERE proveedor_id=? ORDER BY fecha DESC, id DESC LIMIT 1`,
+    [id]
+  );
+  const desValues = [
+    nivel,
+    limpiar(desempeño.historial || body.historial) || null,
+    limpiar(desempeño.hallazgos || body.hallazgos) || null,
+    asDate(desempeño.fecha || body.fecha_evaluacion) || new Date().toISOString().slice(0, 10),
+  ];
+  if (desActual?.id) {
+    await connection.query(
+      `UPDATE \`${T.desempenoProveedor}\`
+       SET nivel=?, historial=?, hallazgos=?, fecha=? WHERE id=?`,
+      [...desValues, desActual.id]
+    );
+  } else {
+    await connection.query(
+      `INSERT INTO \`${T.desempenoProveedor}\`
+       (proveedor_id, nivel, historial, hallazgos, fecha)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, ...desValues]
+    );
+  }
+
+  return id;
+};
+
+const resolveOrCreateUbicacionCRM = async (connection, value, pais = 'Guatemala') => {
+  const id = asId(value);
+  if (id) return id;
+  const nombre = textoComercial(value, 100);
+  if (!nombre) return null;
+
+  const [rows] = await connection.query(
+    `SELECT id FROM \`${T.ubicacion}\`
+     WHERE LOWER(nombre_ubicacion)=LOWER(?) AND LOWER(pais)=LOWER(?)
+     ORDER BY id LIMIT 1`,
+    [nombre, limpiar(pais) || 'Guatemala']
+  );
+  if (rows[0]?.id) return rows[0].id;
+
+  const codigo = slugCodigo(`${nombre}${pais}`, 'UB');
+  const [insert] = await connection.query(
+    `INSERT INTO \`${T.ubicacion}\` (codigo_ubicacion, nombre_ubicacion, pais)
+     VALUES (?, ?, ?)`,
+    [codigo, nombre, textoComercial(pais, 60) || 'Guatemala']
+  );
+  return insert.insertId;
+};
+
+const obtenerRutasCRM = async (connection = pool) => {
+  const [rows] = await connection.query(
+    `SELECT r.*, uo.nombre_ubicacion AS origen, uo.pais AS pais_origen,
+            ud.nombre_ubicacion AS destino, ud.pais AS pais_destino
+     FROM \`${T.ruta}\` r
+     LEFT JOIN \`${T.ubicacion}\` uo ON uo.id=r.origen_id
+     LEFT JOIN \`${T.ubicacion}\` ud ON ud.id=r.destino_id
+     ORDER BY r.id DESC`
+  );
+  return rows;
+};
+
+router.get('/crm/proveedores', async (req, res) => {
+  try {
+    return ok(res, await obtenerDatosProveedoresCRM());
+  } catch (error) {
+    console.error('Error al obtener proveedores CRM:', error);
+    return fail(res, 500, 'No se pudieron obtener los proveedores.', error);
+  }
+});
+
+router.post('/crm/proveedores', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const id = await guardarProveedorCRM(connection, req.body);
+    await connection.commit();
+    return ok(res, { id }, 'Proveedor guardado correctamente.');
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error al guardar proveedor CRM:', error);
+    return fail(res, error.statusCode || 500, error.message || 'No se pudo guardar el proveedor.', error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.put('/crm/proveedores/:id', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const id = asId(req.params.id);
+    if (!id) {
+      await connection.rollback();
+      return fail(res, 400, 'ID de proveedor inválido.');
+    }
+    await guardarProveedorCRM(connection, req.body, id);
+    await connection.commit();
+    return ok(res, { id }, 'Proveedor actualizado correctamente.');
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error al actualizar proveedor CRM:', error);
+    return fail(res, error.statusCode || 500, error.message || 'No se pudo actualizar el proveedor.', error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.delete('/crm/proveedores/:id', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const id = asId(req.params.id);
+    if (!id) {
+      await connection.rollback();
+      return fail(res, 400, 'ID de proveedor inválido.');
+    }
+
+    let relacionados = 0;
+    try {
+      const [[a]] = await connection.query(`SELECT COUNT(*) AS total FROM \`${T.asignacion}\` WHERE proveedor_id=?`, [id]);
+      relacionados += Number(a?.total || 0);
+    } catch {}
+    try {
+      const [[pa]] = await connection.query(`SELECT COUNT(*) AS total FROM \`${T.proveedorAsignacion}\` WHERE proveedor_id=?`, [id]);
+      relacionados += Number(pa?.total || 0);
+    } catch {}
+
+    if (relacionados > 0) {
+      await connection.query(`UPDATE \`${T.proveedor}\` SET estado_id=2 WHERE id=?`, [id]);
+      await connection.commit();
+      return ok(res, { id, inactivado: true }, 'El proveedor tiene operaciones relacionadas, por eso se marcó como Inactivo.');
+    }
+
+    await connection.query(`DELETE FROM \`${T.contactoProveedor}\` WHERE proveedor_id=?`, [id]);
+    await connection.query(`DELETE FROM \`${T.servicioProveedor}\` WHERE proveedor_id=?`, [id]);
+    await connection.query(`DELETE FROM \`${T.cumplimientoProveedor}\` WHERE proveedor_id=?`, [id]);
+    await connection.query(`DELETE FROM \`${T.desempenoProveedor}\` WHERE proveedor_id=?`, [id]);
+    const [result] = await connection.query(`DELETE FROM \`${T.proveedor}\` WHERE id=?`, [id]);
+    if (!result.affectedRows) {
+      await connection.rollback();
+      return fail(res, 404, 'No se encontró el proveedor.');
+    }
+    await connection.commit();
+    return ok(res, { id, eliminado: true }, 'Proveedor eliminado correctamente.');
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error al eliminar proveedor CRM:', error);
+    return fail(res, 500, 'No se pudo eliminar el proveedor.', error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.get('/crm/rutas', async (req, res) => {
+  try {
+    return ok(res, await obtenerRutasCRM());
+  } catch (error) {
+    console.error('Error al obtener rutas CRM:', error);
+    return fail(res, 500, 'No se pudieron obtener las rutas.', error);
+  }
+});
+
+router.post('/crm/rutas', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const origenId = await resolveOrCreateUbicacionCRM(
+      connection,
+      req.body.origen_id || req.body.origen,
+      req.body.pais_origen || 'Guatemala'
+    );
+    const destinoId = await resolveOrCreateUbicacionCRM(
+      connection,
+      req.body.destino_id || req.body.destino,
+      req.body.pais_destino || 'Guatemala'
+    );
+
+    if (!origenId || !destinoId) {
+      await connection.rollback();
+      return fail(res, 400, 'Origen y destino son obligatorios.');
+    }
+    if (Number(origenId) === Number(destinoId)) {
+      await connection.rollback();
+      return fail(res, 400, 'El origen y el destino deben ser diferentes.');
+    }
+
+    const [[existente]] = await connection.query(
+      `SELECT id, codigo_ruta, nombre_ruta FROM \`${T.ruta}\` WHERE origen_id=? AND destino_id=? LIMIT 1`,
+      [origenId, destinoId]
+    );
+    if (existente?.id) {
+      await connection.commit();
+      return ok(res, { ...existente, origen_id: origenId, destino_id: destinoId, existente: true }, 'La ruta ya estaba registrada.');
+    }
+
+    const codigo = limpiar(req.body.codigo_ruta) || await nextCode(T.ruta, 'codigo_ruta', 'RUT');
+    const [[ori]] = await connection.query(`SELECT nombre_ubicacion FROM \`${T.ubicacion}\` WHERE id=?`, [origenId]);
+    const [[des]] = await connection.query(`SELECT nombre_ubicacion FROM \`${T.ubicacion}\` WHERE id=?`, [destinoId]);
+    const nombreRuta = textoComercial(req.body.nombre_ruta || `${ori?.nombre_ubicacion || 'Origen'} - ${des?.nombre_ubicacion || 'Destino'}`, 100);
+    const frecuenciaId = await firstId(T.frecuenciaRuta);
+    const estadoId = await firstId(T.estadoRuta);
+
+    const [insert] = await connection.query(
+      `INSERT INTO \`${T.ruta}\`
+       (codigo_ruta, nombre_ruta, origen_id, destino_id, distancia_km, tiempo, costo, frecuencia_id, estado_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        codigo,
+        nombreRuta,
+        origenId,
+        destinoId,
+        asMoney(req.body.distancia_km || req.body.km),
+        Number(req.body.tiempo || 1),
+        asMoney(req.body.costo || 0),
+        frecuenciaId || 1,
+        estadoId || 1,
+      ]
+    );
+
+    await connection.commit();
+    return ok(res, { id: insert.insertId, codigo_ruta: codigo, nombre_ruta: nombreRuta, origen_id: origenId, destino_id: destinoId }, 'Ruta guardada correctamente.');
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error al guardar ruta CRM:', error);
+    return fail(res, 500, 'No se pudo guardar la ruta.', error);
+  } finally {
+    connection.release();
+  }
+});
+
 // =====================================================
 // BOOTSTRAP CRM
 // =====================================================
@@ -551,13 +1080,13 @@ router.get("/crm/bootstrap", async (req, res) => {
       SELECT c.*, ec.nombre_estado_cliente
       FROM \`${T.cliente}\` c
       LEFT JOIN \`${T.estadoCliente}\` ec ON ec.id = c.estado_cliente_id
-      ORDER BY c.id
+      ORDER BY c.id DESC
     `);
 
     const [contactos] = await pool.query(`
       SELECT *
       FROM \`${T.contacto}\`
-      ORDER BY cliente_id, es_principal DESC, id
+      ORDER BY cliente_id, id DESC
     `);
 
     const [telefonos] = await pool.query(`
@@ -568,7 +1097,7 @@ router.get("/crm/bootstrap", async (req, res) => {
         TRIM(CONCAT(COALESCE(pt.prefijo, ''), ' ', tc.telefono)) AS telefono_completo
       FROM \`${T.telefono}\` tc
       LEFT JOIN \`${T.prefijo}\` pt ON pt.id = tc.prefijo_telefonico_id
-      ORDER BY tc.contacto_id, tc.es_principal DESC, tc.id
+      ORDER BY tc.contacto_id, tc.id DESC
     `);
 
     const [oportunidades] = await pool.query(`
@@ -584,7 +1113,7 @@ router.get("/crm/bootstrap", async (req, res) => {
       LEFT JOIN \`${T.usuario}\` u ON u.id = o.ejecutivo_id
       LEFT JOIN \`${T.modalidad}\` m ON m.id = o.modalidad_id
       LEFT JOIN \`${T.estadoOportunidad}\` eo ON eo.id = o.estado_id
-      ORDER BY o.id
+      ORDER BY o.id DESC
     `);
 
     const [cotizaciones] = await pool.query(`
@@ -623,13 +1152,13 @@ router.get("/crm/bootstrap", async (req, res) => {
         ct.destino_id, c.nombre_empresa, c.nit, contacto, cc.correo,
         u.nombre_usuario, ejecutivo, m.nombre_modalidad, fp.nombre_forma_pago,
         uo.nombre_ubicacion, ud.nombre_ubicacion
-      ORDER BY ct.id
+      ORDER BY ct.id DESC
     `);
 
     const [cotizacionDetalle] = await pool.query(`
       SELECT *
       FROM \`${T.cotizacionDetalle}\`
-      ORDER BY cotizacion_id, id
+      ORDER BY cotizacion_id DESC, id DESC
     `);
 
     const [modalidades] = await pool.query(`SELECT * FROM \`${T.modalidad}\` ORDER BY id`);
@@ -653,6 +1182,8 @@ router.get("/crm/bootstrap", async (req, res) => {
     const [estadosCliente] = await pool.query(`SELECT * FROM \`${T.estadoCliente}\` ORDER BY id`);
     const [estadosOportunidad] = await pool.query(`SELECT * FROM \`${T.estadoOportunidad}\` ORDER BY id`);
     const prefijos = await obtenerPrefijos();
+    const datosProveedores = await obtenerDatosProveedoresCRM();
+    const rutas = await obtenerRutasCRM();
 
     return ok(res, {
       clientes,
@@ -669,6 +1200,8 @@ router.get("/crm/bootstrap", async (req, res) => {
       estadosCliente,
       estadosOportunidad,
       prefijos,
+      rutas,
+      ...datosProveedores,
     });
   } catch (error) {
     console.error("Error en /crm/bootstrap:", error);
@@ -689,6 +1222,8 @@ router.get("/clientes", async (req, res) => {
         c.nit,
         c.direccion,
         c.estado_cliente_id,
+        c.motivo_inactivacion,
+        c.fecha_inactivacion,
         ec.nombre_estado_cliente,
 
         ${nombreCompletoSQL("cc")} AS representante,
@@ -701,7 +1236,7 @@ router.get("/clientes", async (req, res) => {
           INNER JOIN \`${T.telefono}\` tc ON tc.contacto_id = ccp.id
           LEFT JOIN \`${T.prefijo}\` pt ON pt.id = tc.prefijo_telefonico_id
           WHERE ccp.cliente_id = c.id
-          ORDER BY tc.es_principal DESC, tc.id ASC
+          ORDER BY tc.es_principal DESC, tc.id DESC
           LIMIT 1
         ) AS telefono1,
 
@@ -711,7 +1246,7 @@ router.get("/clientes", async (req, res) => {
           INNER JOIN \`${T.telefono}\` tc ON tc.contacto_id = ccp.id
           LEFT JOIN \`${T.prefijo}\` pt ON pt.id = tc.prefijo_telefonico_id
           WHERE ccp.cliente_id = c.id
-          ORDER BY tc.es_principal DESC, tc.id ASC
+          ORDER BY tc.es_principal DESC, tc.id DESC
           LIMIT 1 OFFSET 1
         ) AS telefono2,
 
@@ -721,7 +1256,7 @@ router.get("/clientes", async (req, res) => {
           INNER JOIN \`${T.telefono}\` tc ON tc.contacto_id = ccp.id
           LEFT JOIN \`${T.prefijo}\` pt ON pt.id = tc.prefijo_telefonico_id
           WHERE ccp.cliente_id = c.id
-          ORDER BY tc.es_principal DESC, tc.id ASC
+          ORDER BY tc.es_principal DESC, tc.id DESC
           LIMIT 1 OFFSET 2
         ) AS telefono3
 
@@ -732,10 +1267,10 @@ router.get("/clientes", async (req, res) => {
           SELECT x.id
           FROM \`${T.contacto}\` x
           WHERE x.cliente_id = c.id
-          ORDER BY x.es_principal DESC, x.id ASC
+          ORDER BY x.es_principal DESC, x.id DESC
           LIMIT 1
         )
-      ORDER BY c.id
+      ORDER BY c.id DESC
     `);
 
     return ok(res, rows);
@@ -756,6 +1291,7 @@ router.post("/clientes", async (req, res) => {
     const nit = limpiar(req.body.nit);
     const direccion = textoDireccion(req.body.direccion || req.body.address, 180);
     const estadoId = asId(req.body.estado_cliente_id || req.body.estado_id || req.body.estado) || 1;
+    const motivoInactivacion = textoMotivo(req.body.motivo_inactivacion);
 
     if (!nombre) {
       await connection.rollback();
@@ -767,13 +1303,40 @@ router.post("/clientes", async (req, res) => {
       return fail(res, 400, "El NIT es obligatorio.");
     }
 
+    if (estadoId === 2 && motivoInactivacion.length < 5) {
+      await connection.rollback();
+      return fail(
+        res,
+        400,
+        "Para registrar un cliente como inactivo debes indicar el motivo de inactivación."
+      );
+    }
+
+    const fechaInactivacion = estadoId === 2 ? new Date() : null;
+
     const [insert] = await connection.query(
       `
       INSERT INTO \`${T.cliente}\`
-      (codigo_cliente, nombre_empresa, nit, direccion, estado_cliente_id)
-      VALUES (?, ?, ?, ?, ?)
+      (
+        codigo_cliente,
+        nombre_empresa,
+        nit,
+        direccion,
+        estado_cliente_id,
+        motivo_inactivacion,
+        fecha_inactivacion
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
-      [codigo, nombre, nit, direccion, estadoId]
+      [
+        codigo,
+        nombre,
+        nit,
+        direccion,
+        estadoId,
+        estadoId === 2 ? motivoInactivacion : null,
+        fechaInactivacion,
+      ]
     );
 
     const clienteId = insert.insertId;
@@ -806,7 +1369,8 @@ router.put("/clientes/:id", async (req, res) => {
     const nombre = textoComercial(req.body.nombre_empresa || req.body.name, 120);
     const nit = limpiar(req.body.nit);
     const direccion = textoDireccion(req.body.direccion || req.body.address, 180);
-    const estadoId = asId(req.body.estado_cliente_id || req.body.estado_id || req.body.estado) || 1;
+    const estadoId =
+      asId(req.body.estado_cliente_id || req.body.estado_id || req.body.estado) || 1;
 
     if (!id) {
       await connection.rollback();
@@ -818,37 +1382,228 @@ router.put("/clientes/:id", async (req, res) => {
       return fail(res, 400, "El nombre de la empresa es obligatorio.");
     }
 
+    if (!nit) {
+      await connection.rollback();
+      return fail(res, 400, "El NIT es obligatorio.");
+    }
+
+    const [[actual]] = await connection.query(
+      `
+      SELECT
+        id,
+        estado_cliente_id,
+        motivo_inactivacion,
+        fecha_inactivacion
+      FROM \`${T.cliente}\`
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!actual) {
+      await connection.rollback();
+      return fail(res, 404, "No se encontró el cliente.");
+    }
+
+    const estabaInactivo = Number(actual.estado_cliente_id) === 2;
+    const quedaraInactivo = Number(estadoId) === 2;
+    const motivoRecibido = textoMotivo(req.body.motivo_inactivacion);
+
+    let motivoFinal = null;
+    let fechaFinal = null;
+
+    if (quedaraInactivo) {
+      // Si pasa de Activo -> Inactivo, el motivo es obligatorio.
+      if (!estabaInactivo && motivoRecibido.length < 5) {
+        await connection.rollback();
+        return fail(
+          res,
+          400,
+          "Indica por qué se inactiva el cliente antes de darlo de baja."
+        );
+      }
+
+      // Si ya estaba inactivo y solo se edita otro dato,
+      // conserva el motivo anterior cuando no se envía uno nuevo.
+      motivoFinal =
+        motivoRecibido ||
+        textoMotivo(actual.motivo_inactivacion) ||
+        null;
+
+      fechaFinal =
+        actual.fecha_inactivacion ||
+        new Date();
+    }
+
     await connection.query(
       `
       UPDATE \`${T.cliente}\`
       SET nombre_empresa = ?,
           nit = ?,
           direccion = ?,
-          estado_cliente_id = ?
+          estado_cliente_id = ?,
+          motivo_inactivacion = ?,
+          fecha_inactivacion = ?,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
       `,
-      [nombre, nit, direccion, estadoId, id]
+      [
+        nombre,
+        nit,
+        direccion,
+        estadoId,
+        motivoFinal,
+        fechaFinal,
+        id,
+      ]
     );
 
     await guardarContactoPrincipal(connection, id, req.body);
 
     await connection.commit();
 
-    return ok(res, { id }, "Cliente actualizado correctamente.");
+    return ok(
+      res,
+      {
+        id,
+        estado_cliente_id: estadoId,
+        motivo_inactivacion: motivoFinal,
+        fecha_inactivacion: fechaFinal,
+      },
+      quedaraInactivo && !estabaInactivo
+        ? "Cliente inactivado correctamente y motivo registrado."
+        : !quedaraInactivo && estabaInactivo
+        ? "Cliente reactivado correctamente."
+        : "Cliente actualizado correctamente."
+    );
   } catch (error) {
     await connection.rollback();
     console.error("Error al actualizar cliente:", error);
+
+    if (error.code === "ER_DUP_ENTRY") {
+      return fail(res, 400, "Ya existe un cliente con ese código o NIT.", error);
+    }
+
     return fail(res, 500, "No se pudo actualizar el cliente.", error);
   } finally {
     connection.release();
   }
 });
 
+/*
+  PATCH DE ESTADO DEL CLIENTE
+  Permite cambiar únicamente el estado sin reenviar todos los datos.
+  Para Activo -> Inactivo exige motivo.
+*/
 router.patch("/clientes/:id", async (req, res) => {
-  req.method = "PUT";
-  return router.handle(req, res);
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const id = asId(req.params.id);
+
+    if (!id) {
+      await connection.rollback();
+      return fail(res, 400, "ID de cliente inválido.");
+    }
+
+    const [[actual]] = await connection.query(
+      `
+      SELECT
+        id,
+        estado_cliente_id,
+        motivo_inactivacion,
+        fecha_inactivacion
+      FROM \`${T.cliente}\`
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!actual) {
+      await connection.rollback();
+      return fail(res, 404, "No se encontró el cliente.");
+    }
+
+    const estadoId =
+      asId(req.body.estado_cliente_id || req.body.estado_id || req.body.estado) ||
+      Number(actual.estado_cliente_id);
+
+    const estabaInactivo = Number(actual.estado_cliente_id) === 2;
+    const quedaraInactivo = Number(estadoId) === 2;
+    const motivoRecibido = textoMotivo(req.body.motivo_inactivacion);
+
+    let motivoFinal = null;
+    let fechaFinal = null;
+
+    if (quedaraInactivo) {
+      if (!estabaInactivo && motivoRecibido.length < 5) {
+        await connection.rollback();
+        return fail(
+          res,
+          400,
+          "Indica por qué se inactiva el cliente antes de darlo de baja."
+        );
+      }
+
+      motivoFinal =
+        motivoRecibido ||
+        textoMotivo(actual.motivo_inactivacion) ||
+        null;
+
+      fechaFinal =
+        actual.fecha_inactivacion ||
+        new Date();
+    }
+
+    await connection.query(
+      `
+      UPDATE \`${T.cliente}\`
+      SET estado_cliente_id = ?,
+          motivo_inactivacion = ?,
+          fecha_inactivacion = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [
+        estadoId,
+        motivoFinal,
+        fechaFinal,
+        id,
+      ]
+    );
+
+    await connection.commit();
+
+    return ok(
+      res,
+      {
+        id,
+        estado_cliente_id: estadoId,
+        motivo_inactivacion: motivoFinal,
+        fecha_inactivacion: fechaFinal,
+      },
+      quedaraInactivo
+        ? "Cliente inactivado correctamente."
+        : "Cliente reactivado correctamente."
+    );
+  } catch (error) {
+    await connection.rollback();
+    console.error("Error al cambiar estado del cliente:", error);
+    return fail(res, 500, "No se pudo cambiar el estado del cliente.", error);
+  } finally {
+    connection.release();
+  }
 });
 
+/*
+  Por seguridad e historial, un cliente ya NO se elimina físicamente.
+  DELETE se conserva por compatibilidad, pero funciona como inactivación
+  y exige el motivo.
+*/
 router.delete("/clientes/:id", async (req, res) => {
   const connection = await pool.getConnection();
 
@@ -856,38 +1611,289 @@ router.delete("/clientes/:id", async (req, res) => {
     await connection.beginTransaction();
 
     const id = asId(req.params.id);
+    const definitivo =
+      limpiar(req.query.definitivo).toLowerCase() === "1" ||
+      limpiar(req.query.definitivo).toLowerCase() === "true";
+
     if (!id) {
       await connection.rollback();
-      return fail(res, 400, "ID de cliente inválido.");
+      return fail(
+        res,
+        400,
+        "ID de cliente inválido."
+      );
     }
 
-    const [[rel]] = await connection.query(
+    if (!definitivo) {
+      await connection.rollback();
+      return fail(
+        res,
+        400,
+        "Para eliminar físicamente un cliente debes indicar definitivo=1. Para una baja normal utiliza la actualización de estado."
+      );
+    }
+
+    const [[cliente]] = await connection.query(
       `
       SELECT
-        (SELECT COUNT(*) FROM \`${T.oportunidad}\` WHERE cliente_id = ?) +
-        (SELECT COUNT(*) FROM \`${T.cotizacion}\` WHERE cliente_id = ?) AS total
+        id,
+        codigo_cliente,
+        nombre_empresa
+      FROM \`${T.cliente}\`
+      WHERE id = ?
+      LIMIT 1
       `,
-      [id, id]
+      [id]
     );
 
-    if (Number(rel.total || 0) > 0) {
+    if (!cliente) {
+      await connection.rollback();
+      return fail(
+        res,
+        404,
+        "No se encontró el cliente."
+      );
+    }
+
+    /*
+      Detectar automáticamente TODAS las tablas que tengan
+      una llave foránea directa hacia cliente.id.
+
+      contacto_cliente se excluye porque sus contactos/teléfonos
+      sí pueden eliminarse junto con un cliente que no tenga
+      historial comercial u operativo.
+    */
+    const [foreignKeys] = await connection.query(
+      `
+      SELECT
+        TABLE_NAME AS tabla,
+        COLUMN_NAME AS columna
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND REFERENCED_TABLE_NAME = ?
+        AND REFERENCED_COLUMN_NAME = 'id'
+        AND TABLE_NAME <> ?
+      ORDER BY TABLE_NAME
+      `,
+      [T.cliente, T.contacto]
+    );
+
+    const dependencias = [];
+
+    for (const fk of foreignKeys) {
+      const tabla = String(fk.tabla || "");
+      const columna = String(fk.columna || "");
+
+      // Los nombres provienen de INFORMATION_SCHEMA,
+      // no de entrada directa del usuario.
+      const [[countRow]] =
+        await connection.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM \`${tabla}\`
+          WHERE \`${columna}\` = ?
+          `,
+          [id]
+        );
+
+      const total = Number(
+        countRow?.total || 0
+      );
+
+      if (total > 0) {
+        dependencias.push({
+          tabla,
+          registros: total,
+        });
+      }
+    }
+
+    if (dependencias.length > 0) {
+      await connection.rollback();
+
+      return res.status(409).json({
+        ok: false,
+        message:
+          "El cliente tiene historial relacionado y no puede eliminarse definitivamente. Utiliza 'Dar de baja' para conservar la trazabilidad.",
+        data: {
+          id,
+          codigo_cliente:
+            cliente.codigo_cliente,
+          nombre_empresa:
+            cliente.nombre_empresa,
+          dependencias,
+        },
+      });
+    }
+
+    // Obtener contactos del cliente.
+    const [contactosCliente] =
       await connection.query(
-        `UPDATE \`${T.cliente}\` SET estado_cliente_id = 2 WHERE id = ?`,
+        `
+        SELECT id
+        FROM \`${T.contacto}\`
+        WHERE cliente_id = ?
+        `,
         [id]
       );
 
-      await connection.commit();
-      return ok(res, { id, inactivado: true }, "El cliente tiene relaciones, por eso se marcó como Inactivo.");
+    const contactoIds =
+      contactosCliente.map(
+        (row) => Number(row.id)
+      );
+
+    // Antes de borrar los contactos, verificar si alguna otra tabla
+    // depende de contacto_cliente.
+    if (contactoIds.length > 0) {
+      const [contactForeignKeys] =
+        await connection.query(
+          `
+          SELECT
+            TABLE_NAME AS tabla,
+            COLUMN_NAME AS columna
+          FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND REFERENCED_TABLE_NAME = ?
+            AND REFERENCED_COLUMN_NAME = 'id'
+            AND TABLE_NAME <> ?
+          ORDER BY TABLE_NAME
+          `,
+          [T.contacto, T.telefono]
+        );
+
+      const dependenciasContacto = [];
+
+      for (const fk of contactForeignKeys) {
+        const tabla = String(
+          fk.tabla || ""
+        );
+        const columna = String(
+          fk.columna || ""
+        );
+
+        const placeholders =
+          contactoIds
+            .map(() => "?")
+            .join(",");
+
+        const [[countRow]] =
+          await connection.query(
+            `
+            SELECT COUNT(*) AS total
+            FROM \`${tabla}\`
+            WHERE \`${columna}\`
+              IN (${placeholders})
+            `,
+            contactoIds
+          );
+
+        const total = Number(
+          countRow?.total || 0
+        );
+
+        if (total > 0) {
+          dependenciasContacto.push({
+            tabla,
+            registros: total,
+          });
+        }
+      }
+
+      if (
+        dependenciasContacto.length > 0
+      ) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          ok: false,
+          message:
+            "Uno o más contactos del cliente tienen historial relacionado. No puede eliminarse definitivamente; utiliza 'Dar de baja'.",
+          data: {
+            id,
+            dependencias:
+              dependenciasContacto,
+          },
+        });
+      }
+
+      // Teléfonos son hijos directos de contacto.
+      const placeholders =
+        contactoIds
+          .map(() => "?")
+          .join(",");
+
+      await connection.query(
+        `
+        DELETE FROM \`${T.telefono}\`
+        WHERE contacto_id
+          IN (${placeholders})
+        `,
+        contactoIds
+      );
+
+      await connection.query(
+        `
+        DELETE FROM \`${T.contacto}\`
+        WHERE cliente_id = ?
+        `,
+        [id]
+      );
     }
 
-    await connection.query(`DELETE FROM \`${T.cliente}\` WHERE id = ?`, [id]);
+    const [result] =
+      await connection.query(
+        `
+        DELETE FROM \`${T.cliente}\`
+        WHERE id = ?
+        `,
+        [id]
+      );
+
+    if (!result.affectedRows) {
+      await connection.rollback();
+      return fail(
+        res,
+        404,
+        "No se encontró el cliente."
+      );
+    }
+
     await connection.commit();
 
-    return ok(res, { id }, "Cliente eliminado correctamente.");
+    return ok(
+      res,
+      {
+        id,
+        eliminado_definitivamente: true,
+      },
+      "Cliente eliminado definitivamente."
+    );
   } catch (error) {
     await connection.rollback();
-    console.error("Error al eliminar cliente:", error);
-    return fail(res, 500, "No se pudo eliminar el cliente.", error);
+
+    console.error(
+      "Error al eliminar definitivamente cliente:",
+      error
+    );
+
+    if (
+      error?.code ===
+      "ER_ROW_IS_REFERENCED_2"
+    ) {
+      return fail(
+        res,
+        409,
+        "El cliente tiene información relacionada y no puede eliminarse definitivamente. Utiliza 'Dar de baja'.",
+        error
+      );
+    }
+
+    return fail(
+      res,
+      500,
+      "No se pudo eliminar definitivamente el cliente.",
+      error
+    );
   } finally {
     connection.release();
   }
@@ -1105,7 +2111,7 @@ router.get("/oportunidades", async (req, res) => {
       LEFT JOIN \`${T.usuario}\` u ON u.id = o.ejecutivo_id
       LEFT JOIN \`${T.modalidad}\` m ON m.id = o.modalidad_id
       LEFT JOIN \`${T.estadoOportunidad}\` eo ON eo.id = o.estado_id
-      ORDER BY o.id
+      ORDER BY o.id DESC
     `);
 
     return ok(res, rows);
@@ -1337,7 +2343,7 @@ router.get("/cotizaciones", async (req, res) => {
         ct.destino_id, c.nombre_empresa, c.nit, contacto, cc.correo,
         u.nombre_usuario, ejecutivo, m.nombre_modalidad, fp.nombre_forma_pago,
         uo.nombre_ubicacion, ud.nombre_ubicacion
-      ORDER BY ct.id
+      ORDER BY ct.id DESC
     `);
 
     return ok(res, rows);

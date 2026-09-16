@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   X,
+  Target,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -1050,24 +1051,40 @@ export function Dashboard() {
         </>
       )}
 
-      {/* VENTAS */}
+      {/* CRM Y VENTAS */}
       {role === "ventas" && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <ModuleCard
-              title="Ir a CRM"
-              description="Gestión de clientes, oportunidades y cotizaciones"
-              icon={Users}
+              title="Oportunidades"
+              description="Seguimiento comercial y pipeline de ventas"
+              icon={Target}
               color="blue"
-              onClick={() => navigate("/crm")}
+              onClick={() => navigate("/crm?tab=oportunidades")}
             />
 
             <ModuleCard
-              title="Reportes"
-              description="Indicadores comerciales"
-              icon={BarChart3}
+              title="Clientes"
+              description="Empresas, contactos y teléfonos registrados"
+              icon={Users}
+              color="green"
+              onClick={() => navigate("/crm?tab=clientes")}
+            />
+
+            <ModuleCard
+              title="Cotizaciones"
+              description="Documentos comerciales y tarifas"
+              icon={FileText}
               color="orange"
-              onClick={() => navigate("/reportes")}
+              onClick={() => navigate("/crm?tab=cotizaciones")}
+            />
+
+            <ModuleCard
+              title="Proveedores"
+              description="Directorio y evaluación de proveedores"
+              icon={Database}
+              color="purple"
+              onClick={() => navigate("/crm?tab=proveedores")}
             />
           </div>
 
@@ -1107,24 +1124,40 @@ export function Dashboard() {
         </>
       )}
 
-      {/* OPERACIONES / COMPRAS */}
+      {/* OPERACIONES */}
       {(role === "operaciones" || role === "compras") && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <ModuleCard
-              title="Operaciones"
-              description="Asignaciones y gestión de viajes"
-              icon={ShoppingCart}
-              color="orange"
-              onClick={() => navigate("/operaciones")}
+              title="Local"
+              description="Asignaciones nacionales de unidad y piloto"
+              icon={Truck}
+              color="blue"
+              onClick={() => navigate("/operaciones?tab=local")}
             />
 
             <ModuleCard
-              title="Reportes"
-              description="Análisis operativo"
+              title="FYDUCA"
+              description="Expediente documental de piloto y transportista"
+              icon={FileText}
+              color="orange"
+              onClick={() => navigate("/operaciones?tab=fiduca")}
+            />
+
+            <ModuleCard
+              title="Centroamérica"
+              description="Equipo, piloto, fianza y posicionamiento regional"
+              icon={Package}
+              color="green"
+              onClick={() => navigate("/operaciones?tab=centroamerica")}
+            />
+
+            <ModuleCard
+              title="Internacional"
+              description="CAAT, días de servicio y seguimiento internacional"
               icon={BarChart3}
-              color="blue"
-              onClick={() => navigate("/reportes")}
+              color="purple"
+              onClick={() => navigate("/operaciones?tab=internacional")}
             />
           </div>
 
@@ -1206,47 +1239,6 @@ export function Dashboard() {
               title="Total Comprobantes"
               value={formatearMoneda(totalComprobantes)}
               icon={DollarSign}
-              color="green"
-              loading={loading}
-            />
-          </div>
-        </>
-      )}
-
-      {/* MENSAJERÍA */}
-      {role === "mensajeria" && (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <ModuleCard
-              title="Gestión Logística"
-              description="Consulta y seguimiento de envíos"
-              icon={Truck}
-              color="green"
-              onClick={() => navigate("/logistica")}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <KpiCard
-              title="Viajes activos / En ruta"
-              value={enviosEnRuta}
-              icon={Truck}
-              color="blue"
-              loading={loading}
-            />
-
-            <KpiCard
-              title="Pendientes"
-              value={enviosPendientes}
-              icon={Clock}
-              color="orange"
-              loading={loading}
-            />
-
-            <KpiCard
-              title="Entregados"
-              value={enviosEntregados}
-              icon={Package}
               color="green"
               loading={loading}
             />
