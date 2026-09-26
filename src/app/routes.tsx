@@ -14,9 +14,11 @@ import { Rutas } from "./pages/Rutas";
 import { Reportes } from "./pages/Reportes";
 import { IALogistica } from "./pages/IALogistica";
 import { Mantenimiento } from "./pages/Mantenimiento";
+import { NotFound } from "./pages/NotFound";
 
 // Layout
 import { MainLayout } from "./components/layout/MainLayout";
+import { canAccessModule, type ModuleKey } from "./utils/permissions";
 
 /* ===============================
    PANTALLA DE CARGA BONITA
@@ -51,19 +53,27 @@ function obtenerUsuarioLocal() {
 /* ===============================
    PROTECCIÓN DE RUTAS
 ================================ */
-function PrivateRoute({ children }: { children: React.ReactNode }) {
+function PrivateRoute({
+  children,
+  module,
+}: {
+  children: React.ReactNode;
+  module: ModuleKey;
+}) {
   const { role } = useAuth();
   const location = useLocation();
 
   const usuarioLocal = obtenerUsuarioLocal();
   const roleFinal = role || usuarioLocal?.role || "";
 
-  /*
-    Antes se quedaba en Cargando... porque role podía quedar en null.
-    Ahora, si existe sesión en localStorage, deja pasar al usuario.
-  */
   if (!roleFinal) {
     return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  // Aunque el usuario escriba manualmente la URL de otro módulo,
+  // el frontend valida el permiso y muestra un 404 sin exponer contenido.
+  if (!canAccessModule(roleFinal, module)) {
+    return <NotFound unauthorized />;
   }
 
   return <>{children}</>;
@@ -86,7 +96,7 @@ export const router = createBrowserRouter([
   {
     path: "/dashboard",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="dashboard">
         <MainLayout
           title="Panel de Control"
           breadcrumbs={["Inicio", "Panel de Control"]}
@@ -99,7 +109,7 @@ export const router = createBrowserRouter([
   {
     path: "/crm",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="crm">
         <MainLayout
           title="CRM y Ventas"
           breadcrumbs={["Inicio", "CRM y Ventas"]}
@@ -112,7 +122,7 @@ export const router = createBrowserRouter([
   {
     path: "/operaciones",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="operaciones">
         <MainLayout
           title="Operaciones"
           breadcrumbs={["Inicio", "Operaciones"]}
@@ -125,7 +135,7 @@ export const router = createBrowserRouter([
   {
     path: "/logistica",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="logistica">
         <MainLayout
           title="Logística"
           breadcrumbs={["Inicio", "Logística"]}
@@ -138,7 +148,7 @@ export const router = createBrowserRouter([
   {
     path: "/facturacion",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="facturacion">
         <MainLayout
           title="Comprobantes"
           breadcrumbs={["Inicio", "Comprobantes"]}
@@ -151,7 +161,7 @@ export const router = createBrowserRouter([
   {
     path: "/flota",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="flota">
         <MainLayout title="Flota" breadcrumbs={["Inicio", "Flota"]} />
       </PrivateRoute>
     ),
@@ -161,7 +171,7 @@ export const router = createBrowserRouter([
   {
     path: "/rutas",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="rutas">
         <MainLayout title="Rutas" breadcrumbs={["Inicio", "Rutas"]} />
       </PrivateRoute>
     ),
@@ -171,7 +181,7 @@ export const router = createBrowserRouter([
   {
     path: "/reportes",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="reportes">
         <MainLayout
           title="Reportes"
           breadcrumbs={["Inicio", "Reportes"]}
@@ -184,7 +194,7 @@ export const router = createBrowserRouter([
   {
     path: "/ia",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="ia">
         <MainLayout
           title="IA Logística"
           breadcrumbs={["Inicio", "IA Logística"]}
@@ -197,7 +207,7 @@ export const router = createBrowserRouter([
   {
     path: "/mantenimiento",
     element: (
-      <PrivateRoute>
+      <PrivateRoute module="mantenimiento">
         <MainLayout
           title="Mantenimiento"
           breadcrumbs={["Inicio", "Mantenimiento"]}
@@ -209,6 +219,6 @@ export const router = createBrowserRouter([
 
   {
     path: "*",
-    element: <Navigate to="/dashboard" replace />,
+    element: <NotFound />,
   },
 ]);

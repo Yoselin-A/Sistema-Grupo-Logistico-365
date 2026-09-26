@@ -31,6 +31,7 @@ const LOGO_GL365_FACTURA = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAA
 
 type Id = number;
 type ModalMode = "create" | "edit";
+type CurrencyCode = "GTQ" | "USD";
 type FormErrors = Record<string, string>;
 
 interface ClienteRow {
@@ -81,6 +82,7 @@ interface ComprobanteRow {
   estado_id: Id | null;
   forma_pago_id: Id | null;
   observaciones: string | null;
+  moneda?: CurrencyCode | string | null;
   cliente?: string | null;
   codigo_cliente?: string | null;
   cliente_nit?: string | null;
@@ -141,6 +143,7 @@ interface ComprobanteForm {
   fecha_vencimiento: string;
   forma_pago_id: number | "";
   estado_id: number | "";
+  moneda: CurrencyCode;
   observaciones: string;
   detalles: DetailDraft[];
 }
@@ -207,11 +210,32 @@ const compareValues = (a: any, b: any, direction: SortDirection) => {
   return direction === "asc" ? result : -result;
 };
 
-const formatMoney = (value: any) =>
+const normalizeCurrency = (value: any): CurrencyCode =>
+  String(value || "GTQ").toUpperCase() === "USD" ? "USD" : "GTQ";
+
+const formatMoney = (value: any, moneda: CurrencyCode | string = "GTQ") =>
   new Intl.NumberFormat("es-GT", {
     style: "currency",
-    currency: "GTQ",
+    currency: normalizeCurrency(moneda),
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(numeric(value));
+
+const formatMixedMoney = (rows: ComprobanteRow[], field: "total" | "saldo") => {
+  const gtq = rows
+    .filter((item) => normalizeCurrency(item.moneda) === "GTQ")
+    .reduce((sum, item) => sum + numeric(item[field]), 0);
+
+  const usd = rows
+    .filter((item) => normalizeCurrency(item.moneda) === "USD")
+    .reduce((sum, item) => sum + numeric(item[field]), 0);
+
+  const parts: string[] = [];
+  if (gtq || !usd) parts.push(formatMoney(gtq, "GTQ"));
+  if (usd) parts.push(formatMoney(usd, "USD"));
+
+  return parts.join(" · ");
+};
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -375,11 +399,18 @@ function numeroALetrasSimple(total: number) {
   return `${total.toFixed(2)} QUETZALES`;
 }
 
-const moneyFacturaPdf = (value: any) =>
-  `Q. ${numeric(value).toLocaleString("en-US", {
+const moneyFacturaPdf = (
+  value: any,
+  moneda: CurrencyCode | string = "GTQ"
+) => {
+  const currency = normalizeCurrency(moneda);
+  const symbol = currency === "USD" ? "$" : "Q.";
+
+  return `${symbol} ${numeric(value).toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+};
 
 const fechaDtePdf = (value?: string | null) => {
   if (!value) return "-";
@@ -432,7 +463,7 @@ const autorizacionDtePdf = (comprobante: ComprobanteRow) => {
   return `${serieDtePdf(comprobante)}-D23B-40F0-A368-59241AE84CD5`;
 };
 
-function numeroALetrasGTQPdf(value: number) {
+function numeroALetrasGTQPdf(value: number, moneda: CurrencyCode | string = "GTQ") {
   const entero = Math.floor(Math.max(0, numeric(value)));
   const centavos = Math.round((Math.max(0, numeric(value)) - entero) * 100);
 
@@ -534,7 +565,10 @@ function numeroALetrasGTQPdf(value: number) {
     return partes.join(" ");
   };
 
-  return `${convertir(entero)} QUETZALES CON ${convertir(centavos)} CENTAVOS`;
+  const currency = normalizeCurrency(moneda);
+  const nombreMoneda = currency === "USD" ? "DOLARES" : "QUETZALES";
+
+  return `${convertir(entero)} ${nombreMoneda} CON ${convertir(centavos)} CENTAVOS`;
 }
 
 function drawLogoFacturaPdf(doc: jsPDF, x: number, y: number, width = 43) {
@@ -1031,8 +1065,8 @@ export function Facturacion() {
     }
   }, [page, totalPages]);
 
-  const totalGeneral = comprobantes.reduce((sum, item) => sum + numeric(item.total), 0);
-  const saldoGeneral = comprobantes.reduce((sum, item) => sum + numeric(item.saldo), 0);
+  const totalGeneral = formatMixedMoney(comprobantes, "total");
+  const saldoGeneral = formatMixedMoney(comprobantes, "saldo");
   const pagadas = comprobantes.filter((item) => normalizeText(item.estado).includes("pagada")).length;
   const pendientes = comprobantes.filter((item) => normalizeText(item.estado).includes("pendiente") || normalizeText(item.estado).includes("parcial")).length;
   const vencidas = comprobantes.filter((item) => normalizeText(item.estado).includes("vencida")).length;
@@ -1049,6 +1083,7 @@ export function Facturacion() {
       fecha_vencimiento: addDays(emision, 15),
       forma_pago_id: getFormaDefaultId(),
       estado_id: getEstadoId("pendiente"),
+      moneda: "GTQ",
       observaciones: "",
       detalles: [createDraft()],
     });
@@ -1067,6 +1102,7 @@ export function Facturacion() {
       fecha_vencimiento: String(comprobante.fecha_vencimiento || "").slice(0, 10),
       forma_pago_id: comprobante.forma_pago_id || "",
       estado_id: comprobante.estado_id || "",
+      moneda: normalizeCurrency(comprobante.moneda),
       observaciones: comprobante.observaciones || "",
       detalles: detallesByComprobante(comprobante.id).map(detalleFromRow),
     });
@@ -1086,6 +1122,7 @@ export function Facturacion() {
     if (!form.fecha_vencimiento) next.fecha_vencimiento = "Selecciona el vencimiento.";
     if (!form.forma_pago_id) next.forma_pago_id = "Selecciona la forma de pago.";
     if (!form.estado_id) next.estado_id = "Selecciona el estado.";
+    if (!["GTQ", "USD"].includes(form.moneda)) next.moneda = "Selecciona la moneda.";
 
     if (!form.detalles.length) next.detalles = "Agrega al menos una línea.";
 
@@ -1243,15 +1280,8 @@ export function Facturacion() {
     doc.setFontSize(8.5);
     doc.setTextColor(75, 85, 99);
 
-    const totalVisible = sortedComprobantes.reduce(
-      (sum, item) => sum + numeric(item.total),
-      0
-    );
-
-    const saldoVisible = sortedComprobantes.reduce(
-      (sum, item) => sum + numeric(item.saldo),
-      0
-    );
+    const totalVisible = formatMixedMoney(sortedComprobantes, "total");
+    const saldoVisible = formatMixedMoney(sortedComprobantes, "saldo");
 
     doc.text(
       `Comprobantes visibles: ${sortedComprobantes.length} de ${comprobantes.length}`,
@@ -1260,7 +1290,7 @@ export function Facturacion() {
     );
 
     doc.text(
-      `Total facturado: ${formatMoney(totalVisible)}  ·  Saldo por cobrar: ${formatMoney(saldoVisible)}`,
+      `Total facturado: ${totalVisible}  ·  Saldo por cobrar: ${saldoVisible}`,
       14,
       62
     );
@@ -1269,14 +1299,15 @@ export function Facturacion() {
       `${item.serie}-${item.numero_comprobante}`,
       item.cliente || "-",
       formatDate(item.fecha_emision),
-      formatMoney(item.total),
+      normalizeCurrency(item.moneda),
+      formatMoney(item.total, item.moneda || "GTQ"),
       item.estado || "-",
-      formatMoney(item.saldo),
+      formatMoney(item.saldo, item.moneda || "GTQ"),
     ]);
 
     autoTable(doc, {
       startY: 70,
-      head: [["Comprobante", "Cliente", "Fecha", "Total", "Estado", "Saldo"]],
+      head: [["Comprobante", "Cliente", "Fecha", "Moneda", "Total", "Estado", "Saldo"]],
       body: table,
       margin: { left: 14, right: 14 },
       styles: {
@@ -1307,8 +1338,8 @@ export function Facturacion() {
       doc.setFontSize(9);
 
       doc.text(`Total comprobantes: ${sortedComprobantes.length}`, 14, finalY + 15);
-      doc.text(`Total facturado: ${formatMoney(totalVisible)}`, 14, finalY + 21);
-      doc.text(`Saldo pendiente: ${formatMoney(saldoVisible)}`, 14, finalY + 27);
+      doc.text(`Total facturado: ${totalVisible}`, 14, finalY + 21);
+      doc.text(`Saldo pendiente: ${saldoVisible}`, 14, finalY + 27);
     }
 
     doc.save(`Reporte_Comprobantes_${Date.now()}.pdf`);
@@ -1322,6 +1353,7 @@ export function Facturacion() {
         NIT: item.cliente_nit,
         Fecha: item.fecha_emision,
         Vencimiento: item.fecha_vencimiento,
+        Moneda: normalizeCurrency(item.moneda),
         Subtotal: numeric(item.subtotal),
         IVA: numeric(item.iva),
         Total: numeric(item.total),
@@ -1355,6 +1387,7 @@ export function Facturacion() {
     const numeroDte = numeroDtePdf(comprobante);
     const autorizacion = autorizacionDtePdf(comprobante);
     const totalFactura = numeric(comprobante.total);
+    const monedaFactura = normalizeCurrency(comprobante.moneda);
     const fechaEmision = fechaDtePdf(comprobante.fecha_emision);
     const fechaVencimiento = comprobante.fecha_vencimiento
       ? String(comprobante.fecha_vencimiento).slice(0, 10)
@@ -1424,7 +1457,7 @@ export function Facturacion() {
       ["Serie:", serieDte],
       ["Numero de DTE:", numeroDte],
       ["Fecha de emision:", fechaEmision],
-      ["Moneda:", "GTQ"],
+      ["Moneda:", monedaFactura],
     ];
 
     doc.setFontSize(7);
@@ -1561,13 +1594,13 @@ export function Facturacion() {
         cantidad.toFixed(2),
         line.unidad || "UN",
         upperPdf(line.descripcion),
-        moneyFacturaPdf(unitarioConIva),
+        moneyFacturaPdf(unitarioConIva, monedaFactura),
         `IVA = GTQ ${numeric(line.impuesto).toLocaleString("en-US", {
           minimumFractionDigits: 4,
           maximumFractionDigits: 4,
         })}`,
-        moneyFacturaPdf(line.descuento),
-        moneyFacturaPdf(totalLinea),
+        moneyFacturaPdf(line.descuento, monedaFactura),
+        moneyFacturaPdf(totalLinea, monedaFactura),
       ];
     });
 
@@ -1614,7 +1647,7 @@ export function Facturacion() {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(5.75);
 
-    const letras = `TOTAL EN LETRAS: ${numeroALetrasGTQPdf(totalFactura)}`;
+    const letras = `TOTAL EN LETRAS: ${numeroALetrasGTQPdf(totalFactura, monedaFactura)}`;
     const letrasLines = doc.splitTextToSize(letras, 137);
     doc.text(letrasLines.slice(0, 2), 9, y + 4.2);
 
@@ -1622,7 +1655,7 @@ export function Facturacion() {
     doc.text("Total:", 162, y + 6.2, { align: "center" });
 
     doc.setFont("helvetica", "normal");
-    doc.text(moneyFacturaPdf(totalFactura), 202, y + 6.2, {
+    doc.text(moneyFacturaPdf(totalFactura, monedaFactura), 202, y + 6.2, {
       align: "right",
     });
 
@@ -1640,7 +1673,7 @@ export function Facturacion() {
     doc.setFontSize(7);
     doc.text(`Numero de abono: ${pagosComprobante.length || 1}`, 8.2, y + 4.5);
     doc.text(`Fecha de vencimiento: ${fechaVencimiento}`, 8.2, y + 8.9);
-    doc.text(`Monto del abono: ${moneyFacturaPdf(totalFactura)}`, 8.2, y + 13.1);
+    doc.text(`Monto del abono: ${moneyFacturaPdf(totalFactura, monedaFactura)}`, 8.2, y + 13.1);
 
     // Autorizacion
     y += 18.5;
@@ -1688,10 +1721,10 @@ export function Facturacion() {
       {notice && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-700">{notice}</div>}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard title="Total facturado" value={formatMoney(totalGeneral)} icon={ReceiptText} bar="bg-[#0C2D6B]" subtitle={`${comprobantes.length} comprobantes`} />
+        <KpiCard title="Total facturado" value={totalGeneral} icon={ReceiptText} bar="bg-[#0C2D6B]" subtitle={`${comprobantes.length} comprobantes`} />
         <KpiCard title="Pagadas" value={pagadas} icon={CheckCircle} bar="bg-green-500" />
         <KpiCard title="Pendientes" value={pendientes} icon={Clock} bar="bg-[#FF6A00]" />
-        <KpiCard title="Saldo por cobrar" value={formatMoney(saldoGeneral)} icon={WalletCards} bar={vencidas > 0 ? "bg-red-500" : "bg-blue-500"} subtitle={`${vencidas} vencidas`} />
+        <KpiCard title="Saldo por cobrar" value={saldoGeneral} icon={WalletCards} bar={vencidas > 0 ? "bg-red-500" : "bg-blue-500"} subtitle={`${vencidas} vencidas`} />
       </div>
 
       <section className="pt-2">
@@ -1811,15 +1844,17 @@ export function Facturacion() {
                 <tr key={comprobante.id} className="hover:bg-gray-50/70">
                   <td className="px-3 py-3">
                     <p className="font-mono font-bold text-[#0C2D6B]">{comprobante.serie}-{comprobante.numero_comprobante}</p>
-                    <p className="text-xs text-gray-400">Vence: {formatDate(comprobante.fecha_vencimiento)}</p>
+                    <p className="text-xs text-gray-400">
+                      {normalizeCurrency(comprobante.moneda)} · Vence: {formatDate(comprobante.fecha_vencimiento)}
+                    </p>
                   </td>
                   <td className="px-3 py-3">
                     <p className="max-w-[190px] truncate font-semibold text-gray-800">{comprobante.cliente || "-"}</p>
                     <p className="text-xs text-gray-400">NIT: {comprobante.cliente_nit || "C/F"}</p>
                   </td>
                   <td className="px-3 py-3 text-gray-600">{formatDate(comprobante.fecha_emision)}</td>
-                  <td className="px-3 py-3 font-bold text-gray-800">{formatMoney(comprobante.total)}</td>
-                  <td className="px-3 py-3 font-bold text-[#0C2D6B]">{formatMoney(comprobante.saldo)}</td>
+                  <td className="px-3 py-3 font-bold text-gray-800">{formatMoney(comprobante.total, comprobante.moneda || "GTQ")}</td>
+                  <td className="px-3 py-3 font-bold text-[#0C2D6B]">{formatMoney(comprobante.saldo, comprobante.moneda || "GTQ")}</td>
                   <td className="px-3 py-3"><Badge estado={comprobante.estado} /></td>
                   <td className="px-3 py-3 text-gray-600">
                     <p className="max-w-[95px] break-words leading-5">{comprobante.forma_pago || "-"}</p>
@@ -2092,7 +2127,21 @@ function ComprobanteModal({
               </select>
             </Field>
 
-            <Field label="Forma de pago *" error={errors.forma_pago_id} className="md:col-span-2">
+            <Field label="Moneda *" error={errors.moneda}>
+              <select
+                value={form.moneda}
+                onChange={(event) => {
+                  updateForm({ moneda: event.target.value as CurrencyCode });
+                  clearError("moneda");
+                }}
+                className={`${inputClass} ${errors.moneda ? errorInput : ""}`}
+              >
+                <option value="GTQ">Quetzales (GTQ - Q)</option>
+                <option value="USD">Dólares (USD - $)</option>
+              </select>
+            </Field>
+
+            <Field label="Forma de pago *" error={errors.forma_pago_id}>
               <select value={form.forma_pago_id} onChange={(event) => { updateForm({ forma_pago_id: event.target.value ? Number(event.target.value) : "" }); clearError("forma_pago_id"); }} className={`${inputClass} ${errors.forma_pago_id ? errorInput : ""}`}>
                 <option value="">Seleccionar forma</option>
                 {formasPago.map((forma) => <option key={forma.id} value={forma.id}>{forma.nombre_forma_pago}</option>)}
@@ -2156,10 +2205,10 @@ function ComprobanteModal({
                     </div>
 
                     <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                      <MiniTotal label="Subtotal" value={formatMoney(calc.bruto)} />
-                      <MiniTotal label="Descuento" value={formatMoney(calc.descuento)} />
-                      <MiniTotal label="IVA" value={formatMoney(calc.iva)} />
-                      <MiniTotal label="Total" value={formatMoney(calc.total)} strong />
+                      <MiniTotal label="Subtotal" value={formatMoney(calc.bruto, form.moneda)} />
+                      <MiniTotal label="Descuento" value={formatMoney(calc.descuento, form.moneda)} />
+                      <MiniTotal label="IVA" value={formatMoney(calc.iva, form.moneda)} />
+                      <MiniTotal label="Total" value={formatMoney(calc.total, form.moneda)} strong />
                     </div>
                   </div>
                 );
@@ -2175,12 +2224,12 @@ function ComprobanteModal({
             <div className="rounded-2xl border border-[#0C2D6B]/10 bg-[#0C2D6B] p-4 text-white">
               <p className="text-xs font-bold uppercase tracking-wide text-blue-100">Resumen</p>
               <div className="mt-3 space-y-2 text-sm">
-                <SummaryLine label="Subtotal bruto" value={formatMoney(totals.bruto)} />
-                <SummaryLine label="Descuento" value={formatMoney(totals.descuento)} />
-                <SummaryLine label="Base" value={formatMoney(totals.subtotal)} />
-                <SummaryLine label="IVA 12%" value={formatMoney(totals.iva)} />
+                <SummaryLine label="Subtotal bruto" value={formatMoney(totals.bruto, form.moneda)} />
+                <SummaryLine label="Descuento" value={formatMoney(totals.descuento, form.moneda)} />
+                <SummaryLine label="Base" value={formatMoney(totals.subtotal, form.moneda)} />
+                <SummaryLine label="IVA 12%" value={formatMoney(totals.iva, form.moneda)} />
                 <div className="border-t border-white/20 pt-3">
-                  <SummaryLine label="Total" value={formatMoney(totals.total)} strong />
+                  <SummaryLine label="Total" value={formatMoney(totals.total, form.moneda)} strong />
                 </div>
               </div>
             </div>
@@ -2243,14 +2292,15 @@ function DetalleComprobanteModal({ comprobante, detalles, pagos, onClose, onEdit
             <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
               <Badge estado={comprobante.estado} />
               <p className="mt-4 text-xs font-bold uppercase tracking-wide text-gray-400">Total</p>
-              <p className="text-2xl font-bold text-[#0C2D6B]">{formatMoney(comprobante.total)}</p>
-              <p className="mt-2 text-sm text-gray-500">Saldo: <b>{formatMoney(comprobante.saldo)}</b></p>
+              <p className="text-2xl font-bold text-[#0C2D6B]">{formatMoney(comprobante.total, comprobante.moneda || "GTQ")}</p>
+              <p className="mt-2 text-sm text-gray-500">Saldo: <b>{formatMoney(comprobante.saldo, comprobante.moneda || "GTQ")}</b></p>
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
             <Info label="Fecha emisión" value={formatDate(comprobante.fecha_emision)} />
             <Info label="Vencimiento" value={formatDate(comprobante.fecha_vencimiento)} />
+            <Info label="Moneda" value={normalizeCurrency(comprobante.moneda)} />
             <Info label="Forma de pago" value={comprobante.forma_pago || "-"} />
             <Info label="Emisor" value={comprobante.usuario || "-"} />
           </div>
@@ -2278,10 +2328,10 @@ function DetalleComprobanteModal({ comprobante, detalles, pagos, onClose, onEdit
                       <td className="px-3 py-3">{numeric(line.cantidad).toFixed(2)}</td>
                       <td className="px-3 py-3">{line.unidad}</td>
                       <td className="px-4 py-3 font-semibold text-gray-800">{line.descripcion}</td>
-                      <td className="px-3 py-3">{formatMoney(line.precio_unitario)}</td>
-                      <td className="px-3 py-3">{formatMoney(line.impuesto)}</td>
-                      <td className="px-3 py-3">{formatMoney(line.descuento)}</td>
-                      <td className="px-3 py-3 font-bold text-[#0C2D6B]">{formatMoney(line.total)}</td>
+                      <td className="px-3 py-3">{formatMoney(line.precio_unitario, comprobante.moneda || "GTQ")}</td>
+                      <td className="px-3 py-3">{formatMoney(line.impuesto, comprobante.moneda || "GTQ")}</td>
+                      <td className="px-3 py-3">{formatMoney(line.descuento, comprobante.moneda || "GTQ")}</td>
+                      <td className="px-3 py-3 font-bold text-[#0C2D6B]">{formatMoney(line.total, comprobante.moneda || "GTQ")}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -2296,7 +2346,7 @@ function DetalleComprobanteModal({ comprobante, detalles, pagos, onClose, onEdit
                 {pagos.map((pago) => (
                   <div key={pago.id} className="rounded-xl bg-gray-50 px-3 py-2">
                     <div className="flex justify-between gap-3">
-                      <p className="font-bold text-gray-800">{formatMoney(pago.monto)}</p>
+                      <p className="font-bold text-gray-800">{formatMoney(pago.monto, comprobante.moneda || "GTQ")}</p>
                       <p className="text-sm text-gray-500">{formatDate(pago.fecha_pago)}</p>
                     </div>
                     <p className="text-xs text-gray-400">{pago.forma_pago || "-"} · Ref. {pago.referencia || "S/R"}</p>
@@ -2309,12 +2359,12 @@ function DetalleComprobanteModal({ comprobante, detalles, pagos, onClose, onEdit
             <div className="rounded-2xl border border-[#0C2D6B]/10 bg-[#0C2D6B] p-4 text-white">
               <p className="text-xs font-bold uppercase tracking-wide text-blue-100">Resumen</p>
               <div className="mt-3 space-y-2 text-sm">
-                <SummaryLine label="Subtotal" value={formatMoney(comprobante.subtotal)} />
-                <SummaryLine label="IVA" value={formatMoney(comprobante.iva)} />
-                <SummaryLine label="Total" value={formatMoney(comprobante.total)} />
-                <SummaryLine label="Pagado" value={formatMoney(comprobante.pagado)} />
+                <SummaryLine label="Subtotal" value={formatMoney(comprobante.subtotal, comprobante.moneda || "GTQ")} />
+                <SummaryLine label="IVA" value={formatMoney(comprobante.iva, comprobante.moneda || "GTQ")} />
+                <SummaryLine label="Total" value={formatMoney(comprobante.total, comprobante.moneda || "GTQ")} />
+                <SummaryLine label="Pagado" value={formatMoney(comprobante.pagado, comprobante.moneda || "GTQ")} />
                 <div className="border-t border-white/20 pt-3">
-                  <SummaryLine label="Saldo" value={formatMoney(comprobante.saldo)} strong />
+                  <SummaryLine label="Saldo" value={formatMoney(comprobante.saldo, comprobante.moneda || "GTQ")} strong />
                 </div>
               </div>
             </div>
@@ -2361,12 +2411,12 @@ function PagoModal({ comprobante, form, setForm, errors, setErrors, formasPago, 
 
         <div data-form onKeyDown={moveOnEnter} className="p-5">
           <div className="mb-4 rounded-2xl border border-green-100 bg-green-50 p-4">
-            <p className="text-sm font-bold text-green-700">Saldo actual: {formatMoney(comprobante.saldo)}</p>
+            <p className="text-sm font-bold text-green-700">Saldo actual: {formatMoney(comprobante.saldo, comprobante.moneda || "GTQ")}</p>
             <p className="mt-1 text-xs text-gray-600">El estado se actualiza automáticamente según el total pagado.</p>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label="Monto *" error={errors.monto}>
+            <Field label={`Monto * (${normalizeCurrency(comprobante.moneda)})`} error={errors.monto}>
               <input inputMode="decimal" value={form.monto} onChange={(event) => { const clean = cleanMoneyInput(event.target.value, 9, 2); updateForm({ monto: clean === "" ? "" : Number(clean) }); clearError("monto"); }} className={`${inputClass} ${errors.monto ? errorInput : ""}`} placeholder="0.00" />
             </Field>
 

@@ -500,6 +500,7 @@ export function IALogistica() {
   const [apiError, setApiError] = useState("");
   const [thinking, setThinking] = useState(false);
   const [input, setInput] = useState("");
+  const [inputError, setInputError] = useState("");
 
   // El chat inicia vacío. Solo se muestra contenido cuando el usuario
   // escribe una consulta o presiona uno de los botones rápidos.
@@ -760,7 +761,14 @@ export function IALogistica() {
       forcedText ?? input
     ).trim();
 
-    if (!question || thinking) return;
+    if (thinking) return;
+
+    if (!question) {
+      setInputError("Escribí una consulta antes de enviarla.");
+      return;
+    }
+
+    setInputError("");
 
     // Se limpia inmediatamente el textarea cuando la consulta
     // fue aceptada, antes de esperar la respuesta del backend.
@@ -944,6 +952,7 @@ export function IALogistica() {
 
     setChat([]);
     setInput("");
+    setInputError("");
     setApiError("");
   };
 
@@ -1206,12 +1215,21 @@ export function IALogistica() {
             {/* INPUT + CONSULTAS RÁPIDAS */}
             <div className="shrink-0 border-t border-gray-100 bg-white p-3.5">
               <div className="flex items-end gap-3">
-                <div className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-gray-50 transition focus-within:border-[#0C2D6B] focus-within:bg-white focus-within:ring-2 focus-within:ring-[#0C2D6B]/10">
+                <div
+                  className={`min-w-0 flex-1 rounded-2xl border bg-gray-50 transition focus-within:bg-white focus-within:ring-2 ${
+                    inputError
+                      ? "border-red-400 focus-within:border-red-500 focus-within:ring-red-100"
+                      : "border-gray-200 focus-within:border-[#0C2D6B] focus-within:ring-[#0C2D6B]/10"
+                  }`}
+                >
                   <textarea
                     value={input}
-                    onChange={(event) =>
-                      setInput(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setInput(event.target.value);
+                      if (inputError && event.target.value.trim()) {
+                        setInputError("");
+                      }
+                    }}
                     onKeyDown={handleKeyDown}
                     rows={2}
                     maxLength={1500}
@@ -1244,13 +1262,20 @@ export function IALogistica() {
                 <button
                   type="button"
                   onClick={() => void send()}
-                  disabled={!input.trim() || thinking}
+                  disabled={thinking}
                   className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FF6A00] text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#e95f00] disabled:translate-y-0 disabled:opacity-40"
                   title="Enviar"
                 >
                   <Send className="h-5 w-5" />
                 </button>
               </div>
+
+              {inputError && (
+                <div className="mt-2 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  {inputError}
+                </div>
+              )}
 
               <div className="mt-2.5">
                 <div className="mb-2 flex items-center justify-between gap-3">
@@ -1336,11 +1361,11 @@ export function IALogistica() {
               </section>
 
               {/* INFORMACIÓN CONSULTABLE */}
-              <section className="shrink-0 rounded-2xl border border-slate-100 bg-slate-50/60 p-2.5">
+              <section className="shrink-0 rounded-2xl border border-slate-100 bg-slate-50/60 p-2.5 dark:border-[#2A3950] dark:bg-[#111827]">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <Database className="h-4 w-4 text-[#0C2D6B]" />
-                    <h3 className="text-sm font-black text-[#0C2D6B]">
+                    <h3 className="text-sm font-black text-[#0C2D6B] dark:text-[#F8FAFC]">
                       Información consultable
                     </h3>
                   </div>
@@ -1409,16 +1434,16 @@ export function IALogistica() {
               </section>
 
               {/* VIAJES RECIENTES */}
-              <section className="shrink-0 overflow-visible rounded-2xl border border-gray-100 bg-white p-3">
+              <section className="shrink-0 overflow-visible rounded-2xl border border-gray-100 bg-white p-3 dark:border-[#2A3950] dark:bg-[#111827]">
                 <div className="mb-2.5 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <MapPin className="h-4 w-4 text-[#FF6A00]" />
-                    <h3 className="text-sm font-black text-[#0C2D6B]">
+                    <h3 className="text-sm font-black text-[#0C2D6B] dark:text-[#F8FAFC]">
                       Viajes recientes
                     </h3>
                   </div>
 
-                  <span className="rounded-full bg-slate-50 px-2 py-1 text-[9px] font-bold text-gray-400">
+                  <span className="rounded-full bg-slate-50 px-2 py-1 text-[9px] font-bold text-gray-400 dark:bg-[#172337] dark:text-[#9FB0C6]">
                     Últimos 3
                   </span>
                 </div>
@@ -1428,16 +1453,16 @@ export function IALogistica() {
                     {context.logistics.viajes.slice(0, 3).map((row) => (
                       <div
                         key={row.id}
-                        className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2"
+                        className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2 dark:border-[#304057] dark:bg-[#151F2F]"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-[11px] font-black text-[#0C2D6B]">
+                            <p className="truncate text-[11px] font-black text-[#0C2D6B] dark:text-[#EAF2FF]">
                               {row.codigo}
                             </p>
 
                             <p
-                              className="mt-0.5 truncate text-[9.5px] text-slate-500"
+                              className="mt-0.5 truncate text-[9.5px] text-slate-500 dark:text-[#AEBBD0]"
                               title={row.ruta}
                             >
                               {row.ruta || "Ruta no registrada"}
@@ -1445,7 +1470,7 @@ export function IALogistica() {
                           </div>
 
                           <div className="shrink-0 text-right">
-                            <span className="inline-flex max-w-[105px] truncate rounded-full bg-white px-2 py-1 text-[8.5px] font-bold text-slate-500 shadow-sm">
+                            <span className="inline-flex max-w-[105px] truncate rounded-full bg-white px-2 py-1 text-[8.5px] font-bold text-slate-500 shadow-sm dark:border dark:border-[#3A4B63] dark:bg-[#0F1929] dark:text-[#D7E3F4]">
                               {row.estado || "Sin estado"}
                             </span>
 
@@ -1455,7 +1480,7 @@ export function IALogistica() {
                           </div>
                         </div>
 
-                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-[#26344A]">
                           <div
                             className="h-full rounded-full bg-[#FF6A00]"
                             style={{
@@ -1502,15 +1527,15 @@ function MiniKpi({
 }) {
   const color =
     tone === "green"
-      ? "bg-green-50 text-green-600"
+      ? "bg-green-50 text-green-600 dark:bg-green-500/10 dark:text-green-300"
       : tone === "orange"
-      ? "bg-orange-50 text-orange-600"
+      ? "bg-orange-50 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300"
       : tone === "purple"
-      ? "bg-purple-50 text-purple-600"
-      : "bg-blue-50 text-[#0C2D6B]";
+      ? "bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-300"
+      : "bg-blue-50 text-[#0C2D6B] dark:bg-blue-500/10 dark:text-blue-300";
 
   return (
-    <Card className="min-w-0 border border-gray-100 p-4 shadow-sm">
+    <Card className="min-w-0 border border-gray-100 p-4 shadow-sm dark:border-[#2A3950] dark:bg-[#111827]">
       <div className="flex min-w-0 items-start gap-3">
         <div
           className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${color}`}
@@ -1519,15 +1544,15 @@ function MiniKpi({
         </div>
 
         <div className="min-w-0">
-          <p className="text-xs font-semibold text-gray-500">
+          <p className="text-xs font-semibold text-gray-500 dark:text-[#AEBBD0]">
             {label}
           </p>
 
-          <p className="mt-1 whitespace-nowrap text-[clamp(1.05rem,1.7vw,1.25rem)] font-black tabular-nums text-[#0C2D6B]">
+          <p className="mt-1 whitespace-nowrap text-[clamp(1.05rem,1.7vw,1.25rem)] font-black tabular-nums text-[#0C2D6B] dark:text-[#F8FAFC]">
             {value}
           </p>
 
-          <p className="mt-1 text-[11px] leading-4 text-gray-400">
+          <p className="mt-1 text-[11px] leading-4 text-gray-400 dark:text-[#91A3BA]">
             {detail}
           </p>
         </div>
@@ -1592,17 +1617,17 @@ function ContextTile({
   value: string;
 }) {
   return (
-    <div className="min-w-0 rounded-xl border border-slate-100 bg-white p-2">
+    <div className="min-w-0 rounded-xl border border-slate-100 bg-white p-2 dark:border-[#2E3D53] dark:bg-[#151F2F]">
       <div className="flex items-center gap-2">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-[#0C2D6B] shadow-sm">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-[#0C2D6B] shadow-sm dark:bg-[#0F1929] dark:text-[#9CC0FF] dark:ring-1 dark:ring-[#3A4B63]">
           <Icon className="h-4 w-4" />
         </div>
 
         <div className="min-w-0">
-          <p className="truncate text-[10px] font-semibold text-slate-400">
+          <p className="truncate text-[10px] font-semibold text-slate-400 dark:text-[#91A3BA]">
             {label}
           </p>
-          <p className="truncate text-[12px] font-black text-[#0C2D6B]">
+          <p className="truncate text-[12px] font-black text-[#0C2D6B] dark:text-[#F8FAFC]">
             {value}
           </p>
         </div>

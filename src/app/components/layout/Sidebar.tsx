@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../utils/cn";
 import { useAuth } from "../../context/AuthContext";
+import { canAccessModule } from "../../utils/permissions";
 
 export function Sidebar({ isOpen = false, onClose }: any) {
   const location = useLocation();
@@ -42,7 +43,8 @@ export function Sidebar({ isOpen = false, onClose }: any) {
       location.pathname === "/rutas"
   );
 
-  const puede = (roles: string[]) => roles.includes(role);
+  const puedeModulo = (module: Parameters<typeof canAccessModule>[1]) =>
+    canAccessModule(role, module);
 
   const cerrarEnMovil = () => {
     if (onClose) onClose();
@@ -86,9 +88,14 @@ export function Sidebar({ isOpen = false, onClose }: any) {
     path: string,
     tab?: string
   ) => {
+    const tabEfectivo =
+      location.pathname === "/crm" && !tabActual
+        ? "oportunidades"
+        : tabActual;
+
     const activo =
       location.pathname === path &&
-      (tab ? tabActual === tab : !tabActual);
+      (tab ? tabEfectivo === tab : !tabEfectivo);
 
     return cn(
       "flex items-center gap-2 pl-12 pr-4 py-2.5 text-sm transition-colors border-r-4",
@@ -126,7 +133,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
         </Link>
 
         {/* CRM Y VENTAS */}
-        {puede(["gerencia", "ventas"]) && (
+        {puedeModulo("crm") && (
           <>
             <button
               type="button"
@@ -205,12 +212,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
         )}
 
         {/* OPERACIONES */}
-        {puede([
-          "gerencia",
-          "operaciones",
-          // compatibilidad temporal por si la BD todavía devuelve "compras"
-          "compras",
-        ]) && (
+        {puedeModulo("operaciones") && (
           <>
             <button
               type="button"
@@ -291,7 +293,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
         )}
 
         {/* LOGÍSTICA */}
-        {puede(["gerencia", "logistica"]) && (
+        {puedeModulo("logistica") && (
           <>
             <button
               type="button"
@@ -353,11 +355,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
         )}
 
         {/* COMPROBANTES */}
-        {puede([
-          "gerencia",
-          "facturacion",
-          "finanzas",
-        ]) && (
+        {puedeModulo("facturacion") && (
           <Link
             to="/facturacion"
             onClick={cerrarEnMovil}
@@ -371,15 +369,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
         )}
 
         {/* REPORTES */}
-        {puede([
-          "gerencia",
-          "facturacion",
-          "finanzas",
-          "ventas",
-          "operaciones",
-          "compras",
-          "logistica",
-        ]) && (
+        {puedeModulo("reportes") && (
           <Link
             to="/reportes"
             onClick={cerrarEnMovil}
@@ -393,15 +383,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
         )}
 
         {/* IA */}
-        {puede([
-          "gerencia",
-          "facturacion",
-          "finanzas",
-          "ventas",
-          "operaciones",
-          "compras",
-          "logistica",
-        ]) && (
+        {puedeModulo("ia") && (
           <Link
             to="/ia"
             onClick={cerrarEnMovil}
@@ -422,7 +404,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
         )}
 
         {/* MANTENIMIENTO */}
-        {puede(["gerencia"]) && (
+        {puedeModulo("mantenimiento") && (
           <Link
             to="/mantenimiento"
             onClick={cerrarEnMovil}

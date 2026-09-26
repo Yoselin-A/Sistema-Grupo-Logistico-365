@@ -73,6 +73,16 @@ app.use(
 
 app.use("/api/auditoria", auditoriaRoutes);
 
+/*
+  IMPORTANTE:
+  Mantenimiento se monta antes de las rutas generales porque
+  operaciones.routes.js conserva endpoints antiguos con el prefijo
+  /mantenimiento. De esta forma, el módulo usa siempre la lógica
+  específica de mantenimiento (normalización de fechas, hash de
+  contraseñas y validaciones de seguridad).
+*/
+app.use("/api/mantenimiento", mantenimientoRoutes);
+
 app.use("/api", crmRoutes);
 app.use("/api", operacionesRoutes);
 app.use("/api", logisticaRoutes);
@@ -82,7 +92,6 @@ app.use("/api", comprobantesRoutes);
 app.use("/api", reportesRoutes);
 
 app.use("/api/ia", iaRoutes);
-app.use("/api/mantenimiento", mantenimientoRoutes);
 
 // RUTA NO ENCONTRADA
 app.use((req, res) => {

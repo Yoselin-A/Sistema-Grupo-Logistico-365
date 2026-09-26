@@ -2,6 +2,10 @@
 @import './tailwind.css';
 @import './theme.css';
 
+/* =====================================================
+   GL365 - ESTILOS GENERALES
+===================================================== */
+
 /* ITEM PRINCIPAL */
 .menu-item {
   display: flex;
@@ -15,7 +19,7 @@
 }
 
 .menu-item:hover {
-  background: rgba(255,255,255,0.05);
+  background: rgba(255, 255, 255, 0.05);
   color: #FFFFFF;
 }
 
@@ -31,7 +35,7 @@
 }
 
 .menu-group:hover {
-  background: rgba(255,255,255,0.05);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 /* SUBMENU */
@@ -43,7 +47,7 @@
 }
 
 .submenu:hover {
-  background: rgba(255,255,255,0.05);
+  background: rgba(255, 255, 255, 0.05);
   color: white;
 }
 
@@ -69,4 +73,600 @@
 
 .card-module p {
   @apply text-sm text-gray-500;
+}
+
+/* =====================================================
+   GL365 - MODO OSCURO
+   Paleta inspirada en el estilo oscuro de las tarjetas
+   financieras: gris azulado oscuro, bordes visibles y
+   contraste suave.
+
+   Se activa agregando la clase "dark" al elemento <html>
+   y se guarda con la clave localStorage: gl365_theme
+===================================================== */
+
+html.dark {
+  color-scheme: dark;
+
+  /* Variables de Tailwind/Shadcn */
+  --background: #0B1220;
+  --foreground: #F8FAFC;
+  --card: #111827;
+  --card-foreground: #F8FAFC;
+  --popover: #111827;
+  --popover-foreground: #F8FAFC;
+  --primary: #16408F;
+  --primary-foreground: #FFFFFF;
+  --secondary: #172033;
+  --secondary-foreground: #F8FAFC;
+  --muted: #172033;
+  --muted-foreground: #9EABC0;
+  --accent: #FF6A00;
+  --accent-foreground: #FFFFFF;
+  --border: #2A3548;
+  --input: #2A3548;
+  --input-background: #0D1726;
+  --sidebar: #0C2D6B;
+  --sidebar-foreground: #F8FAFC;
+  --sidebar-primary: #16408F;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #173B78;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: rgba(255, 255, 255, 0.10);
+
+  /* Variables propias GL365 */
+  --gl365-dark-bg: #0B1220;
+  --gl365-dark-surface: #111827;
+  --gl365-dark-surface-2: #151F2F;
+  --gl365-dark-surface-3: #1A2638;
+  --gl365-dark-header: #0E1A2B;
+  --gl365-dark-input: #0D1726;
+  --gl365-dark-border: #2A3548;
+  --gl365-dark-border-soft: #202C3D;
+  --gl365-dark-text: #F8FAFC;
+  --gl365-dark-text-2: #CBD5E1;
+  --gl365-dark-text-3: #94A3B8;
+}
+
+html.dark,
+html.dark body,
+html.dark #root {
+  background: var(--gl365-dark-bg) !important;
+  color: var(--gl365-dark-text) !important;
+}
+
+html.dark body {
+  min-height: 100vh;
+}
+
+html.dark .gl365-app-shell {
+  background: var(--gl365-dark-bg) !important;
+  color: var(--gl365-dark-text) !important;
+}
+
+/* =====================================================
+   HEADER Y NAVEGACIÓN
+===================================================== */
+
+html.dark .gl365-header {
+  background: var(--gl365-dark-header) !important;
+  border-color: var(--gl365-dark-border-soft) !important;
+  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.06) !important;
+}
+
+html.dark .gl365-icon-button {
+  background: #121F31 !important;
+  border-color: #2B3A50 !important;
+  color: var(--gl365-dark-text) !important;
+}
+
+html.dark .gl365-icon-button:hover {
+  background: #19283D !important;
+  border-color: #3A4A61 !important;
+}
+
+/* =====================================================
+   FONDOS BLANCOS Y GRISES CLAROS
+   Convierte las superficies claras del sistema a tonos
+   oscuros sin afectar los colores azul/naranja de marca.
+===================================================== */
+
+html.dark .bg-white {
+  background-color: var(--gl365-dark-surface) !important;
+}
+
+html.dark .bg-gray-50,
+html.dark .bg-\[\#F8FAFC\],
+html.dark .bg-\[\#FAFBFD\],
+html.dark .bg-\[\#F6F7F9\],
+html.dark .bg-\[\#F5F6FA\],
+html.dark .bg-\[\#F5F6F8\],
+html.dark .bg-\[\#F3F4F6\],
+html.dark .bg-\[\#f2f2f2\] {
+  background-color: var(--gl365-dark-surface-2) !important;
+}
+
+html.dark .bg-gray-100,
+html.dark .bg-\[\#E5E7EB\],
+html.dark .bg-\[\#D8E5F2\],
+html.dark .bg-\[\#D1D5DB\] {
+  background-color: var(--gl365-dark-surface-3) !important;
+}
+
+html.dark .bg-gray-200,
+html.dark .bg-gray-300 {
+  background-color: #233146 !important;
+}
+
+/* Fondos con transparencia usados en Logística */
+html.dark .bg-gray-50\/70 {
+  background-color: rgba(21, 31, 47, 0.92) !important;
+}
+
+html.dark .bg-blue-50\/70,
+html.dark .bg-blue-50\/40,
+html.dark .bg-blue-50\/30 {
+  background-color: rgba(25, 49, 86, 0.72) !important;
+}
+
+html.dark .bg-orange-50\/40,
+html.dark .bg-orange-50\/30 {
+  background-color: rgba(104, 48, 18, 0.50) !important;
+}
+
+/* =====================================================
+   GRADIENTES CLAROS
+===================================================== */
+
+html.dark .from-\[\#f5f8fc\] {
+  --tw-gradient-from: #111827 var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(17 24 39 / 0) var(--tw-gradient-to-position) !important;
+}
+
+html.dark .via-\[\#eef3f8\] {
+  --tw-gradient-via: #162133 var(--tw-gradient-via-position) !important;
+}
+
+html.dark .to-\[\#e8eef6\] {
+  --tw-gradient-to: #111C2C var(--tw-gradient-to-position) !important;
+}
+
+html.dark .via-white {
+  --tw-gradient-via: #151F2F var(--tw-gradient-via-position) !important;
+}
+
+html.dark .to-white {
+  --tw-gradient-to: #111827 var(--tw-gradient-to-position) !important;
+}
+
+html.dark .from-blue-50 {
+  --tw-gradient-from: #14243A var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(20 36 58 / 0) var(--tw-gradient-to-position) !important;
+}
+
+html.dark .to-orange-50 {
+  --tw-gradient-to: #221A18 var(--tw-gradient-to-position) !important;
+}
+
+/* =====================================================
+   BORDES Y DIVISORES
+===================================================== */
+
+html.dark .border-gray-100,
+html.dark .border-gray-200,
+html.dark .border-gray-300,
+html.dark .border-blue-100,
+html.dark .border-indigo-100 {
+  border-color: var(--gl365-dark-border) !important;
+}
+
+html.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+html.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--gl365-dark-border) !important;
+}
+
+/* =====================================================
+   TEXTO
+===================================================== */
+
+html.dark .text-gray-900,
+html.dark .text-gray-800,
+html.dark .text-gray-700,
+html.dark .text-\[\#111827\],
+html.dark .text-\[\#071B3A\],
+html.dark .text-\[\#0C2D6B\] {
+  color: var(--gl365-dark-text) !important;
+}
+
+html.dark .text-gray-600,
+html.dark .text-gray-500 {
+  color: var(--gl365-dark-text-2) !important;
+}
+
+html.dark .text-gray-400 {
+  color: var(--gl365-dark-text-3) !important;
+}
+
+html.dark .text-gray-300 {
+  color: #CBD5E1 !important;
+}
+
+/* Mantiene el azul de marca visible solo cuando está sobre fondos oscuros de marca */
+html.dark .bg-\[\#0C2D6B\] .text-blue-100,
+html.dark .bg-\[\#0C2D6B\] .text-blue-200,
+html.dark .bg-\[\#143C8C\] .text-blue-100,
+html.dark .bg-\[\#143C8C\] .text-blue-200 {
+  color: #D6E4FF !important;
+}
+
+/* =====================================================
+   INPUTS, SELECTS Y TEXTAREAS
+===================================================== */
+
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: var(--gl365-dark-input) !important;
+  border-color: #34435A !important;
+  color: var(--gl365-dark-text) !important;
+}
+
+html.dark input:hover,
+html.dark select:hover,
+html.dark textarea:hover {
+  border-color: #46566E !important;
+}
+
+html.dark input:focus,
+html.dark select:focus,
+html.dark textarea:focus {
+  border-color: #315EAE !important;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #7F8DA3 !important;
+}
+
+html.dark select option {
+  background: #111827;
+  color: #F8FAFC;
+}
+
+html.dark input:disabled,
+html.dark select:disabled,
+html.dark textarea:disabled {
+  background-color: #192334 !important;
+  color: #7F8DA3 !important;
+}
+
+/* =====================================================
+   TABLAS
+===================================================== */
+
+html.dark table,
+html.dark thead,
+html.dark tbody,
+html.dark tr,
+html.dark td,
+html.dark th {
+  border-color: var(--gl365-dark-border) !important;
+}
+
+html.dark table {
+  color: var(--gl365-dark-text-2);
+}
+
+html.dark thead,
+html.dark th {
+  background-color: #172338 !important;
+  color: #F3F7FC !important;
+}
+
+html.dark tbody tr {
+  background-color: transparent;
+}
+
+html.dark tbody tr:hover {
+  background-color: #172337 !important;
+}
+
+/* Headers de tablas que en claro usan gris/azul muy claro */
+html.dark thead.bg-\[\#D8E5F2\] {
+  background-color: #19304A !important;
+  color: #F8FAFC !important;
+}
+
+/* =====================================================
+   TARJETAS, PANELES Y MODALES
+===================================================== */
+
+html.dark .card-kpi,
+html.dark .card-module {
+  background: var(--gl365-dark-surface) !important;
+  border-color: var(--gl365-dark-border) !important;
+  color: var(--gl365-dark-text) !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24) !important;
+}
+
+html.dark .card-kpi h3,
+html.dark .card-module h3 {
+  color: var(--gl365-dark-text) !important;
+}
+
+html.dark .card-kpi p,
+html.dark .card-module p {
+  color: var(--gl365-dark-text-3) !important;
+}
+
+html.dark .shadow-sm,
+html.dark .shadow,
+html.dark .shadow-md,
+html.dark .shadow-lg,
+html.dark .shadow-xl,
+html.dark .shadow-2xl {
+  --tw-shadow-color: rgba(0, 0, 0, 0.32);
+}
+
+/* =====================================================
+   NOTIFICACIONES
+===================================================== */
+
+html.dark .gl365-notification-panel {
+  background: #111827 !important;
+  border-color: #2F3D52 !important;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.48) !important;
+}
+
+html.dark .gl365-notification-item {
+  border-color: #263348 !important;
+}
+
+html.dark .gl365-notification-item:hover {
+  background: #182437 !important;
+}
+
+/* =====================================================
+   BOTONES SECUNDARIOS CLAROS
+===================================================== */
+
+html.dark button.bg-white {
+  background-color: #151F2F !important;
+  border-color: #34435A !important;
+  color: #F8FAFC !important;
+}
+
+html.dark button.bg-white:hover {
+  background-color: #1A273A !important;
+}
+
+html.dark .hover\:bg-gray-50:hover,
+html.dark .hover\:bg-gray-100:hover {
+  background-color: #1A273A !important;
+}
+
+/* =====================================================
+   ESTADOS SEMÁNTICOS
+   Mantiene rojo, naranja, amarillo, verde, azul y morado
+   reconocibles sin usar fondos demasiado claros.
+===================================================== */
+
+html.dark .bg-red-50 {
+  background-color: rgba(127, 29, 29, 0.30) !important;
+}
+
+html.dark .bg-orange-50 {
+  background-color: rgba(124, 45, 18, 0.30) !important;
+}
+
+html.dark .bg-yellow-50 {
+  background-color: rgba(113, 63, 18, 0.30) !important;
+}
+
+html.dark .bg-green-50 {
+  background-color: rgba(20, 83, 45, 0.30) !important;
+}
+
+html.dark .bg-blue-50 {
+  background-color: rgba(30, 58, 138, 0.30) !important;
+}
+
+html.dark .bg-purple-50 {
+  background-color: rgba(88, 28, 135, 0.30) !important;
+}
+
+html.dark .text-red-700,
+html.dark .text-red-600 {
+  color: #FCA5A5 !important;
+}
+
+html.dark .text-orange-700,
+html.dark .text-orange-600 {
+  color: #FDBA74 !important;
+}
+
+html.dark .text-yellow-800,
+html.dark .text-yellow-700 {
+  color: #FDE68A !important;
+}
+
+html.dark .text-green-700,
+html.dark .text-green-600 {
+  color: #86EFAC !important;
+}
+
+html.dark .text-blue-700,
+html.dark .text-blue-600 {
+  color: #93C5FD !important;
+}
+
+html.dark .text-purple-700,
+html.dark .text-purple-600 {
+  color: #D8B4FE !important;
+}
+
+/* =====================================================
+   SCROLLBAR OSCURO
+===================================================== */
+
+html.dark * {
+  scrollbar-color: #3A465A #0D1726;
+}
+
+html.dark *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+html.dark *::-webkit-scrollbar-track {
+  background: #0D1726;
+}
+
+html.dark *::-webkit-scrollbar-thumb {
+  background: #3A465A;
+  border-radius: 999px;
+  border: 2px solid #0D1726;
+}
+
+html.dark *::-webkit-scrollbar-thumb:hover {
+  background: #4B5A70;
+}
+
+
+/* =====================================================
+   GL365 - AJUSTE OSCURO PREMIUM / DIFUMINADO
+   Corrige pasteles, cajas claras, etiquetas y tarjetas
+   que perdían contraste en modo oscuro.
+===================================================== */
+
+/* Superficies translúcidas claras usadas en Logística / IA */
+html.dark .bg-white\/95 {
+  background-color: rgba(17, 24, 39, 0.92) !important;
+}
+
+html.dark .bg-white\/90,
+html.dark .bg-white\/80,
+html.dark .bg-white\/70 {
+  background-color: rgba(21, 31, 47, 0.88) !important;
+}
+
+html.dark .bg-slate-50\/80,
+html.dark .bg-slate-50\/70,
+html.dark .bg-slate-50\/60,
+html.dark .bg-slate-50 {
+  background-color: #151F2F !important;
+}
+
+html.dark .bg-slate-100 {
+  background-color: #182437 !important;
+}
+
+html.dark .bg-slate-200 {
+  background-color: #26344A !important;
+}
+
+/* Badges: en oscuro no usamos colores pastel sólidos.
+   Se mantiene el color semántico como una capa tenue. */
+html.dark .bg-green-100 {
+  background-color: rgba(34, 197, 94, 0.10) !important;
+}
+html.dark .bg-blue-100 {
+  background-color: rgba(59, 130, 246, 0.10) !important;
+}
+html.dark .bg-orange-100 {
+  background-color: rgba(249, 115, 22, 0.10) !important;
+}
+html.dark .bg-red-100 {
+  background-color: rgba(239, 68, 68, 0.10) !important;
+}
+html.dark .bg-yellow-100 {
+  background-color: rgba(234, 179, 8, 0.10) !important;
+}
+html.dark .bg-purple-100 {
+  background-color: rgba(168, 85, 247, 0.10) !important;
+}
+
+html.dark .border-green-200 { border-color: rgba(74, 222, 128, 0.30) !important; }
+html.dark .border-blue-200 { border-color: rgba(96, 165, 250, 0.30) !important; }
+html.dark .border-orange-200 { border-color: rgba(251, 146, 60, 0.30) !important; }
+html.dark .border-red-200 { border-color: rgba(248, 113, 113, 0.30) !important; }
+html.dark .border-yellow-200 { border-color: rgba(250, 204, 21, 0.30) !important; }
+html.dark .border-purple-200 { border-color: rgba(192, 132, 252, 0.30) !important; }
+
+html.dark .text-green-800,
+html.dark .text-green-700,
+html.dark .text-green-600 { color: #86EFAC !important; }
+
+html.dark .text-blue-800,
+html.dark .text-blue-700,
+html.dark .text-blue-600 { color: #93C5FD !important; }
+
+html.dark .text-orange-800,
+html.dark .text-orange-700,
+html.dark .text-orange-600 { color: #FDBA74 !important; }
+
+html.dark .text-red-800,
+html.dark .text-red-700,
+html.dark .text-red-600 { color: #FCA5A5 !important; }
+
+html.dark .text-yellow-900,
+html.dark .text-yellow-800,
+html.dark .text-yellow-700 { color: #FDE68A !important; }
+
+html.dark .text-purple-800,
+html.dark .text-purple-700,
+html.dark .text-purple-600 { color: #D8B4FE !important; }
+
+/* Texto de navegación y datos sobre superficies oscuras */
+html.dark .text-slate-500 { color: #AEBBD0 !important; }
+html.dark .text-slate-400 { color: #91A3BA !important; }
+html.dark .text-slate-300 { color: #D5DFEC !important; }
+
+/* Etiquetas claras y chips que antes quedaban blancos */
+html.dark .rounded-full.bg-white,
+html.dark .rounded-lg.bg-white,
+html.dark .rounded-xl.bg-white {
+  background-color: #172337 !important;
+  color: #EAF2FF !important;
+}
+
+/* Iconos del dashboard: superficie tenue azul/gris en lugar de caja blanca */
+html.dark .card-module .bg-slate-100,
+html.dark .dashboard-module-card .bg-slate-100 {
+  background: rgba(96, 165, 250, 0.10) !important;
+  color: #9CC0FF !important;
+  border: 1px solid rgba(96, 165, 250, 0.20) !important;
+}
+
+/* Mapas y rastreo */
+html.dark .from-\[\#f5f8fc\] {
+  --tw-gradient-from: #0E1726 var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(14 23 38 / 0) var(--tw-gradient-to-position) !important;
+}
+html.dark .via-\[\#eef3f8\] {
+  --tw-gradient-via: #111C2D var(--tw-gradient-via-position) !important;
+}
+html.dark .to-\[\#e8eef6\] {
+  --tw-gradient-to: #0C1523 var(--tw-gradient-to-position) !important;
+}
+
+/* Inputs / barras internas un poco más difuminadas */
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background: linear-gradient(180deg, #101B2D 0%, #0D1726 100%) !important;
+  border-color: #34445B !important;
+}
+
+/* Tarjetas premium: separación sin contraste agresivo */
+html.dark .shadow-sm,
+html.dark .shadow-md,
+html.dark .shadow-lg {
+  --tw-shadow-color: rgba(0,0,0,0.26);
+}
+
+/* Barra de progreso de IA / logística */
+html.dark .bg-gray-100,
+html.dark .bg-slate-200 {
+  background-color: #26344A !important;
 }

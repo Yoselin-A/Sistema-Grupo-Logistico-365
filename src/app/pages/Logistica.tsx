@@ -271,24 +271,24 @@ const rutaLabel = (ruta?: Partial<Ruta> | AnyRow) => {
 const getEstadoColor = (estado: string) => {
   switch (estado) {
     case "Pendiente":
-      return "bg-gray-100 text-gray-700 border-gray-200";
+      return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-slate-400/10 dark:text-slate-300 dark:border-slate-400/30";
     case "En ruta":
     case "En tránsito":
-      return "bg-blue-100 text-blue-700 border-blue-200";
+      return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-400/30";
     case "En destino":
-      return "bg-orange-100 text-orange-700 border-orange-200";
+      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-400/30";
     case "Entregado":
-      return "bg-green-100 text-green-700 border-green-200";
+      return "bg-green-100 text-green-700 border-green-200 dark:bg-green-500/10 dark:text-green-300 dark:border-green-400/30";
     case "Retraso":
-      return "bg-orange-100 text-orange-700 border-orange-200";
+      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-400/30";
     case "Crítico":
-      return "bg-red-100 text-red-700 border-red-200";
+      return "bg-red-100 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-400/30";
     case "Activo":
-      return "bg-green-100 text-green-700 border-green-200";
+      return "bg-green-100 text-green-700 border-green-200 dark:bg-green-500/10 dark:text-green-300 dark:border-green-400/30";
     case "Inactivo":
-      return "bg-gray-100 text-gray-600 border-gray-200";
+      return "bg-gray-100 text-gray-600 border-gray-200 dark:bg-slate-400/10 dark:text-slate-300 dark:border-slate-400/30";
     default:
-      return "bg-gray-100 text-gray-700 border-gray-200";
+      return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-slate-400/10 dark:text-slate-300 dark:border-slate-400/30";
   }
 };
 
@@ -1564,7 +1564,7 @@ export function Logistica() {
       {/* Navegación rápida de ancho completo.
           Se deja larga para que sea fácil de ver y no choque con el header. */}
       <div className="sticky top-[92px] z-30 w-full px-1">
-        <div className="w-full rounded-2xl border border-gray-200/90 bg-white/95 px-4 py-2.5 shadow-[0_6px_20px_rgba(15,23,42,0.10)] backdrop-blur-md">
+        <div className="w-full rounded-2xl border border-gray-200/90 bg-white/95 px-4 py-2.5 shadow-[0_6px_20px_rgba(15,23,42,0.10)] backdrop-blur-md dark:border-[#2D3B50] dark:bg-[#111827]/90 dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
           <div className="flex min-h-10 w-full flex-wrap items-center gap-2">
             <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-gray-400">
               Ir a:
@@ -1573,7 +1573,7 @@ export function Logistica() {
             <button
               type="button"
               onClick={goToViajes}
-              className="h-9 px-3 rounded-xl border border-blue-100 bg-blue-50 text-[#0C2D6B] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-100 transition-colors"
+              className="h-9 px-3 rounded-xl border border-blue-100 bg-blue-50 text-[#0C2D6B] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-100 transition-colors dark:border-blue-400/25 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/15"
             >
               <Truck className="w-4 h-4" /> Viajes
             </button>
@@ -1583,8 +1583,8 @@ export function Logistica() {
               onClick={goToEnvios}
               className={`h-9 px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
                 activeTab === "envios"
-                  ? "border-orange-200 bg-orange-50 text-[#C85100]"
-                  : "border-gray-200 bg-white text-[#0C2D6B] hover:bg-blue-50"
+                  ? "border-orange-200 bg-orange-50 text-[#C85100] dark:border-orange-400/30 dark:bg-orange-500/10 dark:text-orange-200"
+                  : "border-gray-200 bg-white text-[#0C2D6B] hover:bg-blue-50 dark:border-[#34435A] dark:bg-[#151F2F] dark:text-[#DCE8FA] dark:hover:bg-[#1A273A]"
               }`}
             >
               <Package className="w-4 h-4" /> Servicios
@@ -1593,7 +1593,7 @@ export function Logistica() {
             <button
               type="button"
               onClick={goToTop}
-              className="ml-0 sm:ml-auto h-9 px-3 rounded-xl border border-gray-200 bg-white text-gray-600 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-gray-50 transition-colors"
+              className="ml-0 sm:ml-auto h-9 px-3 rounded-xl border border-gray-200 bg-white text-gray-600 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-gray-50 transition-colors dark:border-[#34435A] dark:bg-[#151F2F] dark:text-[#DCE8FA] dark:hover:bg-[#1A273A]"
             >
               <ArrowUp className="w-4 h-4" /> Arriba
             </button>
@@ -1602,20 +1602,20 @@ export function Logistica() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <section className="xl:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
+        <section className="xl:col-span-2 bg-white dark:bg-[#111827] rounded-2xl border border-gray-100 dark:border-[#2A3950] shadow-sm dark:shadow-[0_12px_30px_rgba(0,0,0,0.20)] overflow-hidden">
+          <div className="p-4 border-b border-gray-100 dark:border-[#263244] flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-xl sm:text-2xl font-bold text-[#0C2D6B] flex items-center gap-2">
+              <h2 className="text-xl sm:text-2xl font-bold text-[#0C2D6B] dark:text-[#F8FAFC] flex items-center gap-2">
                 <MapPin className="w-5 h-5 text-[#FF6A00]" />
                 Rastreo en Tiempo Real
               </h2>
-              <p className="mt-1 text-[11px] text-gray-400">
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-[#9FB0C6]">
                 Identificá cada viaje por su código sin abrir el detalle.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <span className="inline-flex h-7 items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 text-[10px] font-extrabold text-[#0C2D6B]">
+              <span className="inline-flex h-7 items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 text-[10px] font-extrabold text-[#0C2D6B] dark:border-blue-400/25 dark:bg-blue-500/10 dark:text-blue-200">
                 {
                   viajes.filter(
                     (v) => v.estado !== "Entregado" && v.estado !== "Pendiente"
@@ -1624,7 +1624,7 @@ export function Logistica() {
                 activos
               </span>
 
-              <div className="flex gap-3 text-xs font-semibold text-gray-500">
+              <div className="flex gap-3 text-xs font-semibold text-gray-500 dark:text-[#C7D2E3]">
                 <span className="inline-flex items-center gap-1">
                   <i className="w-2.5 h-2.5 rounded-full bg-green-500" /> En tiempo
                 </span>
@@ -1638,7 +1638,7 @@ export function Logistica() {
             </div>
           </div>
 
-          <div className="relative h-[420px] overflow-hidden bg-gradient-to-br from-[#f5f8fc] via-[#eef3f8] to-[#e8eef6]">
+          <div className="relative h-[420px] overflow-hidden bg-gradient-to-br from-[#f5f8fc] via-[#eef3f8] to-[#e8eef6] dark:from-[#0E1726] dark:via-[#111C2D] dark:to-[#0C1523]">
             <div className="pointer-events-none absolute inset-0 opacity-[0.22]"
               style={{
                 backgroundImage:
@@ -1733,7 +1733,7 @@ export function Logistica() {
                       />
 
                       <span
-                        className={`absolute top-1/2 -translate-y-1/2 max-w-[116px] truncate whitespace-nowrap rounded-lg border border-gray-200 bg-white/95 px-2 py-1 text-[10px] font-extrabold text-[#0C2D6B] shadow-md backdrop-blur-sm transition-opacity duration-150 ${
+                        className={`absolute top-1/2 -translate-y-1/2 max-w-[116px] truncate whitespace-nowrap rounded-lg border border-gray-200 bg-white/95 px-2 py-1 text-[10px] font-extrabold text-[#0C2D6B] shadow-md backdrop-blur-sm dark:border-[#40516A] dark:bg-[#172337]/95 dark:text-[#F4F8FF] dark:shadow-[0_8px_20px_rgba(0,0,0,0.28)] transition-opacity duration-150 ${
                           alignLeft ? "right-7" : "left-7"
                         } ${
                           hoveredViajeId !== null && hoveredViajeId !== viaje.id
@@ -1814,19 +1814,19 @@ export function Logistica() {
                   type="button"
                   key={alert.id}
                   onClick={() => viaje && openViewViaje(viaje)}
-                  className={`w-full text-left rounded-xl border bg-white p-3 shadow-sm border-l-4 ${
+                  className={`w-full text-left rounded-xl border bg-white dark:bg-[#151F2F] dark:border-[#334155] p-3 shadow-sm border-l-4 ${
                     alert.type === "error" ? "border-l-red-500" : "border-l-orange-500"
                   } hover:shadow-md transition-shadow`}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <b className="text-sm text-gray-800">{alert.title}</b>
+                    <b className="text-sm text-gray-800 dark:text-[#F8FAFC]">{alert.title}</b>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
                       alert.type === "error" ? "bg-red-50 text-red-600" : "bg-orange-50 text-orange-600"
                     }`}>
                       {alert.type === "error" ? "CRÍTICO" : "ALERTA"}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1 leading-relaxed">{alert.desc}</p>
+                  <p className="text-xs text-gray-500 dark:text-[#B7C4D8] mt-1 leading-relaxed">{alert.desc}</p>
                 </button>
               );
             })}
@@ -1932,29 +1932,29 @@ export function Logistica() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           {paginatedViajes.map((viaje) => (
-            <article key={viaje.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <article key={viaje.id} className="bg-white dark:bg-[#111827] rounded-2xl border border-gray-100 dark:border-[#2A3950] shadow-sm overflow-hidden">
               <div className="p-4">
                 <div className="flex items-start justify-between gap-3 mb-3">
-                  <span className="font-mono font-bold text-[#0C2D6B] bg-gray-50 px-3 py-1 rounded-lg text-xs">{viaje.codigo}</span>
+                  <span className="font-mono font-bold text-[#0C2D6B] dark:text-[#DDE9FF] bg-gray-50 dark:bg-[#172337] px-3 py-1 rounded-lg text-xs">{viaje.codigo}</span>
                   <span className={`px-3 py-1 rounded-full text-[10px] font-bold border ${getEstadoColor(viaje.estado)}`}>
                     {viaje.estado}
                   </span>
                 </div>
 
-                <h3 className="font-bold text-gray-800 text-sm leading-5 min-h-[40px] line-clamp-2">{viaje.ruta}</h3>
+                <h3 className="font-bold text-gray-800 dark:text-[#F8FAFC] text-sm leading-5 min-h-[40px] line-clamp-2">{viaje.ruta}</h3>
 
                 <div className="grid grid-cols-2 gap-3 text-xs mt-4">
                   <div>
                     <p className="text-gray-400 font-semibold">Unidad</p>
-                    <p className="font-bold text-gray-700 mt-0.5">{viaje.unidad}</p>
+                    <p className="font-bold text-gray-700 dark:text-[#DCE5F1] mt-0.5">{viaje.unidad}</p>
                   </div>
                   <div>
                     <p className="text-gray-400 font-semibold">Piloto</p>
-                    <p className="font-bold text-gray-700 mt-0.5 line-clamp-2">{viaje.piloto}</p>
+                    <p className="font-bold text-gray-700 dark:text-[#DCE5F1] mt-0.5 line-clamp-2">{viaje.piloto}</p>
                   </div>
                   <div>
                     <p className="text-gray-400 font-semibold">Cliente</p>
-                    <p className="font-bold text-gray-700 mt-0.5 line-clamp-2">{viaje.cliente}</p>
+                    <p className="font-bold text-gray-700 dark:text-[#DCE5F1] mt-0.5 line-clamp-2">{viaje.cliente}</p>
                   </div>
                   <div>
                     <p className="text-gray-400 font-semibold">ETA</p>
@@ -1967,13 +1967,13 @@ export function Logistica() {
                     <span className="text-gray-500">Progreso</span>
                     <span>{viaje.progreso || 0}%</span>
                   </div>
-                  <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-2 rounded-full bg-gray-100 dark:bg-[#253248] overflow-hidden">
                     <div className={`h-full rounded-full ${getProgressColor(viaje.estado)}`} style={{ width: `${viaje.progreso || 0}%` }} />
                   </div>
                 </div>
               </div>
 
-              <div className="border-t border-gray-100 bg-gray-50 px-3 py-2 flex justify-between gap-2">
+              <div className="border-t border-gray-100 dark:border-[#263244] bg-gray-50 dark:bg-[#0F1929] px-3 py-2 flex justify-between gap-2">
                 <ActionButton title="Ver" icon={Eye} tone="blue" onClick={() => openViewViaje(viaje)} />
                 <ActionButton title="Editar" icon={Edit2} tone="orange" onClick={() => openEditViaje(viaje)} />
                 <ActionButton title="Cambiar estado" icon={PlayCircle} onClick={() => changeStatus(viaje)} />

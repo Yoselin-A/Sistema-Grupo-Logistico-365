@@ -490,7 +490,7 @@ const getEnviosRows = async () => {
       r.distancia_km,
       CONCAT(uo.nombre_ubicacion, ' → ', ud.nombre_ubicacion) AS ruta_texto,
       e.direccion,
-      DATE_FORMAT(e.fecha, '%Y-%m-%d') AS fecha,
+      DATE_FORMAT(e.fecha, '%Y-%m-%d %H:%i') AS fecha,
       e.estado_id,
       e.observaciones,
       e.created_at,
@@ -535,7 +535,7 @@ const getViajesRows = async () => {
       v.piloto_id,
       v.envio_id,
       DATE_FORMAT(v.fecha_salida, '%Y-%m-%d %H:%i') AS fecha_salida,
-      DATE_FORMAT(v.eta, '%H:%i') AS eta,
+      DATE_FORMAT(v.eta, '%Y-%m-%d %H:%i') AS eta,
       DATE_FORMAT(v.eta, '%Y-%m-%d %H:%i') AS eta_datetime,
       v.progreso AS viaje_progreso,
       v.created_at,
@@ -671,8 +671,8 @@ const saveEnvio = async (connection, body, id = null) => {
   if (!destinoId) throw new Error("Selecciona el destino.");
   if (origenId === destinoId) throw new Error("El destino debe ser diferente del origen.");
 
-  const fecha = asDate(body.fecha);
-  if (!fecha) throw new Error("Selecciona la fecha del envío.");
+  const fecha = asDateTime(body.fecha);
+  if (!fecha) throw new Error("Selecciona la fecha y hora del servicio.");
 
   // El origen + destino del envío son la fuente de verdad de la ruta.
   // Si la ruta ya existe se reutiliza; si no existe se crea aquí mismo.
@@ -784,7 +784,7 @@ const saveViaje = async (connection, body, id = null) => {
   const rutaId = ruta.id;
 
   const eta = normalizarEtaDateTime(body.eta, fechaSalida);
-  if (!eta) throw new Error("Ingresa una ETA válida.");
+  if (!eta) throw new Error("Selecciona una fecha y hora estimada de llegada válida.");
 
   const progreso = Math.max(0, Math.min(100, numeroDecimal(body.progreso, 0)));
   const estadoVisual = limpiar(body.estado || "Pendiente");

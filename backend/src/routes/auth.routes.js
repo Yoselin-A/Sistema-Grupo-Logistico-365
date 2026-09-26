@@ -286,15 +286,22 @@ const registrarInicioSesion = async (req, usuarioPayload) => {
 /* ===============================
    OBTENER USUARIO
 ================================ */
-const obtenerUsuarioPorIdentificador = async (identificador) => {
+const obtenerUsuarioPorIdentificador = async (identificador, opciones = {}) => {
   const tablas = await obtenerTablasAuth();
 
   const valor = limpiarTexto(identificador);
+  const exacto = opciones.exacto === true;
   const valorLower = valor.toLowerCase();
   const idNumerico = obtenerIdONull(valor);
 
-  const whereParts = ["LOWER(u.nombre_usuario) = ?", "LOWER(u.email) = ?"];
-  const params = [valorLower, valorLower];
+  // En el LOGIN se fuerza comparación sensible a mayúsculas/minúsculas.
+  // Ejemplo: si la BD tiene "gerencia", "Gerencia" o "GERENCIA" no coinciden.
+  // En otros procesos (p. ej. solicitud de cambio de contraseña) se conserva
+  // la búsqueda anterior, sin distinguir mayúsculas/minúsculas.
+  const whereParts = exacto
+    ? ["BINARY u.nombre_usuario = BINARY ?", "BINARY u.email = BINARY ?"]
+    : ["LOWER(u.nombre_usuario) = ?", "LOWER(u.email) = ?"];
+  const params = exacto ? [valor, valor] : [valorLower, valorLower];
 
   if (idNumerico) {
     whereParts.push("u.id = ?");
@@ -359,7 +366,7 @@ router.post("/login", async (req, res) => {
       return enviarError(res, 400, "Ingresa un correo electrónico válido.");
     }
 
-    const usuario = await obtenerUsuarioPorIdentificador(usuarioTexto);
+    const usuario = await obtenerUsuarioPorIdentificador(usuarioTexto, { exacto: true });
 
     if (!usuario) {
       return enviarError(res, 401, "Usuario, correo o contraseña incorrectos.");

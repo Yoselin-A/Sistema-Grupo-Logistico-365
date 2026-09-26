@@ -377,9 +377,35 @@ const isTinyBoolean = (column?: ColumnDef) => String(column?.type || "").toLower
 const isLongText = (column?: ColumnDef) => ["text", "mediumtext", "longtext"].includes(String(column?.type || "").toLowerCase()) || ["descripcion", "observaciones", "historial", "hallazgos", "direccion"].includes(column?.name || "");
 const isPasswordField = (name: string) => name.toLowerCase().includes("password");
 const isEmailField = (name: string) => ["email", "correo"].includes(name.toLowerCase());
-const isPhoneField = (name: string) => name.toLowerCase().includes("telefono");
-const isCodeField = (name: string) => name.toLowerCase().startsWith("codigo") || ["nit", "licencia", "serie", "numero", "marchamo", "cabezal", "furgon", "referencia"].includes(name.toLowerCase());
-const isLettersField = (name: string) => ["primer_nombre", "segundo_nombre", "primer_apellido", "segundo_apellido", "pais", "cargo"].includes(name.toLowerCase());
+
+// IMPORTANTE: solamente el campo que almacena el NÚMERO de teléfono es numérico.
+// Antes se usaba includes("telefono"), por lo que "tipo_telefono" también era tratado
+// como número. Ahora "tipo_telefono" se valida expresamente como texto.
+const isPhoneField = (name: string) => name.toLowerCase() === "telefono";
+const isPhoneTypeField = (name: string) => name.toLowerCase() === "tipo_telefono";
+const isPhonePrefixField = (name: string) => name.toLowerCase() === "prefijo";
+const isCountryCodeField = (name: string) => name.toLowerCase() === "codigo_pais";
+
+const isCodeField = (name: string) =>
+  name.toLowerCase().startsWith("codigo") ||
+  ["nit", "licencia", "serie", "numero", "marchamo", "cabezal", "furgon", "referencia"].includes(name.toLowerCase());
+
+const isLettersField = (name: string) =>
+  [
+    "primer_nombre",
+    "segundo_nombre",
+    "primer_apellido",
+    "segundo_apellido",
+    "pais",
+    "cargo",
+    "tipo_telefono",
+  ].includes(name.toLowerCase());
+
+const isRequiredColumn = (column: ColumnDef, mode?: Mode | null) => {
+  if (column.auto || column.readonly || column.columnKey === "PRI") return false;
+  if (mode === "edit" && isPasswordField(column.name)) return false;
+  return column.required === true || column.nullable === false;
+};
 
 const cleanLetters = (value: string) => value.replace(/[^A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]/g, "");
 const cleanNumber = (value: string, decimal = false) => {
@@ -389,7 +415,54 @@ const cleanNumber = (value: string, decimal = false) => {
   return first + (rest.length ? "." + rest.join("") : "");
 };
 const cleanPhone = (value: string) => value.replace(/[^0-9]/g, "").slice(0, 15);
+const cleanPhonePrefix = (value: string) => {
+  const trimmed = value.trim();
+  const hasPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/[^0-9]/g, "").slice(0, 6);
+  return `${hasPlus ? "+" : ""}${digits}`;
+};
+const cleanCountryCode = (value: string) => value.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, 5);
 const cleanCode = (value: string) => value.replace(/[^A-Za-z0-9_\-./]/g, "").toUpperCase();
+
+const NON_NEGATIVE_FIELDS = new Set([
+  "subtotal", "iva", "total", "costo", "flete", "cuadrilla", "estadia",
+  "parada_adicional", "movimiento_falso", "viaje_doble", "otros", "valor",
+  "monto", "monto_estimado", "precio_unitario", "impuesto", "descuento",
+  "kilometraje", "distancia_km", "tiempo", "cantidad", "cantidad_estadias",
+  "costo_estadia_unitario", "km", "peso", "volumen",
+]);
+
+const POSITIVE_FIELDS = new Set(["cantidad", "distancia_km"]);
+const PERCENT_FIELDS = new Set(["probabilidad", "progreso", "porcentaje", "eficiencia"]);
+
+// Reglas funcionales del sistema. Algunas columnas de la BD histórica permiten NULL,
+// pero funcionalmente no deben poder guardarse vacías desde Mantenimiento.
+const REQUIRED_FIELDS_BY_TABLE: Record<string, Set<string>> = {
+  cotizacion_detalle: new Set(["cotizacion_id", "descripcion", "cantidad", "precio_unitario"]),
+  cotizacion: new Set([
+    "codigo_cotizacion",
+    "cliente_id",
+    "contacto_id",
+    "ejecutivo_id",
+    "modalidad_id",
+    "forma_pago_id",
+    "origen_id",
+    "destino_id",
+    "estado_ui",
+  ]),
+  cotizaciones: new Set([
+    "codigo_cotizacion",
+    "cliente_id",
+    "contacto_id",
+    "ejecutivo_id",
+    "modalidad_id",
+    "forma_pago_id",
+    "origen_id",
+    "destino_id",
+    "estado_ui",
+  ]),
+  telefono_contacto: new Set(["contacto_id", "prefijo_telefonico_id", "telefono", "tipo_telefono"]),
+};
 
 const titleCase = (value: string) =>
   value
@@ -683,6 +756,11 @@ export function Mantenimiento() {
   const isAuditTable = selectedTable?.name === "auditoria";
   const isUserTable = selectedTable?.name === "usuario" || selectedTable?.name === "usuarios";
   const formColumns = (schema?.columns || []).filter((column) => !column.auto && column.columnKey !== "PRI" && !column.readonly);
+  const isFormFieldRequired = (column: ColumnDef, mode?: Mode | null) => {
+    const tableName = String(selectedTable?.name || "").toLowerCase();
+    const requiredByBusinessRule = REQUIRED_FIELDS_BY_TABLE[tableName]?.has(column.name) || false;
+    return isRequiredColumn(column, mode) || requiredByBusinessRule;
+  };
   const viewColumns = isUserTable
   ? (schema?.columns || []).filter(
       (column) =>
@@ -861,7 +939,7 @@ export function Mantenimiento() {
     }
   };
 
-  const loadRecords = async (table = selectedTable?.name) => {
+  const loadRecords = async (table = selectedTable?.name, _search?: string) => {
     if (!table) return;
     setTableLoading(true);
     setNotice(null);
@@ -1090,38 +1168,192 @@ export function Mantenimiento() {
 
   const validateForm = () => {
     const next: Record<string, string> = {};
+
     formColumns.forEach((column) => {
       const value = form[column.name];
-      const empty = value === null || value === undefined || String(value).trim() === "";
+      const textValue = value === null || value === undefined ? "" : String(value).trim();
+      const empty = textValue === "";
+      const required = isFormFieldRequired(column, modalMode);
 
-      if (column.required && empty && !(modalMode === "edit" && isPasswordField(column.name))) {
-        next[column.name] = "Este campo es obligatorio.";
+      // 1) Campos obligatorios según el esquema de MySQL.
+      if (required && empty) {
+        next[column.name] = "Este campo es obligatorio y no puede quedar vacío.";
+        return;
       }
 
-      if (!empty && isEmailField(column.name) && !/^\S+@\S+\.\S+$/.test(String(value))) {
-        next[column.name] = "Ingresa un correo válido.";
+      if (empty) return;
+
+      // 2) Correos con formato válido.
+      if (isEmailField(column.name) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(textValue)) {
+        next[column.name] = "Ingresa un correo válido, por ejemplo nombre@empresa.com.";
       }
 
-      if (!empty && isPhoneField(column.name) && String(value).replace(/\D/g, "").length < 8) {
-        next[column.name] = "Ingresa al menos 8 números.";
+      // 3) El número de teléfono acepta únicamente dígitos, entre 8 y 15.
+      if (isPhoneField(column.name) && !/^\d{8,15}$/.test(textValue)) {
+        next[column.name] = "El teléfono debe contener únicamente entre 8 y 15 números.";
       }
 
-      if (!empty && isNumericType(column) && !Number.isFinite(Number(value))) {
+      // 4) Tipo de teléfono es TEXTO: Móvil, Oficina, Casa, WhatsApp, etc.
+      if (isPhoneTypeField(column.name) && !/^[A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]+$/.test(textValue)) {
+        next[column.name] = "El tipo de teléfono debe contener únicamente letras.";
+      }
+
+      // 5) Prefijo telefónico: +502, 502, +1, etc.
+      if (isPhonePrefixField(column.name) && !/^\+?\d{1,6}$/.test(textValue)) {
+        next[column.name] = "Ingresa un prefijo telefónico válido, por ejemplo +502.";
+      }
+
+      // 6) Código de país: GT, SV, HN, etc.
+      if (isCountryCodeField(column.name) && !/^[A-Z]{2,5}$/.test(textValue.toUpperCase())) {
+        next[column.name] = "El código de país debe contener únicamente letras.";
+      }
+
+      // 7) Nombres, apellidos, país, cargo y tipo de teléfono: solo letras y espacios.
+      if (isLettersField(column.name) && !isPhoneTypeField(column.name) && !/^[A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]+$/.test(textValue)) {
+        next[column.name] = "Este campo solo permite letras.";
+      }
+
+      // 8) Campos numéricos coherentes con su tipo de dato.
+      if (isNumericType(column) && !Number.isFinite(Number(value))) {
         next[column.name] = "Solo se permiten números.";
       }
 
-      if (!empty && column.maxLength && String(value).length > Number(column.maxLength)) {
+      if (isNumericType(column) && Number.isFinite(Number(value)) && NON_NEGATIVE_FIELDS.has(column.name) && Number(value) < 0) {
+        next[column.name] = "El valor no puede ser negativo.";
+      }
+
+      if (isNumericType(column) && Number.isFinite(Number(value)) && POSITIVE_FIELDS.has(column.name) && Number(value) <= 0) {
+        next[column.name] = "El valor debe ser mayor que 0.";
+      }
+
+      if (isNumericType(column) && Number.isFinite(Number(value)) && PERCENT_FIELDS.has(column.name) && (Number(value) < 0 || Number(value) > 100)) {
+        next[column.name] = "El porcentaje debe estar entre 0 y 100.";
+      }
+
+      // 9) Política de contraseña usada por GL365.
+      if (isPasswordField(column.name) && !(modalMode === "edit" && empty)) {
+        const pwd = String(value);
+        if (pwd.length < 8) next[column.name] = "La contraseña debe tener mínimo 8 caracteres.";
+        else if (!/[A-ZÁÉÍÓÚÑ]/.test(pwd)) next[column.name] = "Debe incluir al menos una letra mayúscula.";
+        else if (!/[a-záéíóúñ]/.test(pwd)) next[column.name] = "Debe incluir al menos una letra minúscula.";
+        else if (!/\d/.test(pwd)) next[column.name] = "Debe incluir al menos un número.";
+        else if (!/[^A-Za-zÁÉÍÓÚáéíóúÑñ0-9]/.test(pwd)) next[column.name] = "Debe incluir al menos un carácter especial.";
+      }
+
+      // 10) Longitud máxima según MySQL.
+      if (column.maxLength && textValue.length > Number(column.maxLength)) {
         next[column.name] = `Máximo ${column.maxLength} caracteres.`;
       }
     });
+
+    // 11) Reglas de consistencia entre campos relacionados.
+    const currentTableName = String(selectedTable?.name || "").toLowerCase();
+
+    // Detalle de cotización: nunca debe existir un registro sin cotización, descripción,
+    // cantidad o precio. La base histórica permite NULL, por eso se fuerza aquí como regla funcional.
+    if (currentTableName === "cotizacion_detalle") {
+      const description = String(form.descripcion ?? "").trim();
+      const cantidad = Number(form.cantidad);
+      const precio = Number(form.precio_unitario);
+
+      if (!form.cotizacion_id) next.cotizacion_id = "Selecciona la cotización a la que pertenece este detalle.";
+      if (!description) next.descripcion = "La descripción del servicio es obligatoria.";
+      else if (description.length < 3) next.descripcion = "La descripción debe tener al menos 3 caracteres.";
+
+      if (form.cantidad === "" || form.cantidad === null || form.cantidad === undefined || !Number.isFinite(cantidad) || cantidad <= 0) {
+        next.cantidad = "La cantidad debe ser mayor que 0.";
+      }
+
+      if (form.precio_unitario === "" || form.precio_unitario === null || form.precio_unitario === undefined || !Number.isFinite(precio) || precio <= 0) {
+        next.precio_unitario = "El precio unitario debe ser mayor que 0.";
+      }
+    }
+
+    // Encabezado de cotización: mantener coherencia con el formulario comercial del CRM.
+    if (currentTableName === "cotizacion" || currentTableName === "cotizaciones") {
+      if (form.origen_id && form.destino_id && String(form.origen_id) === String(form.destino_id)) {
+        next.destino_id = "El destino debe ser diferente del origen.";
+      }
+    } else if (form.origen_id && form.destino_id && String(form.origen_id) === String(form.destino_id)) {
+      next.destino_id = "El destino debe ser diferente del origen.";
+    }
+
+    // Teléfono de contacto: tipo_telefono es texto, no número.
+    if (currentTableName === "telefono_contacto") {
+      const tipoTelefono = String(form.tipo_telefono ?? "").trim();
+      const telefono = String(form.telefono ?? "").trim();
+      if (!tipoTelefono) next.tipo_telefono = "Indica el tipo de teléfono, por ejemplo Móvil, Oficina o Casa.";
+      else if (!/^[A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]+$/.test(tipoTelefono)) {
+        next.tipo_telefono = "El tipo de teléfono debe contener únicamente letras.";
+      }
+      if (!/^\d{8,15}$/.test(telefono)) {
+        next.telefono = "El teléfono debe contener únicamente entre 8 y 15 números.";
+      }
+    }
+
+    const validateDateOrder = (startField: string, endField: string, message: string) => {
+      const start = form[startField];
+      const end = form[endField];
+      if (!start || !end) return;
+      const startValue = String(start).replace("T", " ");
+      const endValue = String(end).replace("T", " ");
+      if (endValue < startValue) next[endField] = message;
+    };
+
+    validateDateOrder("fecha_emision", "fecha_vencimiento", "La fecha de vencimiento no puede ser anterior a la fecha de emisión.");
+    validateDateOrder("fecha_carga", "fecha_descarga", "La fecha de descarga no puede ser anterior a la fecha de carga.");
+    validateDateOrder("fecha_creacion", "fecha_cierre_estimada", "El cierre estimado no puede ser anterior a la fecha de creación.");
+    validateDateOrder("fecha", "proximo", "La fecha del próximo mantenimiento no puede ser anterior a la fecha actual del mantenimiento.");
+
+    if (form.fecha && form.proximo_mantenimiento) {
+      const start = String(form.fecha).replace("T", " ");
+      const end = String(form.proximo_mantenimiento).replace("T", " ");
+      if (end < start) next.proximo_mantenimiento = "El próximo mantenimiento no puede ser anterior a la fecha del mantenimiento.";
+    }
+
+    // 12) Validación preventiva de índices únicos para evitar duplicados antes de llegar al backend.
+    (schema?.uniqueIndexes || []).forEach((index) => {
+      const indexColumns = (index.columns || []).filter((name) => formColumns.some((column) => column.name === name));
+      if (!indexColumns.length) return;
+      if (indexColumns.some((name) => form[name] === null || form[name] === undefined || String(form[name]).trim() === "")) return;
+
+      const duplicated = records.some((row) => {
+        if (modalMode === "edit" && String(row[primaryKey]) === String(form[primaryKey])) return false;
+        return indexColumns.every((name) =>
+          normalizeForCompare(String(row[name] ?? "")) === normalizeForCompare(String(form[name] ?? ""))
+        );
+      });
+
+      if (duplicated) {
+        indexColumns.forEach((name) => {
+          if (!next[name]) next[name] = "Ya existe un registro con este valor. Debe ser único.";
+        });
+      }
+    });
+
     setErrors(next);
-    return Object.keys(next).length === 0;
+
+    if (Object.keys(next).length > 0) {
+      setNotice({
+        type: "error",
+        text: "No se puede guardar. Revisa los campos marcados y corrige los datos antes de continuar.",
+      });
+      return false;
+    }
+
+    setNotice(null);
+    return true;
   };
 
   const updateField = (column: ColumnDef, value: string) => {
     let next: any = value;
-    if (isLettersField(column.name)) next = titleCase(cleanLetters(value));
+
+    if (isPhoneTypeField(column.name)) next = titleCase(cleanLetters(value));
+    else if (isLettersField(column.name)) next = titleCase(cleanLetters(value));
     else if (isPhoneField(column.name)) next = cleanPhone(value);
+    else if (isPhonePrefixField(column.name)) next = cleanPhonePrefix(value);
+    else if (isCountryCodeField(column.name)) next = cleanCountryCode(value);
+    else if (isEmailField(column.name)) next = value.replace(/\s/g, "").toLowerCase();
     else if (isNumericType(column)) next = cleanNumber(value, isDecimalType(column));
     else if (isCodeField(column.name)) next = cleanCode(value);
 
@@ -1135,7 +1367,13 @@ export function Mantenimiento() {
     const payload: AnyRow = {};
     formColumns.forEach((column) => {
       if (modalMode === "edit" && isPasswordField(column.name) && !form[column.name]) return;
+
       let value = form[column.name];
+
+      if (typeof value === "string") {
+        value = isEmailField(column.name) ? value.trim().toLowerCase() : value.trim();
+      }
+
       if (isDateTimeType(column)) value = fromInputDateTime(value);
       if (value === "") value = null;
       payload[column.name] = value;
@@ -1153,12 +1391,17 @@ export function Mantenimiento() {
         ? `/mantenimiento/tablas/${selectedTable.name}/registros/${id}`
         : `/mantenimiento/tablas/${selectedTable.name}/registros`;
 
-      await apiRequest(url, {
+      const result = await apiRequest<any>(url, {
         method,
         body: JSON.stringify(preparePayload()),
       });
 
-      setNotice({ type: "success", text: modalMode === "edit" ? "Registro actualizado correctamente." : "Registro creado correctamente." });
+      setNotice({
+        type: "success",
+        text:
+          result?.message ||
+          (modalMode === "edit" ? "Registro actualizado correctamente." : "Registro creado correctamente."),
+      });
       closeModal();
       await loadRecords(selectedTable.name, tableSearch);
       await loadBootstrap();
@@ -1460,9 +1703,23 @@ export function Mantenimiento() {
           onChange={(e) => updateField(column, e.target.value)}
           disabled={disabled}
           className={base}
-          placeholder={isPhoneField(column.name) ? "Solo números" : isNumericType(column) ? "Solo números" : isLettersField(column.name) ? "Solo letras" : label(column.name)}
+          placeholder={
+            isPhoneField(column.name)
+              ? "Solo números"
+              : isPhoneTypeField(column.name)
+              ? "Ej. Móvil, Oficina, Casa"
+              : isPhonePrefixField(column.name)
+              ? "Ej. +502"
+              : isCountryCodeField(column.name)
+              ? "Ej. GT"
+              : isNumericType(column)
+              ? "Solo números"
+              : isLettersField(column.name)
+              ? "Solo letras"
+              : label(column.name)
+          }
           maxLength={column.maxLength || undefined}
-          inputMode={isPhoneField(column.name) || isNumericType(column) ? "numeric" : undefined}
+          inputMode={isPhoneField(column.name) || isPhonePrefixField(column.name) || isNumericType(column) ? "numeric" : undefined}
         />
       );
     }
@@ -1470,7 +1727,7 @@ export function Mantenimiento() {
     return (
       <div key={column.name} className="space-y-1.5">
         <label className="text-xs font-black uppercase tracking-wide text-gray-500">
-          {label(column.name)} {column.required && <span className="text-[#FF6A00]">*</span>}
+          {label(column.name)} {isFormFieldRequired(column, mode) && <span className="text-[#FF6A00]">*</span>}
         </label>
         {control}
         {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
@@ -1913,7 +2170,7 @@ export function Mantenimiento() {
                       : "Formulario principal para crear o modificar usuarios. Enter avanza al siguiente campo."
                     : modalMode === "view"
                     ? "Consulta completa del registro seleccionado."
-                    : "Completá los campos requeridos. Enter avanza al siguiente campo."}
+                    : "Completá los campos obligatorios marcados con *. El sistema valida formato y consistencia antes de guardar. Enter avanza al siguiente campo."}
                 </p>
               </div>
               <button type="button" onClick={closeModal} className="rounded-2xl bg-gray-100 p-3 text-gray-500 transition hover:bg-red-50 hover:text-red-600"><X className="h-6 w-6" /></button>

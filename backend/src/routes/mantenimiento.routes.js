@@ -285,10 +285,33 @@ function cleanOffset(value) {
 function normalizeDateLike(value) {
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date) return value.toISOString().slice(0, 19).replace("T", " ");
+
   const raw = String(value).trim();
   if (!raw) return null;
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) return `${raw.replace("T", " ")}:00`;
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(raw)) return raw.replace("T", " ");
+
+  // DATE puro: MySQL lo acepta directamente.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  // datetime-local del navegador: 2026-09-17T03:12
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) {
+    return `${raw.replace("T", " ")}:00`;
+  }
+
+  // DATETIME sin zona: 2026-09-17 03:12:51 o con T.
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/.test(raw)) {
+    return raw.replace("T", " ");
+  }
+
+  // ISO enviado por JavaScript, con milisegundos y/o zona horaria:
+  // 2026-09-17T03:12:51.000Z
+  // 2026-09-17 03:12:51.000Z
+  // 2026-09-17T03:12:51-06:00
+  const iso = raw.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/i
+  );
+
+  if (iso) return `${iso[1]} ${iso[2]}`;
+
   return raw;
 }
 
@@ -816,6 +839,8 @@ router.post("/tablas/:tabla/registros", async (req, res) => {
 });
 
 async function updateRecord(req, res) {
+  const connection = await pool.getConnection();
+
   try {
     const { tabla, id } = req.params;
 
@@ -829,13 +854,130 @@ async function updateRecord(req, res) {
     const columns = await getColumns(tabla);
     const primaryKey = columns.find((c) => c.columnKey === "PRI")?.name || "id";
     const payload = await protectPasswordPayload(tabla, buildPayload(req.body || {}, columns, { partial: true }));
-    const keys = Object.keys(payload);
-    if (!keys.length) return res.status(400).json({ ok: false, message: "No hay campos válidos para actualizar." });
+    const credentialTables = new Set(["solicitud_credencial", "solicitudes_credenciales"]);
+    const isCredentialRequest = credentialTables.has(String(tabla || "").toLowerCase());
 
-    const [result] = await pool.query(
+    let previousRow = null;
+    if (isCredentialRequest) {
+      const [rows] = await connection.query(
+        `SELECT * FROM ${q(tabla)} WHERE ${q(primaryKey)} = ? LIMIT 1`,
+        [id]
+      );
+      previousRow = rows[0] || null;
+
+      if (!previousRow) {
+        return res.status(404).json({ ok: false, message: "La solicitud de credencial no existe." });
+      }
+
+      const nextState = String(payload.estado_solicitud ?? previousRow.estado_solicitud ?? "")
+        .trim()
+        .toLowerCase();
+
+      if (nextState === "autorizada") {
+        const reviewedAtColumn = columns.find((column) => column.name === "revisado_en");
+        if (reviewedAtColumn && !Object.prototype.hasOwnProperty.call(payload, "revisado_en")) {
+          payload.revisado_en = valueForDateColumn(reviewedAtColumn);
+        }
+
+        const reviewedByColumn = columns.find((column) => column.name === "revisado_por");
+        const auditUser = getAuditUser(req);
+        const reviewerId = Number(auditUser.id);
+        if (
+          reviewedByColumn &&
+          !Object.prototype.hasOwnProperty.call(payload, "revisado_por") &&
+          Number.isFinite(reviewerId) &&
+          reviewerId > 0
+        ) {
+          payload.revisado_por = Math.trunc(reviewerId);
+        }
+      }
+    }
+
+    const keys = Object.keys(payload);
+    if (!keys.length) {
+      return res.status(400).json({ ok: false, message: "No hay campos válidos para actualizar." });
+    }
+
+    await connection.beginTransaction();
+
+    const [result] = await connection.query(
       `UPDATE ${q(tabla)} SET ${keys.map((key) => `${q(key)} = ?`).join(", ")} WHERE ${q(primaryKey)} = ?`,
       [...keys.map((key) => payload[key]), id]
     );
+
+    let passwordUpdated = false;
+
+    if (isCredentialRequest && previousRow) {
+      const nextState = String(payload.estado_solicitud ?? previousRow.estado_solicitud ?? "")
+        .trim()
+        .toLowerCase();
+
+      if (nextState === "autorizada") {
+        const usuarioId = Number(payload.usuario_id ?? previousRow.usuario_id);
+        let requestedPassword = payload.nueva_password_hash ?? previousRow.nueva_password_hash;
+
+        if (!Number.isFinite(usuarioId) || usuarioId <= 0) {
+          const err = new Error("La solicitud no tiene un usuario válido asociado.");
+          err.status = 400;
+          throw err;
+        }
+
+        if (!requestedPassword || String(requestedPassword).trim() === "") {
+          const err = new Error("La solicitud no tiene una contraseña nueva registrada.");
+          err.status = 400;
+          throw err;
+        }
+
+        requestedPassword = String(requestedPassword);
+        if (!/^\$2[aby]\$\d{2}\$/.test(requestedPassword)) {
+          requestedPassword = await bcrypt.hash(requestedPassword, 10);
+
+          // Si había una contraseña antigua sin hash, también la saneamos en la solicitud.
+          await connection.query(
+            `UPDATE ${q(tabla)} SET ${q("nueva_password_hash")} = ? WHERE ${q(primaryKey)} = ?`,
+            [requestedPassword, id]
+          );
+        }
+
+        const availableTables = await getTables();
+        const userTable = availableTables.includes("usuario")
+          ? "usuario"
+          : availableTables.includes("usuarios")
+          ? "usuarios"
+          : null;
+
+        if (!userTable) {
+          const err = new Error("No se encontró la tabla de usuarios para aplicar la contraseña.");
+          err.status = 500;
+          throw err;
+        }
+
+        const userColumns = await getColumns(userTable);
+        const userPrimaryKey = userColumns.find((column) => column.columnKey === "PRI")?.name || "id";
+        const passwordColumn = userColumns.find((column) => column.name === "password_hash")?.name;
+
+        if (!passwordColumn) {
+          const err = new Error(`La tabla ${userTable} no contiene la columna password_hash.`);
+          err.status = 500;
+          throw err;
+        }
+
+        const [userResult] = await connection.query(
+          `UPDATE ${q(userTable)} SET ${q(passwordColumn)} = ? WHERE ${q(userPrimaryKey)} = ?`,
+          [requestedPassword, usuarioId]
+        );
+
+        if (!userResult.affectedRows) {
+          const err = new Error("No se encontró el usuario asociado a la solicitud.");
+          err.status = 404;
+          throw err;
+        }
+
+        passwordUpdated = true;
+      }
+    }
+
+    await connection.commit();
 
     if (result.affectedRows) {
       const rowTitle = await getRowLabelById(tabla, primaryKey, id);
@@ -848,10 +990,25 @@ async function updateRecord(req, res) {
       });
     }
 
-    res.json({ ok: true, message: "Registro actualizado correctamente.", affectedRows: result.affectedRows });
+    return res.json({
+      ok: true,
+      message: passwordUpdated
+        ? "Solicitud autorizada y contraseña del usuario actualizada correctamente."
+        : "Registro actualizado correctamente.",
+      affectedRows: result.affectedRows,
+      passwordUpdated,
+    });
   } catch (error) {
+    try {
+      await connection.rollback();
+    } catch {}
+
     console.error("Error PUT/PATCH /mantenimiento:", error);
-    res.status(error.status || 500).json({ ok: false, message: sqlErrorMessage(error), error: error.message });
+    return res.status(error.status || 500).json({ ok: false, message: sqlErrorMessage(error), error: error.message });
+  } finally {
+    try {
+      connection.release();
+    } catch {}
   }
 }
 

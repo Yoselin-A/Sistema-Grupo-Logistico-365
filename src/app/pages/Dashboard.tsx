@@ -207,27 +207,36 @@ function ModuleCard({
   onClick: () => void;
 }) {
   const colors = {
-    blue: "border-l-[#0C2D6B]",
-    green: "border-l-[#22C55E]",
-    orange: "border-l-[#FF6A00]",
-    purple: "border-l-purple-500",
-    pink: "border-l-pink-500",
-    gray: "border-l-slate-500",
+    blue: "border-l-[#0C2D6B] dark:border-l-[#4C8DFF]",
+    green: "border-l-[#22C55E] dark:border-l-[#4ADE80]",
+    orange: "border-l-[#FF6A00] dark:border-l-[#FB923C]",
+    purple: "border-l-purple-500 dark:border-l-purple-400",
+    pink: "border-l-pink-500 dark:border-l-pink-400",
+    gray: "border-l-slate-500 dark:border-l-slate-400",
+  };
+
+  const iconColors = {
+    blue: "bg-blue-50 text-[#0C2D6B] dark:bg-blue-500/10 dark:text-blue-300 dark:ring-1 dark:ring-blue-400/20",
+    green: "bg-green-50 text-green-600 dark:bg-green-500/10 dark:text-green-300 dark:ring-1 dark:ring-green-400/20",
+    orange: "bg-orange-50 text-[#FF6A00] dark:bg-orange-500/10 dark:text-orange-300 dark:ring-1 dark:ring-orange-400/20",
+    purple: "bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-1 dark:ring-purple-400/20",
+    pink: "bg-pink-50 text-pink-600 dark:bg-pink-500/10 dark:text-pink-300 dark:ring-1 dark:ring-pink-400/20",
+    gray: "bg-slate-100 text-slate-600 dark:bg-slate-400/10 dark:text-slate-300 dark:ring-1 dark:ring-slate-400/20",
   };
 
   return (
     <button
       onClick={onClick}
-      className={`bg-white rounded-xl p-6 shadow-sm border border-gray-100 border-l-4 ${colors[color]} hover:shadow-md hover:-translate-y-0.5 transition-all text-left w-full`}
+      className={`bg-white dark:bg-[#111A2B] rounded-xl p-6 shadow-sm dark:shadow-[0_10px_30px_rgba(0,0,0,0.20)] border border-gray-100 dark:border-[#2A3950] border-l-4 ${colors[color]} hover:shadow-md hover:-translate-y-0.5 dark:hover:bg-[#152238] dark:hover:border-[#3A4B65] transition-all text-left w-full`}
     >
       <div className="flex items-start gap-4">
-        <div className="p-3 rounded-xl bg-slate-100 text-[#0C2D6B] shrink-0">
+        <div className={`p-3 rounded-xl shrink-0 ${iconColors[color]}`}>
           <Icon className="w-6 h-6" />
         </div>
 
         <div className="min-w-0">
-          <h2 className="text-lg font-bold text-[#0C2D6B]">{title}</h2>
-          <p className="text-sm text-gray-500 mt-1">{description}</p>
+          <h2 className="text-lg font-bold text-[#0C2D6B] dark:text-[#F8FAFC]">{title}</h2>
+          <p className="text-sm text-gray-500 dark:text-[#B7C4D8] mt-1">{description}</p>
         </div>
       </div>
     </button>
@@ -264,15 +273,15 @@ function KpiCard({
   };
 
   return (
-    <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 relative overflow-hidden min-w-0">
+    <div className="bg-white dark:bg-[#111A2B] rounded-xl p-5 shadow-sm dark:shadow-[0_10px_30px_rgba(0,0,0,0.18)] border border-gray-100 dark:border-[#2A3950] relative overflow-hidden min-w-0">
       <div className={`absolute bottom-0 left-0 w-full h-1 ${colors[color]}`} />
 
       <div className="flex justify-between items-start gap-3">
         <div className="min-w-0 pr-2">
-          <h3 className="text-2xl font-bold text-[#0C2D6B] break-words">
+          <h3 className="text-2xl font-bold text-[#0C2D6B] dark:text-[#F8FAFC] break-words">
             {loading ? "..." : value}
           </h3>
-          <p className="text-sm text-gray-500 mt-1 leading-snug">{title}</p>
+          <p className="text-sm text-gray-500 dark:text-[#AEBBD0] mt-1 leading-snug">{title}</p>
         </div>
 
         <div className={`p-3 rounded-lg shrink-0 ${iconColors[color]}`}>

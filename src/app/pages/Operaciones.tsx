@@ -585,6 +585,54 @@ export function Operaciones() {
   const [prefijos, setPrefijos] = useState<AnyRow[]>([]);
   const [estadosAsignacion, setEstadosAsignacion] = useState<AnyRow[]>([]);
 
+  // Respaldo para que Operaciones siga funcionando aunque el catálogo de
+  // Mantenimiento no responda temporalmente. En GL365 el estado 1 corresponde
+  // a Pendiente y es el estado seguro para reabrir operaciones antiguas.
+  const DEFAULT_OPERATIONAL_STATE: AnyRow = {
+    id: 1,
+    codigo_estado: "PEND",
+    nombre_estado_asignacion: "Pendiente",
+  };
+
+  const assignmentStateLabel = (state?: AnyRow) =>
+    String(
+      state?.nombre_estado_asignacion ||
+        state?.nombre ||
+        state?.estado ||
+        state?.descripcion ||
+        ""
+    ).trim();
+
+  const normalizeAssignmentStates = (
+    catalogRows: AnyRow[],
+    assignmentRows: AnyRow[]
+  ) => {
+    if (catalogRows.length) return catalogRows;
+
+    const derived = new Map<number, AnyRow>();
+
+    assignmentRows.forEach((row) => {
+      const id = Number(row.estado_asignacion_id || row.estado_id || 0);
+      if (!id || derived.has(id)) return;
+
+      derived.set(id, {
+        id,
+        nombre_estado_asignacion:
+          row.estado ||
+          row.nombre_estado_asignacion ||
+          `Estado ${id}`,
+      });
+    });
+
+    const values = Array.from(derived.values());
+
+    if (!values.some((state) => Number(state.id) === 1)) {
+      values.unshift(DEFAULT_OPERATIONAL_STATE);
+    }
+
+    return values.length ? values : [DEFAULT_OPERATIONAL_STATE];
+  };
+
   const [search, setSearch] = useState("");
   const [estadoFiltro, setEstadoFiltro] = useState("Todos");
 
@@ -617,8 +665,18 @@ export function Operaciones() {
   const [quickForm, setQuickForm] = useState<AnyRow>({});
   const [quickError, setQuickError] = useState("");
 
-  const estadoNombre = (id: any, row?: AnyRow) =>
-    estadosAsignacion.find((e) => Number(e.id) === Number(id))?.nombre_estado_asignacion || row?.estado || "Pendiente";
+  const estadoNombre = (id: any, row?: AnyRow) => {
+    const state = estadosAsignacion.find(
+      (e) => Number(e.id) === Number(id)
+    );
+
+    return (
+      assignmentStateLabel(state) ||
+      row?.estado ||
+      row?.nombre_estado_asignacion ||
+      "Pendiente"
+    );
+  };
 
   const isFinalized = (item: AnyRow) => estadoNombre(item.estado_asignacion_id, item).toLowerCase().includes("final");
 
@@ -654,7 +712,16 @@ export function Operaciones() {
         apiRequest<AnyRow>("/crm/bootstrap").catch(() => ({})),
         apiRequest<AnyRow[]>("/mantenimiento/tablas/estado_asignacion/registros").catch(() => []),
       ]);
-      setAsignaciones(rows<AnyRow>(op.asignaciones));
+      const assignmentRows = rows<AnyRow>(op.asignaciones);
+      const maintenanceStates = rows<AnyRow>(states);
+      const bootstrapStates = rows<AnyRow>(
+        op.estadosAsignacion ||
+          op.estados_asignacion ||
+          op.estadoAsignacion ||
+          op.estados
+      );
+
+      setAsignaciones(assignmentRows);
       setProveedores(rows<AnyRow>(op.proveedores));
       setRutas(rows<AnyRow>(op.rutas));
       setVehiculos(rows<AnyRow>(op.vehiculos));
@@ -662,7 +729,12 @@ export function Operaciones() {
       setClientes(rows<AnyRow>(crm.clientes));
       setUsuarios(rows<AnyRow>(crm.usuarios));
       setPrefijos(rows<AnyRow>(crm.prefijos));
-      setEstadosAsignacion(rows<AnyRow>(states));
+      setEstadosAsignacion(
+        normalizeAssignmentStates(
+          maintenanceStates.length ? maintenanceStates : bootstrapStates,
+          assignmentRows
+        )
+      );
     } catch (error: any) {
       setApiError(error.message || "No se pudo cargar Operaciones.");
     } finally {
@@ -1514,6 +1586,64 @@ export function Operaciones() {
       writePreviousFinalStates(previousStates);
 
       for (const target of targets) {
+        const targetDetail = parseJson(
+          target.detalle_operativo_json
+        );
+
+        const previousStateId = Number(
+          target.estado_asignacion_id ||
+            target.estado_id ||
+            0
+        );
+
+        // Además de localStorage, guardamos el estado previo dentro del detalle
+        // operativo para que "Regresar" funcione incluso después de recargar,
+        // cambiar de navegador o abrir un cierre antiguo.
+        if (target.id && previousStateId > 0) {
+          try {
+            const typeForTarget = String(
+              target.tipo_asignacion ||
+                targetDetail.tipo_asignacion ||
+                type
+            ) as AssignmentType;
+
+            const sourceForBackup = {
+              ...targetDetail,
+              ...target,
+              pilotos_id:
+                target.pilotos_id ||
+                target.piloto_id,
+            };
+
+            const backupPayload =
+              buildOperationalPayload(
+                sourceForBackup,
+                typeForTarget
+              );
+
+            backupPayload.detalle_operativo_json =
+              JSON.stringify({
+                ...parseJson(
+                  backupPayload.detalle_operativo_json
+                ),
+                estado_previo_finalizar: previousStateId,
+              });
+
+            await apiRequest(
+              `/operaciones/asignaciones/${target.id}`,
+              {
+                method: "PUT",
+                body: JSON.stringify(backupPayload),
+              }
+            );
+          } catch (backupError) {
+            console.warn(
+              "No se pudo persistir el estado previo antes de finalizar:",
+              backupError
+            );
+          }
+        }
+
         await apiRequest(
           `/operaciones/asignaciones/${target.id}/finalizar`,
           { method: "PATCH" }
@@ -1743,15 +1873,15 @@ export function Operaciones() {
   };
 
   const reopenFromFinal = async (item: AnyRow) => {
+    setApiError("");
+
     try {
-      const detail = parseJson(
-        item.detalle_operativo_json
-      );
+      const detail = parseJson(item.detalle_operativo_json);
 
       const type = String(
         item.tipo_asignacion ||
-        detail.tipo_asignacion ||
-        "local"
+          detail.tipo_asignacion ||
+          "local"
       ) as AssignmentType;
 
       const targets =
@@ -1759,60 +1889,77 @@ export function Operaciones() {
           ? getLocalGroupRows(item)
           : [item];
 
-      const previousStates = readPreviousFinalStates();
-
-      // Para registros finalizados antes de esta mejora, usamos un estado
-      // operativo razonable como respaldo.
-      const fallbackState =
-        estadosAsignacion.find((state) =>
-          String(
-            state.nombre_estado_asignacion || ""
-          )
-            .toLowerCase()
-            .includes("en ruta")
-        ) ||
-        estadosAsignacion.find((state) =>
-          String(
-            state.nombre_estado_asignacion || ""
-          )
-            .toLowerCase()
-            .includes("asignado")
-        ) ||
-        estadosAsignacion.find((state) =>
-          String(
-            state.nombre_estado_asignacion || ""
-          )
-            .toLowerCase()
-            .includes("pendiente")
-        ) ||
-        estadosAsignacion.find(
-          (state) =>
-            !String(
-              state.nombre_estado_asignacion || ""
-            )
-              .toLowerCase()
-              .includes("final")
-        );
-
-      if (!fallbackState?.id) {
+      if (!targets.length) {
         throw new Error(
-          "No se encontró un estado operativo para regresar la asignación."
+          "No se encontraron registros relacionados con esta asignación."
         );
       }
+
+      const previousStates = readPreviousFinalStates();
+
+      // Busca un estado operativo REAL entre el catálogo cargado.
+      // Acepta distintos nombres de columna porque Mantenimiento puede devolver
+      // nombre_estado_asignacion, nombre, estado o descripcion.
+      const operationalStates = estadosAsignacion.filter((state) => {
+        const name = assignmentStateLabel(state).toLowerCase();
+        return (
+          Number(state.id) > 0 &&
+          !name.includes("final") &&
+          !name.includes("complet") &&
+          !name.includes("cerrad")
+        );
+      });
+
+      const preferredFallback =
+        operationalStates.find((state) =>
+          assignmentStateLabel(state).toLowerCase().includes("en ruta")
+        ) ||
+        operationalStates.find((state) =>
+          assignmentStateLabel(state).toLowerCase().includes("en curso")
+        ) ||
+        operationalStates.find((state) =>
+          assignmentStateLabel(state).toLowerCase().includes("asignad")
+        ) ||
+        operationalStates.find((state) =>
+          assignmentStateLabel(state).toLowerCase().includes("pendiente")
+        ) ||
+        operationalStates[0] ||
+        DEFAULT_OPERATIONAL_STATE;
 
       for (const target of targets) {
         const targetDetail = parseJson(
           target.detalle_operativo_json
         );
 
-        const previousStateId =
-          Number(
-            previousStates[String(target.id)]
-          ) || Number(fallbackState.id);
+        const currentStateId = Number(
+          target.estado_asignacion_id ||
+            target.estado_id ||
+            0
+        );
 
-        // Al regresar desde Cierre / Excel final NO debemos perder el
-        // estatus operativo original. El backend valida que una asignación
-        // Local tenga al menos un estatus antes de permitir el UPDATE.
+        const savedPreviousId = Number(
+          previousStates[String(target.id)] ||
+            targetDetail.estado_previo_finalizar ||
+            targetDetail.estado_asignacion_previo ||
+            0
+        );
+
+        // Orden de prioridad:
+        // 1. estado guardado cuando se finalizó,
+        // 2. estado operativo del catálogo,
+        // 3. Pendiente (id 1), que también es el default del backend.
+        let previousStateId =
+          savedPreviousId > 0 && savedPreviousId !== currentStateId
+            ? savedPreviousId
+            : Number(preferredFallback?.id || 1);
+
+        if (!previousStateId || previousStateId === currentStateId) {
+          const alternative = operationalStates.find(
+            (state) => Number(state.id) !== currentStateId
+          );
+          previousStateId = Number(alternative?.id || 1);
+        }
+
         const rawStatuses = Array.isArray(
           target.estatus_seguimiento
         )
@@ -1829,11 +1976,9 @@ export function Operaciones() {
               row?.fecha ||
               date10(
                 target.fecha_carga ||
-                targetDetail.fecha_carga
+                  targetDetail.fecha_carga
               ) ||
-              new Date()
-                .toISOString()
-                .slice(0, 10),
+              new Date().toISOString().slice(0, 10),
             hora:
               row?.hora ||
               targetDetail.hora_carga ||
@@ -1858,14 +2003,12 @@ export function Operaciones() {
               ""
           ).trim();
 
-        // Registros Local creados antes de guardar el historial pueden no
-        // traer estatus_seguimiento. En ese caso agregamos uno válido para
-        // poder restaurarlos sin alterar los demás datos.
         const restoredStatus =
           previousOperationalStatus ||
           (type === "local"
             ? "Operación reabierta"
-            : "");
+            : assignmentStateLabel(preferredFallback) ||
+              "Pendiente");
 
         const restoredStatuses =
           cleanStatuses.length > 0
@@ -1876,11 +2019,9 @@ export function Operaciones() {
                   fecha:
                     date10(
                       target.fecha_carga ||
-                      targetDetail.fecha_carga
+                        targetDetail.fecha_carga
                     ) ||
-                    new Date()
-                      .toISOString()
-                      .slice(0, 10),
+                    new Date().toISOString().slice(0, 10),
                   hora:
                     targetDetail.hora_carga ||
                     "08:00",
@@ -1895,25 +2036,27 @@ export function Operaciones() {
           pilotos_id:
             target.pilotos_id ||
             target.piloto_id,
-          estatus_seguimiento:
-            restoredStatuses,
-          estatus_operativo:
-            restoredStatus,
+          estatus_seguimiento: restoredStatuses,
+          estatus_operativo: restoredStatus,
+        };
+
+        const detailForReopen = {
+          ...parseJson(
+            buildOperationalPayload(source, type)
+              .detalle_operativo_json
+          ),
+          estatus_seguimiento: restoredStatuses,
+          estatus_operativo: restoredStatus,
+          estado_previo_finalizar: previousStateId,
         };
 
         const payload = {
-          ...buildOperationalPayload(
-            source,
-            type
-          ),
-          // Se envían también arriba para que la validación del backend
-          // los encuentre independientemente de si lee el JSON o el body.
-          estatus_seguimiento:
-            restoredStatuses,
-          estatus_operativo:
-            restoredStatus,
-          estado_asignacion_id:
-            previousStateId,
+          ...buildOperationalPayload(source, type),
+          detalle_operativo_json:
+            JSON.stringify(detailForReopen),
+          estatus_seguimiento: restoredStatuses,
+          estatus_operativo: restoredStatus,
+          estado_asignacion_id: previousStateId,
           estado_id: previousStateId,
           cierre_operacion: false,
         };
@@ -1926,36 +2069,28 @@ export function Operaciones() {
           }
         );
 
-        delete previousStates[
-          String(target.id)
-        ];
+        delete previousStates[String(target.id)];
       }
 
-      writePreviousFinalStates(
-        previousStates
-      );
+      writePreviousFinalStates(previousStates);
 
       await loadData();
 
-      // Lleva al usuario directamente al expediente del que salió.
+      // Regresa visualmente al módulo original.
       setTab(type);
       setPage(1);
 
       setNotice(
-        type === "local" &&
-        targets.length > 1
+        type === "local" && targets.length > 1
           ? `${localGroupKey(item)} regresó a Local con sus ${targets.length} líneas.`
           : `${item.codigo_asignacion} regresó a ${TYPE_META[type].label}.`
       );
 
-      setTimeout(
-        () => setNotice(""),
-        3000
-      );
+      setTimeout(() => setNotice(""), 3000);
     } catch (error: any) {
       setApiError(
         error.message ||
-        "No se pudo regresar la operación."
+          "No se pudo regresar la operación."
       );
     }
   };

@@ -177,6 +177,13 @@ const asDate = (value) => {
   return null;
 };
 
+const normalizeCurrency = (value) => {
+  const currency = limpiar(value || "GTQ").toUpperCase();
+
+  if (currency === "USD") return "USD";
+  return "GTQ";
+};
+
 const round2 = (value) => Number((Number(value) || 0).toFixed(2));
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -380,6 +387,7 @@ const getComprobantes = async () => {
       COALESCE(c.total, 0) AS total,
       c.estado_id,
       c.forma_pago_id,
+      COALESCE(c.moneda, 'GTQ') AS moneda,
       c.observaciones,
       c.created_at,
       c.updated_at,
@@ -628,6 +636,7 @@ const saveComprobante = async (connection, body, id = null) => {
   const fechaEmision = asDate(body.fecha_emision) || today();
   const fechaVencimiento = asDate(body.fecha_vencimiento) || addDays(fechaEmision, 15);
   const formaPagoId = asId(body.forma_pago_id);
+  const moneda = normalizeCurrency(body.moneda);
   const observaciones = limpiarTexto(body.observaciones, 255);
   const estadoId = asId(body.estado_id) || (await findEstadoId(connection, ["PEND"], ["pendiente"]));
   const numero = id ? limpiarCodigo(body.numero_comprobante, 20) : (limpiarCodigo(body.numero_comprobante, 20) || (await nextComprobanteNumber(connection)));
@@ -678,6 +687,7 @@ const saveComprobante = async (connection, body, id = null) => {
           total = ?,
           estado_id = ?,
           forma_pago_id = ?,
+          moneda = ?,
           observaciones = ?
       WHERE id = ?
       `,
@@ -693,6 +703,7 @@ const saveComprobante = async (connection, body, id = null) => {
         totals.total,
         estadoId,
         formaPagoId,
+        moneda,
         observaciones,
         id,
       ]
@@ -703,8 +714,22 @@ const saveComprobante = async (connection, body, id = null) => {
     const [result] = await connection.query(
       `
       INSERT INTO \`${T.comprobante}\`
-      (numero_comprobante, serie, cliente_id, usuario_id, fecha_emision, fecha_vencimiento, subtotal, iva, total, estado_id, forma_pago_id, observaciones)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (
+        numero_comprobante,
+        serie,
+        cliente_id,
+        usuario_id,
+        fecha_emision,
+        fecha_vencimiento,
+        subtotal,
+        iva,
+        total,
+        estado_id,
+        forma_pago_id,
+        moneda,
+        observaciones
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         numero,
@@ -718,6 +743,7 @@ const saveComprobante = async (connection, body, id = null) => {
         totals.total,
         estadoId,
         formaPagoId,
+        moneda,
         observaciones,
       ]
     );
@@ -751,6 +777,7 @@ const saveComprobante = async (connection, body, id = null) => {
     id: comprobanteId,
     numero_comprobante: numero,
     serie,
+    moneda,
     ...totals,
   };
 };

@@ -1919,7 +1919,7 @@ async function generarPDFCliente(
 // ============================================================
 
 export function CRM() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [activeTab, setActiveTab] = useState<"seguimiento" | "clientes" | "cotizaciones" | "proveedores">("seguimiento");
 
@@ -1947,6 +1947,26 @@ export function CRM() {
       setActiveTab(nextTab);
     }
   }, [searchParams]);
+
+  const selectCrmTab = (
+    tab: "seguimiento" | "clientes" | "cotizaciones" | "proveedores"
+  ) => {
+    setActiveTab(tab);
+
+    const tabUrl: Record<
+      "seguimiento" | "clientes" | "cotizaciones" | "proveedores",
+      string
+    > = {
+      seguimiento: "oportunidades",
+      clientes: "clientes",
+      cotizaciones: "cotizaciones",
+      proveedores: "proveedores",
+    };
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("tab", tabUrl[tab]);
+    setSearchParams(nextParams, { replace: true });
+  };
 
   const [clients, setClients] = useState<ClienteRow[]>([]);
   const [contacts, setContacts] = useState<ContactoClienteRow[]>([]);
@@ -3416,7 +3436,7 @@ export function CRM() {
       setSortField("");
       setCrmSortDirection("desc");
       setClientPage(1);
-      setActiveTab("clientes");
+      selectCrmTab("clientes");
 
       setClientModal({
         open: false,
@@ -4361,8 +4381,9 @@ export function CRM() {
         !cantidadTexto ||
         !Number.isFinite(cantidad) ||
         cantidad <= 0 ||
+        !precioTexto ||
         !Number.isFinite(precio) ||
-        precio < 0 ||
+        precio <= 0 ||
         !diasTexto ||
         !Number.isFinite(dias) ||
         dias <= 0
@@ -4371,7 +4392,7 @@ export function CRM() {
 
     if (bad) {
       e.details =
-        "Cada línea debe tener descripción (máx. 50), cantidad mayor a 0, precio válido y días mayor a 0.";
+        "Cada línea debe tener descripción (máx. 50), cantidad mayor a 0, precio/venta mayor a 0 y días mayor a 0. No se permite guardar valores en 0.";
     }
 
     setQuoteErrors(e);
@@ -4819,18 +4840,121 @@ export function CRM() {
     );
   };
 
+  const nextProviderServiceCode = (draftRows: ProviderServiceRow[] = []) => {
+    const realDraftIds = new Set(
+      draftRows
+        .filter((row) => Number(row.id) > 0)
+        .map((row) => Number(row.id))
+    );
+
+    const occupiedRows = providerServices.filter(
+      (row) => !realDraftIds.has(Number(row.id))
+    );
+
+    const allRows = [...occupiedRows, ...draftRows];
+
+    let maxNumber = allRows.reduce((max, row) => {
+      const match = String(row.codigo_servicio || "")
+        .toUpperCase()
+        .match(/SRV[-_ ]?(\d+)/);
+
+      return Math.max(max, match ? Number(match[1]) || 0 : 0);
+    }, 0);
+
+    const usedCodes = new Set(
+      occupiedRows
+        .map((row) => String(row.codigo_servicio || "").trim().toUpperCase())
+        .filter(Boolean)
+    );
+
+    draftRows.forEach((row) => {
+      const code = String(row.codigo_servicio || "").trim().toUpperCase();
+      if (code) usedCodes.add(code);
+    });
+
+    let candidate = "";
+    do {
+      maxNumber += 1;
+      candidate = `SRV-${String(maxNumber).padStart(3, "0")}`;
+    } while (usedCodes.has(candidate));
+
+    return candidate;
+  };
+
+  const normalizeProviderServiceCodes = (
+    rows: ProviderServiceRow[]
+  ): ProviderServiceRow[] => {
+    const realDraftIds = new Set(
+      rows
+        .filter((row) => Number(row.id) > 0)
+        .map((row) => Number(row.id))
+    );
+
+    const occupiedCodes = new Set(
+      providerServices
+        .filter((row) => !realDraftIds.has(Number(row.id)))
+        .map((row) => String(row.codigo_servicio || "").trim().toUpperCase())
+        .filter(Boolean)
+    );
+
+    let maxNumber = [...providerServices, ...rows].reduce((max, row) => {
+      const match = String(row.codigo_servicio || "")
+        .toUpperCase()
+        .match(/SRV[-_ ]?(\d+)/);
+
+      return Math.max(max, match ? Number(match[1]) || 0 : 0);
+    }, 0);
+
+    const nextUniqueCode = () => {
+      let candidate = "";
+
+      do {
+        maxNumber += 1;
+        candidate = `SRV-${String(maxNumber).padStart(3, "0")}`;
+      } while (occupiedCodes.has(candidate));
+
+      occupiedCodes.add(candidate);
+      return candidate;
+    };
+
+    return rows.map((row) => {
+      const currentCode = String(row.codigo_servicio || "")
+        .trim()
+        .toUpperCase();
+
+      if (!currentCode || occupiedCodes.has(currentCode)) {
+        return {
+          ...row,
+          codigo_servicio: nextUniqueCode(),
+        };
+      }
+
+      occupiedCodes.add(currentCode);
+
+      return {
+        ...row,
+        codigo_servicio: currentCode,
+      };
+    });
+  };
+
   const addProviderService = () => {
     const id = -Date.now();
-    setProviderServiceDraft((prev) => [
-      ...prev,
-      {
-        id,
-        proveedor_id: Number(providerModal.value.id || 0),
-        codigo_servicio: "",
-        nombre_servicio_proveedor: "",
-        es_principal: prev.length === 0,
-      },
-    ]);
+
+    setProviderServiceDraft((prev) => {
+      const codigoServicio = nextProviderServiceCode(prev);
+
+      return [
+        ...prev,
+        {
+          id,
+          proveedor_id: Number(providerModal.value.id || 0),
+          codigo_servicio: codigoServicio,
+          nombre_servicio_proveedor: "",
+          es_principal: prev.length === 0,
+        },
+      ];
+    });
   };
 
   const patchProviderService = (id: number, patch: Partial<ProviderServiceRow>) => {
@@ -4860,10 +4984,16 @@ export function CRM() {
 
   const saveProvider = async () => {
     if (!validateProvider()) return;
+
+    const serviciosNormalizados =
+      normalizeProviderServiceCodes(providerServiceDraft);
+
+    setProviderServiceDraft(serviciosNormalizados);
+
     const payload = {
       ...providerModal.value,
       contactos: providerContactDraft,
-      servicios: providerServiceDraft,
+      servicios: serviciosNormalizados,
       cumplimiento: providerComplianceDraft,
       desempeno: providerPerformanceDraft,
     };
@@ -6357,7 +6487,7 @@ export function CRM() {
       <div className="overflow-x-auto">
         <div className="flex border-b border-gray-200 gap-5 sm:gap-8 min-w-max">
           {[
-            ["seguimiento", "Seguimiento de Ventas"],
+            ["seguimiento", "Oportunidades"],
             ["clientes", "Clientes"],
             ["cotizaciones", "Cotizaciones"],
             ["proveedores", "Proveedores"],
@@ -6365,7 +6495,9 @@ export function CRM() {
             <button
               key={id}
               onClick={() => {
-                setActiveTab(id as any);
+                selectCrmTab(
+                  id as "seguimiento" | "clientes" | "cotizaciones" | "proveedores"
+                );
                 setSearchQuery("");
                 setStatusFilter("Todos");
                 setLeadStageFilter("Todos");
