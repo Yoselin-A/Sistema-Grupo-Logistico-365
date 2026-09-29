@@ -4,7 +4,7 @@ require("dotenv").config();
 
 const {
   autenticarToken,
-  autorizarRoles,
+  autorizarModulo,
 } = require("./middleware/auth.middleware");
 
 const authRoutes = require("./routes/auth.routes");
@@ -58,17 +58,20 @@ app.use("/api", authRoutes);
 app.use("/api", autenticarToken);
 
 /*
-  Seguridad especial:
-  mantenimiento y auditoría únicamente Gerencia.
+  Seguridad dinámica por módulo.
+  - Mantenimiento puede abrirse con permiso de mantenimiento o seguridad.
+  - Auditoría pertenece al bloque de Seguridad.
+  La validación fina de tablas sensibles se realiza también dentro de
+  mantenimiento.routes.js.
 */
 app.use(
   "/api/mantenimiento",
-  autorizarRoles("gerencia")
+  autorizarModulo("mantenimiento", "seguridad")
 );
 
 app.use(
   "/api/auditoria",
-  autorizarRoles("gerencia")
+  autorizarModulo("seguridad")
 );
 
 app.use("/api/auditoria", auditoriaRoutes);
@@ -91,7 +94,7 @@ app.use("/api", rutasRoutes);
 app.use("/api", comprobantesRoutes);
 app.use("/api", reportesRoutes);
 
-app.use("/api/ia", iaRoutes);
+app.use("/api/ia", autorizarModulo("ia"), iaRoutes);
 
 // RUTA NO ENCONTRADA
 app.use((req, res) => {

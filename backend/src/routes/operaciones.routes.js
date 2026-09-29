@@ -1,7 +1,12 @@
 const express = require("express");
 const pool = require("../config/db");
+const { autorizarModulo } = require("../middleware/auth.middleware");
 
 const router = express.Router();
+
+router.use("/operaciones", autorizarModulo("operaciones"));
+router.use("/logistica", autorizarModulo("logistica"));
+router.use("/mantenimiento", autorizarModulo("mantenimiento", "seguridad"));
 
 const T = {
   asignacion: "asignacion",

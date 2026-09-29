@@ -60,7 +60,7 @@ function PrivateRoute({
   children: React.ReactNode;
   module: ModuleKey;
 }) {
-  const { role } = useAuth();
+  const { role, permissions } = useAuth();
   const location = useLocation();
 
   const usuarioLocal = obtenerUsuarioLocal();
@@ -72,7 +72,7 @@ function PrivateRoute({
 
   // Aunque el usuario escriba manualmente la URL de otro módulo,
   // el frontend valida el permiso y muestra un 404 sin exponer contenido.
-  if (!canAccessModule(roleFinal, module)) {
+  if (!canAccessModule(roleFinal, module, permissions)) {
     return <NotFound unauthorized />;
   }
 

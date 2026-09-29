@@ -2,12 +2,12 @@ const express = require("express");
 const pool = require("../config/db");
 
 const {
-  autorizarRoles,
+  autorizarModulo,
 } = require("../middleware/auth.middleware");
 
 const router = express.Router();
 
-const soloCRM = autorizarRoles("gerencia", "ventas");
+const soloCRM = autorizarModulo("crm");
 
 router.use("/crm", soloCRM);
 router.use("/clientes", soloCRM);

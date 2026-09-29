@@ -24,7 +24,7 @@ import { canAccessModule } from "../../utils/permissions";
 
 export function Sidebar({ isOpen = false, onClose }: any) {
   const location = useLocation();
-  const { role } = useAuth();
+  const { role, permissions, logout } = useAuth();
 
   const params = new URLSearchParams(location.search);
   const tabActual = String(params.get("tab") || "").toLowerCase();
@@ -44,7 +44,10 @@ export function Sidebar({ isOpen = false, onClose }: any) {
   );
 
   const puedeModulo = (module: Parameters<typeof canAccessModule>[1]) =>
-    canAccessModule(role, module);
+    canAccessModule(role, module, permissions);
+
+  const puedeGrupoLogistica =
+    puedeModulo("logistica") || puedeModulo("flota") || puedeModulo("rutas");
 
   const cerrarEnMovil = () => {
     if (onClose) onClose();
@@ -293,7 +296,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
         )}
 
         {/* LOGÍSTICA */}
-        {puedeModulo("logistica") && (
+        {puedeGrupoLogistica && (
           <>
             <button
               type="button"
@@ -323,32 +326,38 @@ export function Sidebar({ isOpen = false, onClose }: any) {
 
             {openLogistica && (
               <div className="flex flex-col">
-                <Link
-                  to="/logistica"
-                  onClick={cerrarEnMovil}
-                  className={submenuClass("/logistica")}
-                >
-                  <Truck className="w-4 h-4 shrink-0" />
-                  <span>Gestión</span>
-                </Link>
+                {puedeModulo("logistica") && (
+                  <Link
+                    to="/logistica"
+                    onClick={cerrarEnMovil}
+                    className={submenuClass("/logistica")}
+                  >
+                    <Truck className="w-4 h-4 shrink-0" />
+                    <span>Gestión</span>
+                  </Link>
+                )}
 
-                <Link
-                  to="/flota"
-                  onClick={cerrarEnMovil}
-                  className={submenuClass("/flota")}
-                >
-                  <ShoppingCart className="w-4 h-4 shrink-0" />
-                  <span>Flota</span>
-                </Link>
+                {puedeModulo("flota") && (
+                  <Link
+                    to="/flota"
+                    onClick={cerrarEnMovil}
+                    className={submenuClass("/flota")}
+                  >
+                    <ShoppingCart className="w-4 h-4 shrink-0" />
+                    <span>Flota</span>
+                  </Link>
+                )}
 
-                <Link
-                  to="/rutas"
-                  onClick={cerrarEnMovil}
-                  className={submenuClass("/rutas")}
-                >
-                  <Route className="w-4 h-4 shrink-0" />
-                  <span>Rutas</span>
-                </Link>
+                {puedeModulo("rutas") && (
+                  <Link
+                    to="/rutas"
+                    onClick={cerrarEnMovil}
+                    className={submenuClass("/rutas")}
+                  >
+                    <Route className="w-4 h-4 shrink-0" />
+                    <span>Rutas</span>
+                  </Link>
+                )}
               </div>
             )}
           </>
@@ -424,9 +433,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
           type="button"
           onClick={async () => {
             await (window as any).gl365AuditLogout?.();
-
-            localStorage.removeItem("user");
-            window.location.href = "/login";
+            logout();
           }}
           className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-semibold text-blue-100 hover:bg-white/10 hover:text-white transition-colors"
         >

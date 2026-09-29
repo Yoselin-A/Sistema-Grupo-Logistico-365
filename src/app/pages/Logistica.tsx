@@ -234,6 +234,13 @@ const formatDate = (value: any) => {
   return `${day}/${month}/${year}`;
 };
 
+const formatDateTime = (value: any) => {
+  const local = toDateTimeInput(value);
+  if (!local) return "-";
+  const [date, time] = local.split("T");
+  return `${formatDate(date)} ${time || ""}`.trim();
+};
+
 const toDateTimeInput = (value: any) => {
   const text = String(value || "").trim();
   if (!text) return "";
@@ -1014,7 +1021,7 @@ export function Logistica() {
       .map((v) => ({
         id: v.id,
         title: v.estado === "Crítico" ? "Situación crítica" : "Retraso detectado",
-        desc: `Viaje ${v.codigo} (${v.unidad}) - ${v.ruta}. ETA: ${v.eta || "-"}`,
+        desc: `Viaje ${v.codigo} (${v.unidad}) - ${v.ruta}. Llegada: ${formatDateTime(v.eta)}`,
         type: v.estado === "Crítico" ? "error" : "warning",
       }));
   }, [viajes]);
@@ -1180,6 +1187,7 @@ export function Logistica() {
     setViajeForm({
       ...viaje,
       fecha_salida: toDateTimeInput(viaje.fecha_salida || viaje.fechaSalida),
+      eta: toDateTimeInput(viaje.eta),
       estado: viaje.estado || "Pendiente",
       progreso: viaje.progreso ?? 0,
     });
@@ -1209,7 +1217,14 @@ export function Logistica() {
     if (!viajeForm.unidad_id) errors.unidad_id = "Seleccioná una unidad.";
     if (!viajeForm.piloto_id) errors.piloto_id = "Seleccioná un piloto.";
     if (!viajeForm.fecha_salida) errors.fecha_salida = "Seleccioná fecha y hora.";
-    if (!viajeForm.eta) errors.eta = "Ingresá ETA.";
+    if (!viajeForm.eta) errors.eta = "Seleccioná la fecha y hora de llegada.";
+    if (
+      viajeForm.fecha_salida &&
+      viajeForm.eta &&
+      new Date(viajeForm.eta).getTime() < new Date(viajeForm.fecha_salida).getTime()
+    ) {
+      errors.eta = "La fecha y hora de llegada no puede ser anterior a la salida.";
+    }
     if (Number(viajeForm.progreso) < 0 || Number(viajeForm.progreso) > 100) {
       errors.progreso = "Debe estar entre 0 y 100.";
     }
@@ -1454,8 +1469,17 @@ export function Logistica() {
 
     autoTable(doc, {
       startY: 44,
-      head: [["Código", "Cliente", "Ruta", "Unidad", "Piloto", "Estado", "Progreso"]],
-      body: sortedViajes.map((v) => [v.codigo, v.cliente, v.ruta, v.unidad, v.piloto, v.estado, `${v.progreso}%`]),
+      head: [["Código", "Cliente", "Ruta", "Unidad", "Piloto", "Llegada", "Estado", "Progreso"]],
+      body: sortedViajes.map((v) => [
+        v.codigo,
+        v.cliente,
+        v.ruta,
+        v.unidad,
+        v.piloto,
+        formatDateTime(v.eta),
+        v.estado,
+        `${v.progreso}%`,
+      ]),
       headStyles: { fillColor: [12, 45, 107], textColor: [255, 255, 255] },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       styles: { fontSize: 7.5, cellPadding: 2.2 },
@@ -1864,7 +1888,7 @@ export function Logistica() {
                       Piloto: v.piloto,
                       Estado: v.estado,
                       Progreso: `${v.progreso}%`,
-                      ETA: v.eta,
+                      "Fecha y hora de llegada": formatDateTime(v.eta),
                     })),
                     "Viajes",
                     "Reporte_Viajes"
@@ -1913,6 +1937,7 @@ export function Logistica() {
             <SortChip field="cliente" label="Cliente" activeField={sortViajeField} direction={sortViajeDirection} setField={setSortViajeField} setDirection={setSortViajeDirection} />
             <SortChip field="ruta" label="Ruta" activeField={sortViajeField} direction={sortViajeDirection} setField={setSortViajeField} setDirection={setSortViajeDirection} />
             <SortChip field="estado" label="Estado" activeField={sortViajeField} direction={sortViajeDirection} setField={setSortViajeField} setDirection={setSortViajeDirection} />
+            <SortChip field="eta" label="Llegada" activeField={sortViajeField} direction={sortViajeDirection} setField={setSortViajeField} setDirection={setSortViajeDirection} />
             <SortChip field="progreso" label="Progreso" activeField={sortViajeField} direction={sortViajeDirection} setField={setSortViajeField} setDirection={setSortViajeDirection} />
             <span className="ml-0 lg:ml-auto text-sm font-bold text-gray-400">
               {sortedViajes.length} de {viajes.length} registros visibles
@@ -1957,8 +1982,8 @@ export function Logistica() {
                     <p className="font-bold text-gray-700 dark:text-[#DCE5F1] mt-0.5 line-clamp-2">{viaje.cliente}</p>
                   </div>
                   <div>
-                    <p className="text-gray-400 font-semibold">ETA</p>
-                    <p className="font-bold text-[#FF6A00] mt-0.5">{viaje.eta || "-"}</p>
+                    <p className="text-gray-400 font-semibold">Fecha / hora llegada</p>
+                    <p className="font-bold text-[#FF6A00] mt-0.5">{formatDateTime(viaje.eta)}</p>
                   </div>
                 </div>
 
@@ -2454,10 +2479,11 @@ export function Logistica() {
                   />
                 </Field>
 
-                <Field label="ETA *" error={viajeErrors.eta}>
+                <Field label="Fecha / hora llegada *" error={viajeErrors.eta}>
                   <input
-                    type="time"
+                    type="datetime-local"
                     value={viajeForm.eta || ""}
+                    min={viajeForm.fecha_salida || undefined}
                     onChange={(event) => setViajeForm({ ...viajeForm, eta: event.target.value })}
                     className={inputClass}
                   />
@@ -2891,7 +2917,7 @@ function ViewViaje({ viaje }: { viaje: Viaje }) {
             return `${formatDate(date)} ${time}`;
           })()}
         />
-        <Info label="ETA" value={viaje.eta || "-"} />
+        <Info label="Fecha / hora llegada" value={formatDateTime(viaje.eta)} />
       </div>
 
       <div className="rounded-xl border border-gray-200 overflow-hidden">

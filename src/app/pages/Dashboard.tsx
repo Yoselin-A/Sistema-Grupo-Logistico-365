@@ -21,6 +21,7 @@ import {
   Target,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { canAccessModule } from "../utils/permissions";
 
 const API_BASE_URL = "/api";
 
@@ -294,10 +295,15 @@ function KpiCard({
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const { role } = useAuth();
+  const { role, permissions } = useAuth();
 
-  const puedeUsarCRM =
-  role === "gerencia" || role === "ventas";
+  const puedeModulo = (module: Parameters<typeof canAccessModule>[1]) =>
+    canAccessModule(role, module, permissions);
+
+  const puedeUsarCRM = puedeModulo("crm");
+  const puedeUsarOperaciones = puedeModulo("operaciones");
+  const puedeUsarLogistica = puedeModulo("logistica");
+  const puedeUsarComprobantes = puedeModulo("facturacion");
 
   const [data, setData] = useState<DashboardResumen>({
     envios: [],
@@ -358,9 +364,13 @@ export function Dashboard() {
         asignacionesFallback,
         proveedoresFallback,
       ] = await Promise.all([
-  safeGetObject("/logistica/bootstrap"),
+  puedeUsarLogistica
+    ? safeGetObject("/logistica/bootstrap")
+    : Promise.resolve({ envios: [], viajes: [] }),
 
-  safeGetObject("/comprobantes/bootstrap"),
+  puedeUsarComprobantes
+    ? safeGetObject("/comprobantes/bootstrap")
+    : Promise.resolve({ comprobantes: [], clientes: [] }),
 
   puedeUsarCRM
     ? safeGetObject("/crm/bootstrap")
@@ -370,13 +380,15 @@ export function Dashboard() {
         cotizaciones: [],
       }),
 
-  safeGetObject("/operaciones/bootstrap"),
+  puedeUsarOperaciones
+    ? safeGetObject("/operaciones/bootstrap")
+    : Promise.resolve({ asignaciones: [], proveedores: [] }),
 
-  safeGet("/logistica/envios"),
+  puedeUsarLogistica ? safeGet("/logistica/envios") : Promise.resolve([]),
 
-  safeGet("/logistica/viajes"),
+  puedeUsarLogistica ? safeGet("/logistica/viajes") : Promise.resolve([]),
 
-  safeGet("/comprobantes"),
+  puedeUsarComprobantes ? safeGet("/comprobantes") : Promise.resolve([]),
 
   puedeUsarCRM
     ? safeGet("/clientes")
@@ -386,9 +398,9 @@ export function Dashboard() {
     ? safeGet("/oportunidades")
     : Promise.resolve([]),
 
-  safeGet("/operaciones/asignaciones"),
+  puedeUsarOperaciones ? safeGet("/operaciones/asignaciones") : Promise.resolve([]),
 
-  safeGet("/operaciones/proveedores"),
+  puedeUsarOperaciones ? safeGet("/operaciones/proveedores") : Promise.resolve([]),
 ]);
 
       const envios = uniqueById([
@@ -485,7 +497,7 @@ export function Dashboard() {
   };
 
   const cargarSolicitudesCredenciales = async () => {
-    if (role !== "gerencia") {
+    if (role !== "gerencia" && role !== "administrador") {
       setSolicitudes([]);
       return;
     }
@@ -622,7 +634,7 @@ export function Dashboard() {
 
     cargarDashboard();
     cargarSolicitudesCredenciales();
-  }, [role]);
+  }, [role, permissions]);
 
   const estadoEnvioTexto = (item: any) =>
     obtenerTexto(
@@ -752,7 +764,19 @@ export function Dashboard() {
     data.asignaciones.length +
     data.proveedores.length;
 
-  const roleTitle = role ? role.toUpperCase() : "USUARIO";
+  const roleTitle = role ? role.toUpperCase().replace(/_/g, " ") : "USUARIO";
+  const rolesBase = new Set([
+    "administrador",
+    "gerencia",
+    "ventas",
+    "operaciones",
+    "compras",
+    "logistica",
+    "facturacion",
+    "finanzas",
+    "mensajeria",
+  ]);
+  const esRolPersonalizado = Boolean(role && !rolesBase.has(String(role)));
 
   return (
     <div className="space-y-6 w-full max-w-full px-2 sm:px-3 lg:px-4">
@@ -787,8 +811,46 @@ export function Dashboard() {
         {error || `Datos reales conectados: ${data.envios.length} envíos, ${data.viajes.length} viajes, ${data.comprobantes.length} comprobantes, ${data.clientes.length} clientes.`}
       </div>
 
+      {esRolPersonalizado && (
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-xl font-bold text-[#0C2D6B]">Módulos habilitados</h2>
+            <p className="text-sm text-gray-500">Accesos asignados al rol desde Mantenimiento.</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {puedeModulo("crm") && (
+              <ModuleCard title="CRM y Ventas" description="Clientes, oportunidades, cotizaciones y proveedores" icon={Users} color="blue" onClick={() => navigate("/crm")} />
+            )}
+            {puedeModulo("operaciones") && (
+              <ModuleCard title="Operaciones" description="Asignaciones y gestión operativa" icon={ShoppingCart} color="orange" onClick={() => navigate("/operaciones")} />
+            )}
+            {puedeModulo("logistica") && (
+              <ModuleCard title="Logística" description="Envíos y viajes" icon={Truck} color="green" onClick={() => navigate("/logistica")} />
+            )}
+            {puedeModulo("flota") && (
+              <ModuleCard title="Flota" description="Vehículos y mantenimientos" icon={Package} color="green" onClick={() => navigate("/flota")} />
+            )}
+            {puedeModulo("rutas") && (
+              <ModuleCard title="Rutas" description="Orígenes, destinos y rutas" icon={BarChart3} color="orange" onClick={() => navigate("/rutas")} />
+            )}
+            {puedeModulo("facturacion") && (
+              <ModuleCard title="Comprobantes" description="Comprobantes y pagos" icon={FileText} color="purple" onClick={() => navigate("/facturacion")} />
+            )}
+            {puedeModulo("reportes") && (
+              <ModuleCard title="Reportes" description="Indicadores y análisis" icon={BarChart3} color="blue" onClick={() => navigate("/reportes")} />
+            )}
+            {puedeModulo("ia") && (
+              <ModuleCard title="IA Logística" description="Consultas inteligentes del sistema" icon={Brain} color="pink" onClick={() => navigate("/ia")} />
+            )}
+            {puedeModulo("mantenimiento") && (
+              <ModuleCard title="Mantenimiento" description="Catálogos y administración autorizada" icon={Database} color="gray" onClick={() => navigate("/mantenimiento")} />
+            )}
+          </div>
+        </div>
+      )}
+
       {/* NOTIFICACIONES GERENCIA */}
-      {role === "gerencia" && solicitudes.length > 0 && (
+      {(role === "gerencia" || role === "administrador") && solicitudes.length > 0 && (
         <div className="bg-white border border-orange-200 rounded-xl shadow-sm overflow-hidden">
           <div className="bg-orange-50 px-5 py-4 border-b border-orange-100 flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
@@ -858,14 +920,14 @@ export function Dashboard() {
         </div>
       )}
 
-      {role === "gerencia" && loadingSolicitudes && (
+      {(role === "gerencia" || role === "administrador") && loadingSolicitudes && (
         <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg text-sm">
           Cargando solicitudes de credenciales...
         </div>
       )}
 
       {/* MÓDULOS GERENCIA */}
-      {role === "gerencia" && (
+      {(role === "gerencia" || role === "administrador") && (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <ModuleCard

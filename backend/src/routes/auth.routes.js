@@ -9,30 +9,23 @@ const router = express.Router();
 /* ===============================
    ROLES DEL SISTEMA
 ================================ */
-const rolesPorId = {
-  1: "gerencia",
-  2: "facturacion",
-  3: "facturacion",
-  4: "facturacion",
-  5: "operaciones",
-  6: "logistica",
-  7: "mensajeria",
-  8: "ventas",
-};
-
 const cargoPorRol = {
+  administrador: "Administrador del sistema",
   gerencia: "Gerente General",
   facturacion: "Comprobantes / Área Contable",
+  finanzas: "Finanzas",
   operaciones: "Encargado de Operaciones",
+  compras: "Compras",
   logistica: "Encargado de Logística",
   mensajeria: "Mensajería Externa",
   ventas: "Asesor de Ventas",
-  operaciones: "Operaciones",
 };
 
 const {
   autenticarToken,
   autorizarRoles,
+  resolverRole,
+  obtenerPermisosRol,
 } = require("../middleware/auth.middleware");
 
 /* ===============================
@@ -194,44 +187,8 @@ const asegurarCampoPassword = async () => {
 };
 
 /* ===============================
-   RESOLVER ROL PARA FRONTEND
+   RESOLVER ROL / PERMISOS PARA FRONTEND
 ================================ */
-const resolverRole = (usuario) => {
-  const codigoRol = limpiarTexto(usuario.codigo_rol).toLowerCase();
-  const nombreRol = limpiarTexto(usuario.nombre_rol).toLowerCase();
-  const textoRol = `${codigoRol} ${nombreRol}`;
-
-  if (textoRol.includes("ger") || textoRol.includes("gerencia")) return "gerencia";
-
-  if (
-    textoRol.includes("fin") ||
-    textoRol.includes("finanza") ||
-    textoRol.includes("cont") ||
-    textoRol.includes("contabilidad") ||
-    textoRol.includes("fact") ||
-    textoRol.includes("factura") ||
-    textoRol.includes("comprobante")
-  ) {
-    return "facturacion";
-  }
-
-  // Compatibilidad: si la BD todavía conserva el nombre "compras",
-  // el frontend lo tratará como el nuevo rol "operaciones".
-  if (
-    textoRol.includes("compra") ||
-    textoRol.includes("operacion") ||
-    textoRol.includes("operación") ||
-    textoRol.includes("operaciones")
-  ) {
-    return "operaciones";
-  }
-
-  if (textoRol.includes("log") || textoRol.includes("logistica") || textoRol.includes("logística")) return "logistica";
-  if (textoRol.includes("msg") || textoRol.includes("mensaje") || textoRol.includes("mensajeria") || textoRol.includes("mensajería")) return "mensajeria";
-  if (textoRol.includes("vent") || textoRol.includes("venta")) return "ventas";
-  return rolesPorId[Number(usuario.rol_id)] || "gerencia";
-};
-
 const obtenerNombreCompleto = (usuario) => {
   const nombreCompleto = [
     usuario.primer_nombre,
@@ -246,9 +203,10 @@ const obtenerNombreCompleto = (usuario) => {
   return nombreCompleto || limpiarTexto(usuario.nombre_usuario) || "Usuario";
 };
 
-const crearPayloadUsuario = (usuario) => {
+const crearPayloadUsuario = async (usuario) => {
   const role = resolverRole(usuario);
   const nombreCompleto = obtenerNombreCompleto(usuario);
+  const permissions = await obtenerPermisosRol(usuario.rol_id, role);
 
   return {
     id: usuario.id,
@@ -259,7 +217,8 @@ const crearPayloadUsuario = (usuario) => {
     rol_id: usuario.rol_id,
     codigo_rol: usuario.codigo_rol,
     nombre_rol: usuario.nombre_rol,
-    cargo: cargoPorRol[role] || "Usuario del sistema",
+    cargo: cargoPorRol[role] || usuario.nombre_rol || "Usuario del sistema",
+    permissions,
   };
 };
 
@@ -404,7 +363,7 @@ router.post("/login", async (req, res) => {
       return enviarError(res, 401, "Usuario, correo o contraseña incorrectos.");
     }
 
-   const user = crearPayloadUsuario(usuario);
+   const user = await crearPayloadUsuario(usuario);
 
 const secret = process.env.JWT_SECRET;
 
@@ -460,6 +419,32 @@ router.post("/logout", (req, res) => {
     ok: true,
     message: "Sesión cerrada correctamente.",
   });
+});
+
+
+/* ===============================
+   SESIÓN ACTUAL
+   Devuelve el rol y los permisos vigentes desde MySQL.
+================================ */
+router.get("/me", autenticarToken, async (req, res) => {
+  try {
+    const usuario = await obtenerUsuarioPorIdentificador(req.auth.id);
+
+    if (!usuario) {
+      return enviarError(res, 404, "El usuario de la sesión ya no existe.");
+    }
+
+    const user = await crearPayloadUsuario(usuario);
+
+    return res.json({
+      ok: true,
+      data: user,
+      user,
+    });
+  } catch (error) {
+    console.error("Error consultando sesión actual:", error);
+    return enviarError(res, 500, "No se pudo actualizar la sesión.", error);
+  }
 });
 
 /* ===============================
@@ -564,7 +549,7 @@ router.post("/solicitar-cambio-password", async (req, res) => {
 router.get(
   "/solicitudes-credenciales",
   autenticarToken,
-  autorizarRoles("gerencia"),
+  autorizarRoles("gerencia", "administrador"),
   async (req, res) => {
   try {
     const tablas = await obtenerTablasAuth();
@@ -614,7 +599,7 @@ router.get(
 router.put(
   "/solicitudes-credenciales/:id/aprobar",
   autenticarToken,
-  autorizarRoles("gerencia"),
+  autorizarRoles("gerencia", "administrador"),
   async (req, res) => {
   const connection = await pool.getConnection();
 
@@ -689,7 +674,7 @@ router.put(
 router.put(
   "/solicitudes-credenciales/:id/denegar",
   autenticarToken,
-  autorizarRoles("gerencia"),
+  autorizarRoles("gerencia", "administrador"),
   async (req, res) => {
   const connection = await pool.getConnection();
 

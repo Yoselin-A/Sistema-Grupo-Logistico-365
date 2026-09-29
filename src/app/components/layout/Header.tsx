@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { canAccessModule } from "../../utils/permissions";
 import logoImage from "../../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
 
 interface HeaderProps {
@@ -172,7 +173,7 @@ const formatDate = (value: unknown) => {
 export function Header({
   onMenuClick,
 }: HeaderProps) {
-  const { role, userName } = useAuth();
+  const { role, userName, permissions } = useAuth();
 
   const navigate = useNavigate();
 
@@ -267,16 +268,9 @@ export function Header({
     };
   }, []);
 
-  const canSeeLogistics = [
-    "gerencia",
-    "logistica",
-    "mensajeria",
-  ].includes(normalizedRole);
+  const canSeeLogistics = canAccessModule(role, "logistica", permissions);
 
-  const canSeeFleet = [
-    "gerencia",
-    "logistica",
-  ].includes(normalizedRole);
+  const canSeeFleet = canAccessModule(role, "flota", permissions);
 
   const loadNotifications = async () => {
     setLoadingNotifications(true);
@@ -297,7 +291,7 @@ export function Header({
           ? safeFetch("/flota/bootstrap")
           : Promise.resolve({}),
 
-        normalizedRole === "gerencia"
+        (normalizedRole === "gerencia" || normalizedRole === "administrador")
           ? safeFetch(
               "/auth/solicitudes-credenciales"
             )
@@ -519,7 +513,7 @@ export function Header({
       ============================== */
 
       if (
-        normalizedRole === "gerencia"
+        normalizedRole === "gerencia" || normalizedRole === "administrador"
       ) {
         const requests =
           Array.isArray(

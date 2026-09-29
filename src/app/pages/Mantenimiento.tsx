@@ -35,6 +35,7 @@ import {
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useAuth } from "../context/AuthContext";
+import { canAccessModule } from "../utils/permissions";
 
 type AnyRow = Record<string, any>;
 type Mode = "create" | "edit" | "view";
@@ -99,6 +100,15 @@ type BootstrapData = {
   schemas: Record<string, SchemaDef>;
   options: Record<string, OptionItem[]>;
   categories: string[];
+};
+
+type RoleModuleOption = {
+  id: number;
+  codigo_modulo: string;
+  nombre_modulo: string;
+  descripcion?: string | null;
+  ruta?: string | null;
+  orden?: number;
 };
 
 const API_BASE_URL =
@@ -716,7 +726,7 @@ function IconButton({ title, icon: Icon, tone = "blue", onClick }: { title: stri
 }
 
 export function Mantenimiento() {
-  const { role, userName } = useAuth();
+  const { role, userName, permissions, refreshSession } = useAuth();
   const [bootstrap, setBootstrap] = useState<BootstrapData>({ tables: [], schemas: {}, options: {}, categories: [] });
   const [selectedTable, setSelectedTable] = useState<TableInfo | null>(null);
   const [records, setRecords] = useState<AnyRow[]>([]);
@@ -743,6 +753,9 @@ export function Mantenimiento() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [deleteRow, setDeleteRow] = useState<AnyRow | null>(null);
   const [deleteError, setDeleteError] = useState("");
+  const [roleModules, setRoleModules] = useState<RoleModuleOption[]>([]);
+  const [rolePermissions, setRolePermissions] = useState<string[]>([]);
+  const [rolePermissionsLoading, setRolePermissionsLoading] = useState(false);
 
   useEffect(() => {
     (window as any).__GL365_CURRENT_USER__ = {
@@ -755,6 +768,8 @@ export function Mantenimiento() {
   const primaryKey = schema?.primaryKey || "id";
   const isAuditTable = selectedTable?.name === "auditoria";
   const isUserTable = selectedTable?.name === "usuario" || selectedTable?.name === "usuarios";
+  const isRoleTable = ["role", "rol", "roles"].includes(String(selectedTable?.name || "").toLowerCase());
+  const hasSecurityAccess = canAccessModule(role, "seguridad", permissions);
   const formColumns = (schema?.columns || []).filter((column) => !column.auto && column.columnKey !== "PRI" && !column.readonly);
   const isFormFieldRequired = (column: ColumnDef, mode?: Mode | null) => {
     const tableName = String(selectedTable?.name || "").toLowerCase();
@@ -980,12 +995,12 @@ export function Mantenimiento() {
 
   const visibleTables = useMemo(() => {
     return (bootstrap.tables || []).filter((table) => {
-      if (table.adminOnly && role !== "gerencia" && role !== "administrador") return false;
+      if (table.adminOnly && !hasSecurityAccess) return false;
       const hayBusqueda = `${table.title} ${table.name} ${table.description} ${table.category}`.toLowerCase().includes(globalSearch.toLowerCase());
       const hayCategoria = categoryFilter === "Todas" || table.category === categoryFilter;
       return hayBusqueda && hayCategoria;
     });
-  }, [bootstrap.tables, globalSearch, categoryFilter, role]);
+  }, [bootstrap.tables, globalSearch, categoryFilter, hasSecurityAccess]);
 
   const sortedVisibleTables = useMemo(() => {
     const rows = [...visibleTables];
@@ -1124,6 +1139,185 @@ export function Mantenimiento() {
     if (selectedTable) await loadRecords(selectedTable.name, tableSearch);
   };
 
+  const isProtectedRole = (row: AnyRow = form) => {
+    const text = `${row?.codigo_rol || ""} ${row?.nombre_rol || ""}`
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+    return (
+      text.includes("gerencia") ||
+      text.includes("administrador") ||
+      text.includes("administracion") ||
+      String(row?.codigo_rol || "").toUpperCase() === "GER"
+    );
+  };
+
+  const loadRoleModules = async () => {
+    if (roleModules.length) return roleModules;
+
+    try {
+      const data = await apiRequest<RoleModuleOption[]>("/mantenimiento/modulos-acceso");
+      const rows = Array.isArray(data) ? data : [];
+      setRoleModules(rows);
+      return rows;
+    } catch (error: any) {
+      setNotice({
+        type: "error",
+        text:
+          error.message ||
+          "No se pudieron cargar los módulos de acceso. Ejecuta primero la migración SQL de permisos.",
+      });
+      return [];
+    }
+  };
+
+  const loadRolePermissions = async (roleId: any) => {
+    const id = Number(roleId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setRolePermissions([]);
+      return;
+    }
+
+    setRolePermissionsLoading(true);
+    try {
+      await loadRoleModules();
+      const data = await apiRequest<string[]>(`/mantenimiento/roles/${id}/permisos`);
+      setRolePermissions(
+        Array.isArray(data)
+          ? data.map((item) => String(item || "").toLowerCase()).filter(Boolean)
+          : []
+      );
+    } catch (error: any) {
+      setRolePermissions([]);
+      setNotice({
+        type: "error",
+        text: error.message || "No se pudieron cargar los accesos del rol.",
+      });
+    } finally {
+      setRolePermissionsLoading(false);
+    }
+  };
+
+  const toggleRolePermission = (code: string) => {
+    if (isProtectedRole()) return;
+
+    const normalized = String(code || "").toLowerCase();
+    setRolePermissions((prev) =>
+      prev.includes(normalized)
+        ? prev.filter((item) => item !== normalized)
+        : [...prev, normalized]
+    );
+  };
+
+  const renderRoleAccessPanel = (disabled = false) => {
+    if (!isRoleTable) return null;
+
+    const protectedRole = isProtectedRole();
+    const allCodes = roleModules.map((item) => String(item.codigo_modulo).toLowerCase());
+    const effectivePermissions = protectedRole ? allCodes : rolePermissions;
+    const allSelected =
+      allCodes.length > 0 && allCodes.every((code) => effectivePermissions.includes(code));
+
+    return (
+      <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-blue-50 to-white p-5">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.25em] text-[#FF6A00]">
+              Control de acceso
+            </p>
+            <h3 className="mt-1 text-lg font-black text-[#0C2D6B]">
+              Módulos permitidos para este rol
+            </h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Inicio está disponible para todo usuario autenticado. Selecciona los demás módulos que podrá utilizar.
+            </p>
+            {protectedRole && (
+              <p className="mt-2 text-xs font-bold text-indigo-700">
+                Gerencia/Administrador es un rol protegido y conserva acceso total para evitar bloquear la administración del sistema.
+              </p>
+            )}
+          </div>
+
+          {!disabled && !protectedRole && roleModules.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setRolePermissions(allSelected ? [] : allCodes)}
+              className="rounded-xl border border-[#0C2D6B]/20 bg-white px-4 py-2 text-xs font-black text-[#0C2D6B] shadow-sm transition hover:bg-blue-50"
+            >
+              {allSelected ? "Quitar todos" : "Seleccionar todos"}
+            </button>
+          )}
+        </div>
+
+        {rolePermissionsLoading ? (
+          <div className="flex items-center gap-2 rounded-2xl bg-white p-4 text-sm font-bold text-gray-500">
+            <Loader2 className="h-4 w-4 animate-spin text-[#0C2D6B]" />
+            Cargando accesos del rol...
+          </div>
+        ) : roleModules.length ? (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {roleModules.map((module) => {
+              const code = String(module.codigo_modulo).toLowerCase();
+              const checked = effectivePermissions.includes(code);
+              const Icon =
+                code === "crm" ? Users :
+                code === "operaciones" ? Layers3 :
+                ["logistica", "flota", "rutas"].includes(code) ? Truck :
+                code === "facturacion" ? FileText :
+                code === "reportes" ? Database :
+                code === "seguridad" ? Shield : Settings;
+
+              return (
+                <button
+                  key={module.id || code}
+                  type="button"
+                  disabled={disabled || protectedRole}
+                  onClick={() => toggleRolePermission(code)}
+                  className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition ${
+                    checked
+                      ? "border-[#0C2D6B] bg-[#0C2D6B] text-white shadow-md"
+                      : "border-gray-200 bg-white text-gray-700 hover:border-blue-300 hover:bg-blue-50"
+                  } disabled:cursor-default`}
+                >
+                  <span
+                    className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                      checked ? "bg-white/15 text-white" : "bg-blue-50 text-[#0C2D6B]"
+                    }`}
+                  >
+                    <Icon className="h-5 w-5" />
+                  </span>
+
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="font-black">{module.nombre_modulo}</span>
+                      <span
+                        className={`ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
+                          checked
+                            ? "border-white bg-white text-[#0C2D6B]"
+                            : "border-gray-300 bg-white"
+                        }`}
+                      >
+                        {checked && <CheckCircle2 className="h-4 w-4" />}
+                      </span>
+                    </span>
+                    <span className={`mt-1 block text-xs leading-5 ${checked ? "text-blue-100" : "text-gray-500"}`}>
+                      {module.descripcion || module.ruta || "Acceso al módulo."}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4 text-sm font-bold text-orange-700">
+            No se encontraron módulos de acceso. Ejecuta el script SQL de permisos y vuelve a actualizar.
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const openCreate = () => {
     if (!schema || isAuditTable) {
       setNotice({ type: "error", text: "Auditoría se genera automáticamente con las acciones del sistema. No se ingresa manualmente." });
@@ -1135,12 +1329,17 @@ export function Mantenimiento() {
     });
     setForm(next);
     setErrors({});
+    if (isRoleTable) {
+      setRolePermissions([]);
+      void loadRoleModules();
+    }
     setModalMode("create");
   };
 
   const openView = (row: AnyRow) => {
     setForm({ ...row });
     setErrors({});
+    if (isRoleTable) void loadRolePermissions(row[primaryKey]);
     setModalMode("view");
   };
 
@@ -1157,6 +1356,7 @@ export function Mantenimiento() {
     });
     setForm(next);
     setErrors({});
+    if (isRoleTable) void loadRolePermissions(row[primaryKey]);
     setModalMode("edit");
   };
 
@@ -1164,6 +1364,7 @@ export function Mantenimiento() {
     setModalMode(null);
     setForm({});
     setErrors({});
+    setRolePermissions([]);
   };
 
   const validateForm = () => {
@@ -1396,11 +1597,26 @@ export function Mantenimiento() {
         body: JSON.stringify(preparePayload()),
       });
 
+      if (isRoleTable) {
+        const savedRoleId = modalMode === "edit" ? id : result?.id;
+        if (!savedRoleId) throw new Error("El rol se guardó, pero no se pudo identificar su ID para asignar los accesos.");
+
+        await apiRequest(`/mantenimiento/roles/${savedRoleId}/permisos`, {
+          method: "PUT",
+          body: JSON.stringify({ permissions: rolePermissions }),
+        });
+
+        // Si se modificó el rol de la sesión actual, refresca el menú inmediatamente.
+        await refreshSession();
+      }
+
       setNotice({
         type: "success",
         text:
-          result?.message ||
-          (modalMode === "edit" ? "Registro actualizado correctamente." : "Registro creado correctamente."),
+          isRoleTable
+            ? (modalMode === "edit" ? "Rol y accesos actualizados correctamente." : "Rol y accesos creados correctamente.")
+            : result?.message ||
+              (modalMode === "edit" ? "Registro actualizado correctamente." : "Registro creado correctamente."),
       });
       closeModal();
       await loadRecords(selectedTable.name, tableSearch);
@@ -1568,7 +1784,7 @@ export function Mantenimiento() {
 
     try {
       const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-      const tablesToExport = (bootstrap.tables || []).filter((table) => !(table.adminOnly && role !== "gerencia" && role !== "administrador"));
+      const tablesToExport = (bootstrap.tables || []).filter((table) => !(table.adminOnly && !hasSecurityAccess));
 
       doc.setFont("helvetica", "bold");
       doc.setFontSize(18);
@@ -2202,6 +2418,8 @@ export function Mantenimiento() {
                     </div>
                   )}
 
+                  {isRoleTable && renderRoleAccessPanel(true)}
+
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                     {viewColumns.map((column) => (
                       <div key={column.name} className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
@@ -2212,8 +2430,11 @@ export function Mantenimiento() {
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {formColumns.map((column) => renderField(column, modalMode))}
+                <div className="space-y-5">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {formColumns.map((column) => renderField(column, modalMode))}
+                  </div>
+                  {isRoleTable && renderRoleAccessPanel(false)}
                 </div>
               )}
             </div>

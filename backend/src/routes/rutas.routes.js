@@ -1,7 +1,10 @@
 const express = require("express");
 const pool = require("../config/db");
+const { autorizarModulo } = require("../middleware/auth.middleware");
 
 const router = express.Router();
+
+router.use("/rutas", autorizarModulo("rutas"));
 
 const T = {
   ruta: "ruta",

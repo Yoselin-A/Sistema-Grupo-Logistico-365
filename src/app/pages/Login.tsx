@@ -60,7 +60,7 @@ function PasswordRule({ ok, text }: { ok: boolean; text: string }) {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { setRole, setUserName } = useAuth();
+  const { setRole, setUserName, setPermissions } = useAuth();
 
   const loginFormRef = useRef<HTMLFormElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
@@ -153,6 +153,7 @@ export default function Login() {
 
       localStorage.setItem("user", JSON.stringify(userData));
       setRole(userData.role);
+      setPermissions(Array.isArray(userData.permissions) ? userData.permissions : []);
       setUserName(userData.name);
 
       mostrarMensaje("success", `Bienvenido/a ${userData.name}`);

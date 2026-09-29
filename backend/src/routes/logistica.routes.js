@@ -1,7 +1,10 @@
 const express = require("express");
 const pool = require("../config/db");
+const { autorizarModulo } = require("../middleware/auth.middleware");
 
 const router = express.Router();
+
+router.use("/logistica", autorizarModulo("logistica"));
 
 const T = {
   cliente: "cliente",

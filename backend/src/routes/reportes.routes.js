@@ -1,7 +1,10 @@
 const express = require("express");
 const pool = require("../config/db");
+const { autorizarModulo } = require("../middleware/auth.middleware");
 
 const router = express.Router();
+
+router.use("/reportes", autorizarModulo("reportes"));
 
 const safeQuery = async (label, sql, params = []) => {
   try {

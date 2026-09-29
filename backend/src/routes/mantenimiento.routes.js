@@ -12,6 +12,56 @@ const isValidName = (value) => VALID_NAME.test(String(value || ""));
 
 const READ_ONLY_MAINTENANCE_TABLES = new Set(["auditoria"]);
 
+// Tablas internas usadas para el control de acceso. No se muestran como CRUD
+// genérico en Mantenimiento porque se administran desde el formulario de Roles.
+const HIDDEN_SYSTEM_TABLES = new Set(["modulo_sistema", "role_modulo"]);
+
+const SECURITY_TABLES = new Set([
+  "usuario",
+  "usuarios",
+  "role",
+  "rol",
+  "roles",
+  "solicitud_credencial",
+  "solicitudes_credenciales",
+  "auditoria",
+]);
+
+const hasPermission = (req, module) => {
+  const role = String(req.auth?.role || "").toLowerCase();
+  if (["gerencia", "administrador"].includes(role)) return true;
+
+  const permissions = Array.isArray(req.auth?.permissions)
+    ? req.auth.permissions.map((item) => String(item).toLowerCase())
+    : [];
+
+  return permissions.includes(String(module || "").toLowerCase());
+};
+
+const assertTablePermission = (req, table) => {
+  const tableName = String(table || "").toLowerCase();
+
+  if (SECURITY_TABLES.has(tableName)) {
+    if (!hasPermission(req, "seguridad")) {
+      const err = new Error("No tienes permiso de Seguridad para administrar esta tabla.");
+      err.status = 403;
+      throw err;
+    }
+    return;
+  }
+
+  if (!hasPermission(req, "mantenimiento")) {
+    const err = new Error("No tienes permiso de Mantenimiento para administrar esta tabla.");
+    err.status = 403;
+    throw err;
+  }
+};
+
+const canSeeMaintenanceTable = (req, table) =>
+  SECURITY_TABLES.has(String(table || "").toLowerCase())
+    ? hasPermission(req, "seguridad")
+    : hasPermission(req, "mantenimiento");
+
 const TABLE_META = {
 
   estado_cliente: { title: "Estados de cliente", category: "Catálogos", color: "blue", description: "Estados administrativos para clientes." },
@@ -152,6 +202,7 @@ async function getTables() {
   return rows
     .map((row) => row.name)
     .filter(Boolean)
+    .filter((name) => !HIDDEN_SYSTEM_TABLES.has(name))
     .sort((a, b) => {
       const oa = order.has(a) ? order.get(a) : 999;
       const ob = order.has(b) ? order.get(b) : 999;
@@ -635,6 +686,9 @@ async function getReferenceUsages(table, id) {
   const usages = [];
   for (const ref of refs) {
     if (!isValidName(ref.tableName) || !isValidName(ref.columnName)) continue;
+    // Las relaciones internas de permisos usan ON DELETE CASCADE y no deben
+    // impedir eliminar un rol cuando no está asignado a usuarios.
+    if (HIDDEN_SYSTEM_TABLES.has(String(ref.tableName))) continue;
     const [countRows] = await pool.query(
       `SELECT COUNT(*) AS total FROM ${q(ref.tableName)} WHERE ${q(ref.columnName)} = ?`,
       [id]
@@ -662,9 +716,169 @@ function sqlErrorMessage(error) {
   return error?.message || "Error interno del servidor.";
 }
 
+
+/* =========================================================
+   PERMISOS POR ROL
+========================================================= */
+const requireSecurityPermission = (req, res, next) => {
+  if (!hasPermission(req, "seguridad")) {
+    return res.status(403).json({
+      ok: false,
+      message: "No tienes permiso de Seguridad para administrar roles y accesos.",
+    });
+  }
+  next();
+};
+
+router.get("/modulos-acceso", requireSecurityPermission, async (_req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT id, codigo_modulo, nombre_modulo, descripcion, ruta, orden, activo
+      FROM modulo_sistema
+      WHERE activo = 1
+      ORDER BY orden, id
+    `);
+
+    return res.json({ ok: true, data: rows });
+  } catch (error) {
+    console.error("Error GET /mantenimiento/modulos-acceso:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "No se pudieron cargar los módulos de acceso. Ejecuta primero la migración de permisos.",
+      error: sqlErrorMessage(error),
+    });
+  }
+});
+
+router.get("/roles/:id/permisos", requireSecurityPermission, async (req, res) => {
+  try {
+    const roleId = Number(req.params.id);
+    if (!Number.isInteger(roleId) || roleId <= 0) {
+      return res.status(400).json({ ok: false, message: "ID de rol inválido." });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT m.codigo_modulo
+      FROM role_modulo rm
+      INNER JOIN modulo_sistema m ON m.id = rm.modulo_id
+      WHERE rm.role_id = ?
+        AND m.activo = 1
+      ORDER BY m.orden, m.id
+    `, [roleId]);
+
+    return res.json({
+      ok: true,
+      data: rows.map((row) => String(row.codigo_modulo || "").toLowerCase()).filter(Boolean),
+    });
+  } catch (error) {
+    console.error("Error GET permisos de rol:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "No se pudieron cargar los permisos del rol.",
+      error: sqlErrorMessage(error),
+    });
+  }
+});
+
+router.put("/roles/:id/permisos", requireSecurityPermission, async (req, res) => {
+  const connection = await pool.getConnection();
+
+  try {
+    const roleId = Number(req.params.id);
+    if (!Number.isInteger(roleId) || roleId <= 0) {
+      return res.status(400).json({ ok: false, message: "ID de rol inválido." });
+    }
+
+    const requested = Array.isArray(req.body?.permissions)
+      ? req.body.permissions.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)
+      : [];
+
+    await connection.beginTransaction();
+
+    const [[roleRow]] = await connection.query(
+      `SELECT id, codigo_rol, nombre_rol FROM role WHERE id = ? LIMIT 1`,
+      [roleId]
+    );
+
+    if (!roleRow) {
+      await connection.rollback();
+      return res.status(404).json({ ok: false, message: "El rol no existe." });
+    }
+
+    const roleText = `${roleRow.codigo_rol || ""} ${roleRow.nombre_rol || ""}`
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+    const protectedRole =
+      roleText.includes("gerencia") ||
+      roleText.includes("administrador") ||
+      roleText.includes("admin") ||
+      String(roleRow.codigo_rol || "").toUpperCase() === "GER";
+
+    const [modules] = await connection.query(`
+      SELECT id, codigo_modulo
+      FROM modulo_sistema
+      WHERE activo = 1
+      ORDER BY orden, id
+    `);
+
+    const validCodes = new Set(
+      modules.map((row) => String(row.codigo_modulo || "").toLowerCase())
+    );
+
+    const permissions = protectedRole
+      ? Array.from(validCodes)
+      : Array.from(new Set(requested.filter((code) => validCodes.has(code))));
+
+    await connection.query(`DELETE FROM role_modulo WHERE role_id = ?`, [roleId]);
+
+    if (permissions.length) {
+      const moduleByCode = new Map(
+        modules.map((row) => [String(row.codigo_modulo).toLowerCase(), Number(row.id)])
+      );
+
+      const values = permissions.map((code) => [roleId, moduleByCode.get(code)]);
+      await connection.query(
+        `INSERT INTO role_modulo (role_id, modulo_id) VALUES ?`,
+        [values]
+      );
+    }
+
+    await connection.commit();
+
+    await logAutomaticAudit(req, {
+      action: "editar",
+      table: "role",
+      recordId: roleId,
+      rowTitle: roleRow.nombre_rol || roleRow.codigo_rol || `Rol #${roleId}`,
+      fields: ["permisos_modulos"],
+    });
+
+    return res.json({
+      ok: true,
+      message: protectedRole
+        ? "Rol protegido actualizado con acceso total."
+        : "Accesos del rol actualizados correctamente.",
+      data: permissions,
+    });
+  } catch (error) {
+    try { await connection.rollback(); } catch {}
+    console.error("Error PUT permisos de rol:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "No se pudieron actualizar los accesos del rol.",
+      error: sqlErrorMessage(error),
+    });
+  } finally {
+    try { connection.release(); } catch {}
+  }
+});
+
 router.get("/bootstrap", async (req, res) => {
   try {
-    const tables = await getTables();
+    const allTables = await getTables();
+    const tables = allTables.filter((table) => canSeeMaintenanceTable(req, table));
     const tableData = [];
     const schemas = {};
     const options = {};
@@ -708,7 +922,7 @@ router.get("/bootstrap", async (req, res) => {
 
 router.get("/tablas", async (req, res) => {
   try {
-    const tables = await getTables();
+    const tables = (await getTables()).filter((table) => canSeeMaintenanceTable(req, table));
     const data = [];
     for (const table of tables) {
       const [countRows] = await pool.query(`SELECT COUNT(*) AS total FROM ${q(table)}`);
@@ -724,6 +938,7 @@ router.get("/tablas", async (req, res) => {
 router.get("/tablas/:tabla/columnas", async (req, res) => {
   try {
     const { tabla } = req.params;
+    assertTablePermission(req, tabla);
     const columns = await getColumns(tabla);
     const foreignKeys = await getForeignKeys(tabla);
     const uniqueIndexes = await getUniqueIndexes(tabla);
@@ -736,6 +951,7 @@ router.get("/tablas/:tabla/columnas", async (req, res) => {
 
 router.get("/opciones/:tabla", async (req, res) => {
   try {
+    assertTablePermission(req, req.params.tabla);
     const data = await getOptions(req.params.tabla, req.query.limit || 600);
     res.json({ ok: true, data });
   } catch (error) {
@@ -747,6 +963,7 @@ router.get("/opciones/:tabla", async (req, res) => {
 router.get("/tablas/:tabla/registros", async (req, res) => {
   try {
     const { tabla } = req.params;
+    assertTablePermission(req, tabla);
     const columns = await getColumns(tabla);
     const primaryKey = columns.find((c) => c.columnKey === "PRI")?.name || "id";
     const limit = cleanLimit(req.query.limit, 1000);
@@ -791,6 +1008,7 @@ router.get("/tablas/:tabla/registros", async (req, res) => {
 
 router.get("/tablas/:tabla/referencias/:id", async (req, res) => {
   try {
+    assertTablePermission(req, req.params.tabla);
     const usages = await getReferenceUsages(req.params.tabla, req.params.id);
     res.json({ ok: true, data: usages });
   } catch (error) {
@@ -802,6 +1020,7 @@ router.get("/tablas/:tabla/referencias/:id", async (req, res) => {
 router.post("/tablas/:tabla/registros", async (req, res) => {
   try {
     const { tabla } = req.params;
+    assertTablePermission(req, tabla);
 
     if (READ_ONLY_MAINTENANCE_TABLES.has(tabla)) {
       return res.status(403).json({
@@ -843,6 +1062,7 @@ async function updateRecord(req, res) {
 
   try {
     const { tabla, id } = req.params;
+    assertTablePermission(req, tabla);
 
     if (READ_ONLY_MAINTENANCE_TABLES.has(tabla)) {
       return res.status(403).json({
@@ -1018,6 +1238,7 @@ router.patch("/tablas/:tabla/registros/:id", updateRecord);
 router.delete("/tablas/:tabla/registros/:id", async (req, res) => {
   try {
     const { tabla, id } = req.params;
+    assertTablePermission(req, tabla);
 
     if (READ_ONLY_MAINTENANCE_TABLES.has(tabla)) {
       return res.status(403).json({
