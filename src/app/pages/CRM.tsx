@@ -6469,7 +6469,7 @@ export function CRM() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-[#0C2D6B]">CRM y Ventas</h1>
-          <p className="text-gray-500 mt-1">Gestión de clientes, contactos, oportunidades, cotizaciones y proveedores</p>
+          <p className="text-gray-500 mt-1">Gestión de clientes, contactos, oportunidades y cotizaciones</p>
         </div>
         <button onClick={reload} className="h-9 bg-[#0C2D6B] text-white px-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-[#143C8C] w-fit">
           <RefreshCw className="w-4 h-4" /> Actualizar
@@ -6490,7 +6490,6 @@ export function CRM() {
             ["seguimiento", "Oportunidades"],
             ["clientes", "Clientes"],
             ["cotizaciones", "Cotizaciones"],
-            ["proveedores", "Proveedores"],
           ].map(([id, label]) => (
             <button
               key={id}

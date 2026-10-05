@@ -14,9 +14,11 @@ import {
   Target,
   Building2,
   ClipboardList,
+  PackageOpen,
   Route,
   Globe2,
   MapPinned,
+  UserRound,
 } from "lucide-react";
 import { cn } from "../../utils/cn";
 import { useAuth } from "../../context/AuthContext";
@@ -43,11 +45,17 @@ export function Sidebar({ isOpen = false, onClose }: any) {
       location.pathname === "/rutas"
   );
 
+  const [openRecursos, setOpenRecursos] = useState(
+    location.pathname === "/flota" || location.pathname === "/pilotos" || (location.pathname === "/crm" && tabActual === "proveedores")
+  );
+
   const puedeModulo = (module: Parameters<typeof canAccessModule>[1]) =>
     canAccessModule(role, module, permissions);
 
   const puedeGrupoLogistica =
     puedeModulo("logistica") || puedeModulo("flota") || puedeModulo("rutas");
+
+  const puedeGrupoRecursos = puedeModulo("crm") || puedeModulo("flota");
 
   const cerrarEnMovil = () => {
     if (onClose) onClose();
@@ -62,12 +70,12 @@ export function Sidebar({ isOpen = false, onClose }: any) {
       setOpenOperaciones(true);
     }
 
-    if (
-      location.pathname === "/logistica" ||
-      location.pathname === "/flota" ||
-      location.pathname === "/rutas"
-    ) {
+    if (location.pathname === "/logistica" || location.pathname === "/rutas") {
       setOpenLogistica(true);
+    }
+
+    if (location.pathname === "/flota" || location.pathname === "/pilotos" || (location.pathname === "/crm" && tabActual === "proveedores")) {
+      setOpenRecursos(true);
     }
   }, [location.pathname]);
 
@@ -198,17 +206,6 @@ export function Sidebar({ isOpen = false, onClose }: any) {
                   <span>Cotizaciones</span>
                 </Link>
 
-                <Link
-                  to="/crm?tab=proveedores"
-                  onClick={cerrarEnMovil}
-                  className={submenuClass(
-                    "/crm",
-                    "proveedores"
-                  )}
-                >
-                  <ClipboardList className="w-4 h-4 shrink-0" />
-                  <span>Proveedores</span>
-                </Link>
               </div>
             )}
           </>
@@ -295,6 +292,47 @@ export function Sidebar({ isOpen = false, onClose }: any) {
           </>
         )}
 
+        {/* RECURSOS: Proveedores, Flota y Pilotos */}
+        {puedeGrupoRecursos && (
+          <>
+            <button
+              type="button"
+              onClick={() => setOpenRecursos(!openRecursos)}
+              className={parentButtonClass(
+                location.pathname === "/proveedores" ||
+                location.pathname === "/flota" ||
+                location.pathname === "/pilotos"
+              )}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <PackageOpen className="w-5 h-5 text-blue-200 shrink-0" />
+                <span className="truncate">Recursos</span>
+              </div>
+              <ChevronDown className={cn("w-4 h-4 text-blue-200 transition-transform", openRecursos && "rotate-180")} />
+            </button>
+
+            {openRecursos && (
+              <div className="flex flex-col">
+                {puedeModulo("crm") && (
+                  <Link to="/proveedores" onClick={cerrarEnMovil} className={submenuClass("/proveedores")}>
+                    <Building2 className="w-4 h-4 shrink-0"/><span>Proveedores</span>
+                  </Link>
+                )}
+                {puedeModulo("flota") && (
+                  <Link to="/flota" onClick={cerrarEnMovil} className={submenuClass("/flota")}>
+                    <Truck className="w-4 h-4 shrink-0"/><span>Flota</span>
+                  </Link>
+                )}
+                {puedeModulo("flota") && (
+                  <Link to="/pilotos" onClick={cerrarEnMovil} className={submenuClass("/pilotos")}>
+                    <UserRound className="w-4 h-4 shrink-0"/><span>Pilotos</span>
+                  </Link>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
         {/* LOGÍSTICA */}
         {puedeGrupoLogistica && (
           <>
@@ -305,7 +343,6 @@ export function Sidebar({ isOpen = false, onClose }: any) {
               }
               className={parentButtonClass(
                 location.pathname === "/logistica" ||
-                  location.pathname === "/flota" ||
                   location.pathname === "/rutas"
               )}
             >
@@ -337,16 +374,6 @@ export function Sidebar({ isOpen = false, onClose }: any) {
                   </Link>
                 )}
 
-                {puedeModulo("flota") && (
-                  <Link
-                    to="/flota"
-                    onClick={cerrarEnMovil}
-                    className={submenuClass("/flota")}
-                  >
-                    <ShoppingCart className="w-4 h-4 shrink-0" />
-                    <span>Flota</span>
-                  </Link>
-                )}
 
                 {puedeModulo("rutas") && (
                   <Link

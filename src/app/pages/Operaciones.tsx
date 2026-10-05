@@ -660,7 +660,7 @@ export function Operaciones() {
   const [closingErrors, setClosingErrors] = useState<Record<string, string>>({});
 
   const [deleteBox, setDeleteBox] = useState<AnyRow | null>(null);
-  const [quickModal, setQuickModal] = useState<{ open: boolean; type: "cliente" | "piloto" | "ruta" }>({ open: false, type: "cliente" });
+  const [quickModal, setQuickModal] = useState<{ open: boolean; type: "cliente" | "piloto" | "ruta" | "proveedor" | "vehiculo" }>({ open: false, type: "cliente" });
   const [quickTarget, setQuickTarget] = useState<{ batchIndex?: number; field?: string } | null>(null);
   const [quickForm, setQuickForm] = useState<AnyRow>({});
   const [quickError, setQuickError] = useState("");
@@ -1152,6 +1152,7 @@ export function Operaciones() {
     fecha_nacimiento_piloto: "",
     nit_piloto: "",
     empresa_transporte: "",
+    proveedor_transporte_id: "",
     nit_transportista: "",
     pais_transportista: "Guatemala",
     pais_transportista_otro: "",
@@ -1168,6 +1169,7 @@ export function Operaciones() {
     hora_posicionamiento: "08:00",
 
     unidad: "",
+    tc: "",
     dias_servicio: 1,
     estatus_operativo: "",
     estatus_seguimiento: type === "local" || type === "internacional"
@@ -1300,8 +1302,8 @@ export function Operaciones() {
       if (!form.pilotos_id) e.pilotos_id = "Selecciona o crea el piloto.";
       required("placa_piloto", "Ingresa la placa del piloto / unidad." );
       required("dpi_piloto", "Ingresa el DPI del piloto." );
-      if (!form.fecha_nacimiento_piloto) e.fecha_nacimiento_piloto = "Ingresa la fecha de nacimiento.";
-      required("nit_piloto", "Ingresa el NIT del piloto." );
+      // Fecha de nacimiento es opcional si la ficha histórica del piloto aún no la tiene.
+      // NIT del piloto es opcional si todavía no existe en su ficha maestra.
       required("empresa_transporte", "Ingresa el nombre del transporte." );
       required("nit_transportista", "Ingresa el NIT del transportista." );
       required("caat", "Ingresa el CAAT." );
@@ -1333,7 +1335,8 @@ export function Operaciones() {
       if (!form.ruta_id && !(String(form.origen || "").trim() && String(form.destino || "").trim())) e.ruta_id = "Selecciona o crea una ruta.";
       required("numero_economico", "Ingresa el número económico." );
       if (!form.fecha_carga) e.fecha_carga = "Ingresa la fecha de carga.";
-      required("unidad", "Ingresa la unidad." );
+      required("unidad", "Ingresa la placa del cabezal." );
+      required("tc", "Ingresa la placa TC del remolque o semirremolque." );
       required("tamano_equipo", "Ingresa el tamaño." );
       if (numeric(form.dias_servicio) <= 0) e.dias_servicio = "Ingresa los días de servicio.";
       const statuses = Array.isArray(form.estatus_seguimiento) ? form.estatus_seguimiento : [];
@@ -1371,6 +1374,7 @@ export function Operaciones() {
       fecha_nacimiento_piloto: source.fecha_nacimiento_piloto,
       nit_piloto: source.nit_piloto,
       empresa_transporte: source.empresa_transporte,
+      proveedor_transporte_id: source.proveedor_transporte_id,
       nit_transportista: source.nit_transportista,
       pais_transportista: source.pais_transportista,
       pais_transportista_otro: source.pais_transportista_otro,
@@ -1385,6 +1389,7 @@ export function Operaciones() {
       fecha_posicionamiento: source.fecha_posicionamiento,
       hora_posicionamiento: source.hora_posicionamiento,
       unidad: source.unidad,
+      tc: source.tc,
       dias_servicio: source.dias_servicio,
     };
 
@@ -1703,7 +1708,7 @@ export function Operaciones() {
     }
   };
 
-  const openQuickCreate = (type: "cliente" | "piloto" | "ruta", target: { batchIndex?: number; field?: string } | null = null) => {
+  const openQuickCreate = (type: "cliente" | "piloto" | "ruta" | "proveedor" | "vehiculo", target: { batchIndex?: number; field?: string } | null = null) => {
     setQuickError("");
     setQuickTarget(target);
     setQuickModal({ open: true, type });
@@ -1724,7 +1729,11 @@ export function Operaciones() {
             telefono3: "",
           }
         : type === "piloto"
-        ? { piloto: "", licencia: "" }
+        ? { piloto: "", licencia: "", dpi: "", nit: "", fecha_nacimiento: "" }
+        : type === "proveedor"
+        ? { razon_social: "", nombre_comercial: "", nit: "" }
+        : type === "vehiculo"
+        ? { placa: "", tipo: "" }
         : { codigo_ruta: "", origen: "", destino: "", km: "" }
     );
   };
@@ -1754,11 +1763,23 @@ export function Operaciones() {
         setQuickError("Ingresa origen y destino de la ruta.");
         return;
       }
+      if (quickModal.type === "proveedor" && (!String(quickForm.razon_social || quickForm.nombre_comercial || "").trim() || !String(quickForm.nit || "").trim())) {
+        setQuickError("Ingresa el nombre y NIT del proveedor de transporte.");
+        return;
+      }
+      if (quickModal.type === "vehiculo" && !String(quickForm.placa || "").trim()) {
+        setQuickError("Ingresa la placa del vehículo.");
+        return;
+      }
 
       const endpoint = quickModal.type === "cliente"
         ? "/clientes"
         : quickModal.type === "piloto"
         ? "/operaciones/catalogos/pilotos"
+        : quickModal.type === "proveedor"
+        ? "/operaciones/catalogos/proveedores"
+        : quickModal.type === "vehiculo"
+        ? "/operaciones/catalogos/vehiculos"
         : "/operaciones/catalogos/rutas";
 
       const created = await apiRequest<AnyRow>(endpoint, {
@@ -1782,7 +1803,14 @@ export function Operaciones() {
       } else if (quickModal.type === "cliente") {
         setForm((prev: AnyRow) => ({ ...prev, cliente_id: created.id }));
       } else if (quickModal.type === "piloto") {
-        setForm((prev: AnyRow) => ({ ...prev, pilotos_id: created.id, licencia: created.licencia || quickForm.licencia }));
+        setForm((prev: AnyRow) => ({ ...prev, pilotos_id: created.id, licencia: created.licencia || quickForm.licencia, dpi_piloto: created.dpi || quickForm.dpi || created.licencia || quickForm.licencia, nit_piloto: created.nit || quickForm.nit || "", fecha_nacimiento_piloto: date10(created.fecha_nacimiento || quickForm.fecha_nacimiento || "") }));
+      } else if (quickModal.type === "proveedor") {
+        const providerName = created.razon_social || created.nombre_comercial || quickForm.razon_social || quickForm.nombre_comercial;
+        const providerNit = created.nit || created.nit_proveedor || quickForm.nit || "";
+        setForm((prev: AnyRow) => ({ ...prev, proveedor_transporte_id: created.id, empresa_transporte: providerName, nit_transportista: providerNit }));
+      } else if (quickModal.type === "vehiculo") {
+        const target = quickTarget?.field || (modal.type === "fiduca" ? "placa_piloto" : modal.type === "internacional" ? "unidad" : "cabezal");
+        setForm((prev: AnyRow) => ({ ...prev, vehiculo_id: created.id, [target]: created.codigo || created.placa || quickForm.placa, tamano_equipo: created.tipo || created.nombre_tipo_vehiculo || quickForm.tipo || prev.tamano_equipo || "" }));
       } else {
         setForm((prev: AnyRow) => ({
           ...prev,
@@ -1796,7 +1824,7 @@ export function Operaciones() {
       setQuickTarget(null);
       setQuickModal({ open: false, type: quickModal.type });
       await loadData();
-      setNotice(`${quickModal.type === "cliente" ? "Cliente" : quickModal.type === "piloto" ? "Piloto" : "Ruta"} creado correctamente.`);
+      setNotice(`${quickModal.type === "cliente" ? "Cliente" : quickModal.type === "piloto" ? "Piloto" : quickModal.type === "proveedor" ? "Proveedor" : "Ruta"} creado correctamente.`);
       setTimeout(() => setNotice(""), 2200);
     } catch (error: any) {
       setQuickError(error.message || "No se pudo crear el registro.");
@@ -2165,7 +2193,7 @@ export function Operaciones() {
       doc.setTextColor(...navy);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(21);
-      doc.text("ASIGNACIONES", pageW / 2, 16, {
+      doc.text("ASIGNACIONES LOCALES", pageW / 2, 16, {
         align: "center",
       });
 
@@ -2337,10 +2365,21 @@ export function Operaciones() {
     }
 
     if (type === "fiduca") {
-      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      drawLogo(doc, 70, 8, 70, 34);
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pageW = doc.internal.pageSize.getWidth();
+      const blue = [12, 45, 107] as [number, number, number];
+      const lightBlue = [217, 229, 242] as [number, number, number];
       const pp = detail.pais_piloto === "Otro" ? detail.pais_piloto_otro : detail.pais_piloto;
       const pt = detail.pais_transportista === "Otro" ? detail.pais_transportista_otro : detail.pais_transportista;
+
+      // Encabezado uniforme: logo a la izquierda + título grande.
+      drawLogo(doc, 8, 3, 48, 27);
+      doc.setFillColor(...blue);
+      doc.rect(60, 0, pageW - 60, 33, "F");
+      textInCell(doc, "ASIGNACIÓN FYDUCA", 60, 0, pageW - 60, 33, {
+        center: true, color: [255, 255, 255], size: 20, bold: true
+      });
+
       const rowsPdf = [
         ["PILOTO", piloto], ["PLACA PILOTO", detail.placa_piloto || "-"], ["LICENCIA", license],
         ["PAÍS", pp || "-"], ["DPI", detail.dpi_piloto || "-"], ["FECHA DE NACIMIENTO", detail.fecha_nacimiento_piloto || "-"],
@@ -2348,11 +2387,23 @@ export function Operaciones() {
         ["NIT TRANSPORTISTA", detail.nit_transportista || "-"], ["PAÍS", pt || "-"], ["CAAT", detail.caat || "-"],
         ["NÚMERO ECONÓMICO", detail.numero_economico || "-"], ["FIANZA", detail.fianza || "N/A"], ["CÓDIGO ADUANERO", detail.codigo_aduanero || "N/A"],
       ];
-      let y = 48; const x = 18; const lw = 60; const vw = 114; const rh = 10;
-      rowsPdf.forEach((r, i) => {
-        const bg = i % 2 === 0 ? [217,229,242] : [255,255,255];
-        doc.setFillColor(...bg); doc.rect(x,y,lw+vw,rh,"F"); doc.setDrawColor(30,30,30); doc.rect(x,y,lw,rh); doc.rect(x+lw,y,vw,rh);
-        textInCell(doc,r[0],x,y,lw,rh,{bold:true,color:[35,74,115],size:8}); textInCell(doc,r[1],x+lw,y,vw,rh,{color:[35,74,115],size:8});
+      const x = 20;
+      const lw = 105;
+      const vw = pageW - 40 - lw;
+      const rh = 10;
+      let y = 38;
+
+      doc.setFillColor(...blue);
+      doc.rect(x, y, pageW - 40, 11, "F");
+      textInCell(doc, "DATOS FYDUCA", x, y, pageW - 40, 11, { center: true, color: [255,255,255], size: 14, bold: true });
+      y += 11;
+
+      rowsPdf.forEach((r) => {
+        doc.setFillColor(...lightBlue); doc.rect(x, y, lw, rh, "F");
+        doc.setFillColor(255,255,255); doc.rect(x + lw, y, vw, rh, "F");
+        doc.setDrawColor(...blue); doc.rect(x, y, lw, rh); doc.rect(x + lw, y, vw, rh);
+        textInCell(doc, r[0], x, y, lw, rh, { bold: true, color: blue, size: 9.5 });
+        textInCell(doc, r[1], x + lw, y, vw, rh, { center: true, color: [20,20,20], size: 9.5 });
         y += rh;
       });
       doc.save(`FYDUCA_${item.codigo_asignacion || item.id}.pdf`);
@@ -2362,11 +2413,13 @@ export function Operaciones() {
     if (type === "centroamerica") {
       const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
       const pageW = doc.internal.pageSize.getWidth();
-      drawLogo(doc, pageW/2 - 25, 5, 50, 25);
-      const orange = [255,153,61];
-      doc.setDrawColor(15,96,135); doc.rect(20,3,pageW-40,30);
-      doc.setFillColor(...orange); doc.rect(20,34,pageW-40,11,"F");
-      textInCell(doc,"DATOS DE EQUIPO",20,34,pageW-40,11,{center:true,size:14});
+      const orange = [205, 101, 24] as [number, number, number];
+      const lightOrange = [255, 224, 194] as [number, number, number];
+      drawLogo(doc, 8, 3, 48, 27);
+      doc.setFillColor(...orange); doc.rect(60,0,pageW-60,33,"F");
+      textInCell(doc,"ASIGNACIÓN CENTROAMÉRICA",60,0,pageW-60,33,{center:true,color:[255,255,255],size:20,bold:true});
+      doc.setFillColor(...orange); doc.rect(20,38,pageW-40,11,"F");
+      textInCell(doc,"DATOS DE EQUIPO",20,38,pageW-40,11,{center:true,color:[255,255,255],size:14,bold:true});
       const rowsPdf = [
         ["RUTA", detail.ruta_codigo || route?.codigo_ruta || rutaLabel(route)], ["NOMBRE DE PILOTO", piloto], ["LICENCIA", license],
         ["DPI", detail.dpi_piloto || "-"], ["PASAPORTE", detail.pasaporte || "N/A"], ["CABEZAL", detail.cabezal || veh?.codigo || "-"],
@@ -2374,8 +2427,8 @@ export function Operaciones() {
         ["TAMAÑO", detail.tamano_equipo || "-"], ["NOMBRE DE TRANSPORTE", detail.empresa_transporte || "-"],
         ["FECHA DE POSICIONAMIENTO", `${detail.fecha_posicionamiento || "-"}${detail.hora_posicionamiento ? ` ${detail.hora_posicionamiento}` : ""}`],
       ];
-      let y=45; const x=20; const lw=105; const vw=pageW-40-lw; const rh=10;
-      rowsPdf.forEach((r)=>{ doc.setFillColor(...orange); doc.rect(x,y,lw,rh,"F"); doc.setFillColor(255,255,255); doc.rect(x+lw,y,vw,rh,"F"); doc.setDrawColor(15,96,135); doc.rect(x,y,lw,rh); doc.rect(x+lw,y,vw,rh); textInCell(doc,r[0],x,y,lw,rh,{size:10}); textInCell(doc,r[1],x+lw,y,vw,rh,{center:true,size:10}); y+=rh; });
+      let y=49; const x=20; const lw=105; const vw=pageW-40-lw; const rh=10;
+      rowsPdf.forEach((r)=>{ doc.setFillColor(...lightOrange); doc.rect(x,y,lw,rh,"F"); doc.setFillColor(255,255,255); doc.rect(x+lw,y,vw,rh,"F"); doc.setDrawColor(...orange); doc.rect(x,y,lw,rh); doc.rect(x+lw,y,vw,rh); textInCell(doc,r[0],x,y,lw,rh,{bold:true,color:orange,size:10}); textInCell(doc,r[1],x+lw,y,vw,rh,{center:true,color:[20,20,20],size:10}); y+=rh; });
       doc.save(`Centroamerica_${item.codigo_asignacion || item.id}.pdf`);
       return;
     }
@@ -2385,12 +2438,13 @@ export function Operaciones() {
     const blue = [54,93,157]; const orange = [255,153,61];
     drawLogo(doc, 5, 4, 48, 26);
     doc.setFillColor(...blue); doc.rect(55,0,pageW-55,32,"F");
-    textInCell(doc,"ASIGNACIÓN UNIDAD Y PILOTO",55,0,pageW-55,32,{center:true,color:[255,255,255],size:18});
+    textInCell(doc,"ASIGNACIÓN INTERNACIONAL",55,0,pageW-55,32,{center:true,color:[255,255,255],size:18,bold:true});
     const top = [
       ["Cliente", cliente, "Origen", origin, "Destino", destination],
-      ["Piloto", piloto, "Licencia", license, "Unidad", detail.unidad || veh?.codigo || "-"],
-      ["CAAT", detail.caat || "-", "Número económico", detail.numero_economico || "-", "Tamaño", detail.tamano_equipo || "-"],
-      ["Nombre del Transporte", detail.empresa_transporte || "-", "Fecha de carga", `${date10(item.fecha_carga)} ${detail.hora_carga || ""}`.trim(), "Días de servicio", detail.dias_servicio || 1],
+      ["Piloto", piloto, "Licencia", license, "Placa", detail.unidad || veh?.codigo || "-"],
+      ["CAAT", detail.caat || "-", "Número económico", detail.numero_economico || "-", "TC", detail.tc || "-"],
+      ["Tamaño", detail.tamano_equipo || "-", "Nombre del Transporte", detail.empresa_transporte || "-", "Días de servicio", detail.dias_servicio || 1],
+      ["Fecha de carga", `${date10(item.fecha_carga)} ${detail.hora_carga || ""}`.trim(), "Origen", origin, "Destino", destination],
     ];
     let y=32; const widths=[55,67,41,55,34,45];
     top.forEach((r)=>{ let x=0; r.forEach((val:any,i:number)=>{ const label=i%2===0; doc.setFillColor(...(label?orange:[255,255,255])); doc.rect(x,y,widths[i],10,"F"); doc.setDrawColor(50,50,50); doc.rect(x,y,widths[i],10); textInCell(doc,val,x,y,widths[i],10,{size:8.5,bold:false}); x+=widths[i]; }); y+=10; });
@@ -2943,7 +2997,7 @@ export function Operaciones() {
                       : tab === "centroamerica"
                       ? "Ruta, piloto, licencia, cabezal..."
                       : tab === "internacional"
-                      ? "Cliente, piloto, CAAT, unidad, ruta..."
+                      ? "Cliente, piloto, CAAT, placa, TC, ruta..."
                       : "Cliente, piloto, placa, ruta, estatus..."
                   }
                   className="h-11 w-full rounded-xl border border-gray-200 pl-12 pr-4 text-sm outline-none focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/15"
@@ -3334,8 +3388,10 @@ export function Operaciones() {
           rutas={rutas}
           vehiculos={vehiculos}
           pilotos={pilotos}
+          proveedores={proveedores}
           estadosAsignacion={estadosAsignacion}
           getPiloto={getPiloto}
+          getProveedor={getProveedor}
           getVehiculo={getVehiculo}
           getRuta={getRuta}
           rutaLabel={rutaLabel}
@@ -3518,7 +3574,7 @@ function OperationalTypeTable({
 }
 
 function QuickCreateModal({ type, form, setForm, error, prefijos = [], onClose, onSave }: AnyRow) {
-  const title = type === "cliente" ? "Nuevo cliente" : type === "piloto" ? "Nuevo piloto" : "Nueva ruta";
+  const title = type === "cliente" ? "Nuevo cliente" : type === "piloto" ? "Nuevo piloto" : type === "proveedor" ? "Nuevo proveedor" : type === "vehiculo" ? "Nuevo vehículo" : "Nueva ruta";
   const phonePrefix = (field: string) => (
     <select value={form[field] || 1} onChange={(e) => setForm({ ...form, [field]: Number(e.target.value) })} className="h-10 w-[115px] rounded-lg border border-gray-300 bg-white px-2 text-sm">
       {(prefijos.length ? prefijos : [{ id: 1, prefijo: "+502", pais: "Guatemala" }]).map((p: AnyRow) => (
@@ -3566,7 +3622,23 @@ function QuickCreateModal({ type, form, setForm, error, prefijos = [], onClose, 
             </section>
           </>}
 
-          {type === "piloto" && <><Field label="Nombre completo *"><input value={form.piloto || ""} onChange={(e) => setForm({ ...form, piloto: e.target.value })} className={`${input} mt-1`} placeholder="Nombre y apellidos" /></Field><Field label="Licencia *"><input value={form.licencia || ""} onChange={(e) => setForm({ ...form, licencia: e.target.value })} className={`${input} mt-1`} placeholder="2610-54929-0201" /></Field></>}
+          {type === "piloto" && <>
+            <Field label="Nombre completo *"><input value={form.piloto || ""} onChange={(e) => setForm({ ...form, piloto: e.target.value })} className={`${input} mt-1`} placeholder="Nombre y apellidos" /></Field>
+            <Field label="Licencia *"><input value={form.licencia || ""} onChange={(e) => setForm({ ...form, licencia: e.target.value })} className={`${input} mt-1`} placeholder="2610-54929-0201" /></Field>
+            <Field label="DPI"><input value={form.dpi || ""} onChange={(e) => setForm({ ...form, dpi: onlyDigits(e.target.value, 13) })} className={`${input} mt-1`} maxLength={13} /></Field>
+            <Field label="NIT"><input value={form.nit || ""} onChange={(e) => setForm({ ...form, nit: onlyCode(e.target.value, 25) })} className={`${input} mt-1`} /></Field>
+            <Field label="Fecha de nacimiento"><input type="date" value={form.fecha_nacimiento || ""} onChange={(e) => setForm({ ...form, fecha_nacimiento: e.target.value })} className={`${input} mt-1`} /></Field>
+          </>}
+          {type === "proveedor" && <>
+            <Field label="Razón social / nombre *"><input value={form.razon_social || ""} onChange={(e) => setForm({ ...form, razon_social: e.target.value, nombre_comercial: e.target.value })} className={`${input} mt-1`} placeholder="Proveedor de transporte" /></Field>
+            <Field label="NIT *"><input value={form.nit || ""} onChange={(e) => setForm({ ...form, nit: onlyCode(e.target.value, 25) })} className={`${input} mt-1`} placeholder="NIT del proveedor" /></Field>
+          </>}
+
+          {type === "vehiculo" && <>
+            <Field label="Placa *"><input value={form.placa || ""} onChange={(e) => setForm({ ...form, placa: e.target.value.toUpperCase() })} className={`${input} mt-1`} placeholder="C-699BQT" /></Field>
+            <Field label="Tipo / tamaño"><input value={form.tipo || ""} onChange={(e) => setForm({ ...form, tipo: e.target.value })} className={`${input} mt-1`} placeholder="Cabezal / 26 pies / 10T" /></Field>
+          </>}
+
           {type === "ruta" && <><div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field label="Código de ruta"><input value={form.codigo_ruta || ""} onChange={(e) => setForm({ ...form, codigo_ruta: e.target.value.toUpperCase() })} className={`${input} mt-1`} placeholder="GT-SV / RUT-067" /></Field><Field label="Distancia km"><input inputMode="decimal" value={form.km || ""} onChange={(e) => setForm({ ...form, km: cleanNum(e.target.value) })} className={`${input} mt-1`} /></Field></div><Field label="Origen *"><input value={form.origen || ""} onChange={(e) => setForm({ ...form, origen: e.target.value })} className={`${input} mt-1`} /></Field><Field label="Destino *"><input value={form.destino || ""} onChange={(e) => setForm({ ...form, destino: e.target.value })} className={`${input} mt-1`} /></Field></>}
         </div>
         <div className="flex justify-end gap-2 border-t p-4"><button type="button" onClick={onClose} className="h-10 rounded-lg px-4 font-bold text-gray-600">Cancelar</button><button type="button" onClick={onSave} className="h-10 rounded-lg bg-[#FF6A00] px-5 font-bold text-white">Guardar {type === "cliente" ? "cliente" : type === "piloto" ? "piloto" : "ruta"}</button></div>
@@ -3648,8 +3720,10 @@ function AssignmentModal({
   rutas,
   vehiculos,
   pilotos,
+  proveedores,
   estadosAsignacion,
   getPiloto,
+  getProveedor,
   getVehiculo,
   getRuta,
   rutaLabel,
@@ -3667,7 +3741,18 @@ function AssignmentModal({
 
   const selectPilot = (id: any, item?: AnyRow) => {
     const selected = item || getPiloto(id);
-    setForm({ ...form, pilotos_id: id, licencia: selected?.licencia || "" });
+    const selectedLicense = selected?.licencia || selected?.numero_licencia || "";
+    const selectedDpi = selected?.dpi || selected?.dpi_piloto || selected?.documento_identificacion || selectedLicense || "";
+    const selectedBirth = date10(selected?.fecha_nacimiento || selected?.fecha_nacimiento_piloto || selected?.nacimiento || "");
+    const selectedNit = selected?.nit || selected?.nit_piloto || selected?.numero_nit || "";
+    setForm({
+      ...form,
+      pilotos_id: id,
+      licencia: selectedLicense,
+      dpi_piloto: selectedDpi || form.dpi_piloto || "",
+      fecha_nacimiento_piloto: selectedBirth || form.fecha_nacimiento_piloto || "",
+      nit_piloto: selectedNit || form.nit_piloto || "",
+    });
   };
 
   const selectRoute = (id: any, item?: AnyRow) => {
@@ -3683,11 +3768,13 @@ function AssignmentModal({
 
   const selectVehicle = (id: any, item: AnyRow | undefined, target: "placa_operativa" | "cabezal" | "unidad") => {
     const selected = item || getVehiculo(id);
+    const autoSize = selected?.tamano || selected?.tamaño || selected?.tamano_equipo || selected?.capacidad || selected?.tipo || selected?.nombre_tipo_vehiculo || "";
     setForm({
       ...form,
       vehiculo_id: id,
       [target]: selected?.codigo || selected?.placa || "",
       tipo: selected?.tipo || selected?.nombre_tipo_vehiculo || form.tipo || "",
+      tamano_equipo: autoSize || form.tamano_equipo || "",
     });
   };
 
@@ -3733,6 +3820,28 @@ function AssignmentModal({
     />
   );
 
+  const providerPicker = (
+    <SearchableSelect
+      items={proveedores || []}
+      value={form.proveedor_transporte_id || ""}
+      getLabel={(p: AnyRow) => `${p.razon_social || p.nombre_comercial || p.nombre || "Proveedor"}${(p.nit || p.nit_proveedor) ? ` · NIT ${p.nit || p.nit_proveedor}` : ""}`}
+      onChange={(id, item) => {
+        const selected = item || getProveedor?.(id);
+        setForm({
+          ...form,
+          proveedor_transporte_id: id,
+          empresa_transporte: selected?.razon_social || selected?.nombre_comercial || selected?.nombre || "",
+          nit_transportista: selected?.nit || selected?.nit_proveedor || selected?.numero_nit || "",
+        });
+      }}
+      disabled={readonly}
+      placeholder="Buscar proveedor de transporte..."
+      emptyText="No se encontró ese proveedor"
+      onNew={() => onQuickCreate("proveedor")}
+      newLabel="Nuevo proveedor"
+    />
+  );
+
   const vehiclePicker = (target: "placa_operativa" | "cabezal" | "unidad", placeholder = "Buscar placa / unidad...") => (
     <SearchableSelect
       items={vehiculos}
@@ -3742,6 +3851,8 @@ function AssignmentModal({
       disabled={readonly}
       placeholder={placeholder}
       emptyText="No se encontró esa unidad"
+      onNew={() => onQuickCreate("vehiculo", { field: target })}
+      newLabel="Nuevo vehículo"
     />
   );
 
@@ -3794,14 +3905,14 @@ function AssignmentModal({
               <h3 className="border-b pb-3 font-bold text-[#0C2D6B]">Expediente FYDUCA</h3>
               <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                 <Field label="Piloto *" className="lg:col-span-2">{pilotPicker}<ErrorText text={errors.pilotos_id} /></Field>
-                <Field label="Placa piloto *"><input disabled={readonly} value={form.placa_piloto || ""} onChange={(e) => setForm({ ...form, placa_piloto: e.target.value.toUpperCase() })} className={`${input} mt-1`} placeholder="C-699 BQT" /><ErrorText text={errors.placa_piloto} /></Field>
+                <Field label="Placa / vehículo *">{vehiclePicker("placa_piloto", "Buscar placa del vehículo...")}<ErrorText text={errors.placa_piloto} /></Field>
                 <Field label="Licencia"><input readOnly value={form.licencia || pilot?.licencia || ""} className={`${input} mt-1 bg-gray-100`} /></Field>
                 <Field label="País del piloto"><CountryPicker disabled={readonly} value={form.pais_piloto || "Guatemala"} otherValue={form.pais_piloto_otro} onChange={(value) => setForm({ ...form, pais_piloto: value })} onOtherChange={(value) => setForm({ ...form, pais_piloto_otro: value })} /></Field>
-                <Field label="DPI *"><input disabled={readonly} value={form.dpi_piloto || ""} onChange={(e) => setForm({ ...form, dpi_piloto: onlyDigits(e.target.value, 13) })} inputMode="numeric" pattern="[0-9]*" maxLength={13} className={`${input} mt-1`} /><ErrorText text={errors.dpi_piloto} /></Field>
-                <Field label="Fecha de nacimiento *"><input type="date" disabled={readonly} value={form.fecha_nacimiento_piloto || ""} onChange={(e) => setForm({ ...form, fecha_nacimiento_piloto: e.target.value })} className={`${input} mt-1`} /><ErrorText text={errors.fecha_nacimiento_piloto} /></Field>
-                <Field label="NIT piloto *"><input disabled={readonly} value={form.nit_piloto || ""} onChange={(e) => setForm({ ...form, nit_piloto: onlyCode(e.target.value, 25) })} className={`${input} mt-1`} /><ErrorText text={errors.nit_piloto} /></Field>
-                <Field label="Transportes *" className="lg:col-span-2"><input disabled={readonly} value={form.empresa_transporte || ""} onChange={(e) => setForm({ ...form, empresa_transporte: e.target.value })} className={`${input} mt-1`} placeholder="Nombre de quien presta el transporte" /><ErrorText text={errors.empresa_transporte} /></Field>
-                <Field label="NIT transportista *"><input disabled={readonly} value={form.nit_transportista || ""} onChange={(e) => setForm({ ...form, nit_transportista: onlyCode(e.target.value, 25) })} className={`${input} mt-1`} /><ErrorText text={errors.nit_transportista} /></Field>
+                <Field label="DPI *"><input readOnly value={form.dpi_piloto || pilot?.dpi || pilot?.licencia || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.dpi_piloto} /></Field>
+                <Field label="Fecha de nacimiento *"><input type="date" readOnly value={form.fecha_nacimiento_piloto || date10(pilot?.fecha_nacimiento) || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.fecha_nacimiento_piloto} /></Field>
+                <Field label="NIT piloto *"><input readOnly value={form.nit_piloto || pilot?.nit || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.nit_piloto} /></Field>
+                <Field label="Transportes / proveedor *" className="lg:col-span-2">{providerPicker}<ErrorText text={errors.empresa_transporte} /></Field>
+                <Field label="NIT transportista *"><input readOnly value={form.nit_transportista || ""} className={`${input} mt-1 bg-gray-100`} placeholder="Se completa con el proveedor" /><ErrorText text={errors.nit_transportista} /></Field>
                 <Field label="País transportista"><CountryPicker disabled={readonly} value={form.pais_transportista || "Guatemala"} otherValue={form.pais_transportista_otro} onChange={(value) => setForm({ ...form, pais_transportista: value })} onOtherChange={(value) => setForm({ ...form, pais_transportista_otro: value })} /></Field>
                 <Field label="CAAT *"><input disabled={readonly} value={form.caat || ""} onChange={(e) => setForm({ ...form, caat: e.target.value.toUpperCase() })} className={`${input} mt-1`} /><ErrorText text={errors.caat} /></Field>
                 <Field label="Número económico *"><input disabled={readonly} value={form.numero_economico || ""} onChange={(e) => setForm({ ...form, numero_economico: e.target.value.toUpperCase() })} className={`${input} mt-1`} /><ErrorText text={errors.numero_economico} /></Field>
@@ -3819,14 +3930,14 @@ function AssignmentModal({
                 <Field label="Código de ruta"><input readOnly value={form.ruta_codigo || selectedRoute?.codigo_ruta || ""} className={`${input} mt-1 bg-gray-100`} /></Field>
                 <Field label="Nombre del piloto *" className="lg:col-span-2">{pilotPicker}<ErrorText text={errors.pilotos_id} /></Field>
                 <Field label="Licencia *"><input readOnly value={form.licencia || pilot?.licencia || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.licencia} /></Field>
-                <Field label="DPI *"><input disabled={readonly} value={form.dpi_piloto || ""} onChange={(e) => setForm({ ...form, dpi_piloto: onlyDigits(e.target.value, 13) })} inputMode="numeric" pattern="[0-9]*" maxLength={13} className={`${input} mt-1`} /><ErrorText text={errors.dpi_piloto} /></Field>
+                <Field label="DPI *"><input readOnly value={form.dpi_piloto || pilot?.dpi || pilot?.licencia || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.dpi_piloto} /></Field>
                 <Field label="Pasaporte *"><TextWithNA disabled={readonly} value={form.pasaporte} onChange={(value) => setForm({ ...form, pasaporte: value })} upper /><ErrorText text={errors.pasaporte} /></Field>
                 <Field label="Cabezal / placa *">{vehiclePicker("cabezal", "Buscar otra placa / cabezal...")}<ErrorText text={errors.cabezal} /></Field>
                 <Field label="Furgón *"><TextWithNA disabled={readonly} value={form.furgon} onChange={(value) => setForm({ ...form, furgon: value })} upper /><ErrorText text={errors.furgon} /></Field>
                 <Field label="Código *"><TextWithNA disabled={readonly} value={form.codigo_equipo} onChange={(value) => setForm({ ...form, codigo_equipo: value })} upper /><ErrorText text={errors.codigo_equipo} /></Field>
                 <Field label="Fianza *"><TextWithNA disabled={readonly} value={form.fianza} onChange={(value) => setForm({ ...form, fianza: value })} upper /><ErrorText text={errors.fianza} /></Field>
                 <Field label="Tamaño *"><input disabled={readonly} value={form.tamano_equipo || ""} onChange={(e) => setForm({ ...form, tamano_equipo: e.target.value })} className={`${input} mt-1`} placeholder="Plataforma / 26 pies / 10T" /><ErrorText text={errors.tamano_equipo} /></Field>
-                <Field label="Nombre de transporte *" className="lg:col-span-2"><input disabled={readonly} value={form.empresa_transporte || ""} onChange={(e) => setForm({ ...form, empresa_transporte: e.target.value })} className={`${input} mt-1`} /><ErrorText text={errors.empresa_transporte} /></Field>
+                <Field label="Nombre de transporte / proveedor *" className="lg:col-span-2">{providerPicker}<ErrorText text={errors.empresa_transporte} /></Field>
                 <Field label="Fecha de posicionamiento *"><div className="mt-1 grid grid-cols-[1fr_120px] gap-2"><input type="date" disabled={readonly} value={form.fecha_posicionamiento || ""} onChange={(e) => setForm({ ...form, fecha_posicionamiento: e.target.value })} className={input} /><input type="time" disabled={readonly} value={form.hora_posicionamiento || ""} onChange={(e) => setForm({ ...form, hora_posicionamiento: e.target.value })} className={input} /></div><ErrorText text={errors.fecha_posicionamiento} /></Field>
               </div>
             </section>
@@ -3835,19 +3946,20 @@ function AssignmentModal({
           {type === "internacional" && (
             <>
               <section className="rounded-xl border bg-white p-4">
-                <h3 className="border-b pb-3 font-bold text-[#0C2D6B]">Asignación unidad y piloto · Internacional</h3>
+                <h3 className="border-b pb-3 font-bold text-[#0C2D6B]">Asignación Internacional</h3>
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                   <Field label="Cliente *" className="lg:col-span-2">{clientPicker}<ErrorText text={errors.cliente_id} /></Field>
                   <Field label="Piloto *" className="lg:col-span-2">{pilotPicker}<ErrorText text={errors.pilotos_id} /></Field>
                   <Field label="Licencia"><input readOnly value={form.licencia || pilot?.licencia || ""} className={`${input} mt-1 bg-gray-100`} /></Field>
                   <Field label="CAAT *"><input disabled={readonly} value={form.caat || ""} onChange={(e) => setForm({ ...form, caat: e.target.value.toUpperCase() })} className={`${input} mt-1`} /><ErrorText text={errors.caat} /></Field>
-                  <Field label="Nombre de transporte *" className="lg:col-span-2"><input disabled={readonly} value={form.empresa_transporte || ""} onChange={(e) => setForm({ ...form, empresa_transporte: e.target.value })} className={`${input} mt-1`} /><ErrorText text={errors.empresa_transporte} /></Field>
+                  <Field label="Nombre de transporte / proveedor *" className="lg:col-span-2">{providerPicker}<ErrorText text={errors.empresa_transporte} /></Field>
                   <Field label="Buscar ruta *" className="lg:col-span-3">{routePicker}<ErrorText text={errors.ruta_id} /></Field>
                   <Field label="Origen"><input disabled={readonly} value={form.origen || selectedRoute?.origen || ""} onChange={(e) => setForm({ ...form, origen: e.target.value })} className={`${input} mt-1`} /></Field>
                   <Field label="Destino"><input disabled={readonly} value={form.destino || selectedRoute?.destino || ""} onChange={(e) => setForm({ ...form, destino: e.target.value })} className={`${input} mt-1`} /></Field>
                   <Field label="Número económico *"><input disabled={readonly} value={form.numero_economico || ""} onChange={(e) => setForm({ ...form, numero_economico: e.target.value.toUpperCase() })} className={`${input} mt-1`} /><ErrorText text={errors.numero_economico} /></Field>
                   <Field label="Fecha de carga *"><div className="mt-1 grid grid-cols-[1fr_120px] gap-2"><input type="date" disabled={readonly} value={form.fecha_carga || ""} onChange={(e) => setForm({ ...form, fecha_carga: e.target.value })} className={input} /><input type="time" disabled={readonly} value={form.hora_carga || ""} onChange={(e) => setForm({ ...form, hora_carga: e.target.value })} className={input} /></div><ErrorText text={errors.fecha_carga} /></Field>
-                  <Field label="Unidad *">{vehiclePicker("unidad", "Buscar otra unidad...")}<ErrorText text={errors.unidad} /></Field>
+                  <Field label="Placa *">{vehiclePicker("unidad", "Buscar placa del cabezal...")}<ErrorText text={errors.unidad} /></Field>
+                  <Field label="TC *"><input disabled={readonly} value={form.tc || ""} onChange={(e) => setForm({ ...form, tc: e.target.value.toUpperCase() })} className={`${input} mt-1`} placeholder="Placa del remolque / semirremolque" /><ErrorText text={errors.tc} /></Field>
                   <Field label="Tamaño *"><input disabled={readonly} value={form.tamano_equipo || ""} onChange={(e) => setForm({ ...form, tamano_equipo: e.target.value })} className={`${input} mt-1`} placeholder="26 pies / 10T / Plataforma" /><ErrorText text={errors.tamano_equipo} /></Field>
                   <Field label="Días de servicio *"><input type="number" min={1} disabled={readonly} value={form.dias_servicio || 1} onChange={(e) => setForm({ ...form, dias_servicio: Number(e.target.value) })} className={`${input} mt-1`} /><ErrorText text={errors.dias_servicio} /></Field>
                 </div>

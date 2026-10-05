@@ -42,10 +42,28 @@ interface EstadoMantenimiento {
   nombre_estado_mantenimiento: string;
 }
 
+type QuickProviderForm = {
+  razon_social: string;
+  nombre_comercial: string;
+  nit: string;
+  correo: string;
+  telefono: string;
+};
+
+interface Proveedor {
+  id: number;
+  codigo_proveedor: string;
+  razon_social: string;
+  nombre_comercial?: string | null;
+  nit?: string | null;
+  estado_id?: number | null;
+}
+
 interface Vehiculo {
   id: number;
   codigo: string;
   tipo_id: number | null;
+  proveedor_id: number | null;
   estado_id: number | null;
   eficiencia: number | null;
   kilometraje: number | string | null;
@@ -54,6 +72,11 @@ interface Vehiculo {
   proximo_mantenimiento: string | null;
 
   tipo?: string;
+  proveedor?: string;
+  proveedor_codigo?: string;
+  proveedor_razon_social?: string;
+  proveedor_nombre_comercial?: string;
+  proveedor_nit?: string;
   estado?: string;
   mantenimiento?: string;
 
@@ -540,12 +563,14 @@ export function Flota() {
   const [maintenanceErrors, setMaintenanceErrors] = useState<FormErrors>({});
 
   const [tiposVehiculo, setTiposVehiculo] = useState<TipoVehiculo[]>([]);
+  const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [estadosVehiculo, setEstadosVehiculo] = useState<EstadoVehiculo[]>([]);
   const [estadosMantenimiento, setEstadosMantenimiento] = useState<EstadoMantenimiento[]>([]);
   const [vehiculos, setVehiculos] = useState<Vehiculo[]>([]);
 
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState("Todos");
+  const [filterProveedor, setFilterProveedor] = useState("Todos");
   const [filterMantenimiento, setFilterMantenimiento] = useState("Todos");
   const [sortField, setSortField] = useState("");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -565,6 +590,7 @@ export function Flota() {
       const data = await apiRequest("/flota/bootstrap");
 
       setTiposVehiculo(asArray<TipoVehiculo>(data.tiposVehiculo));
+      setProveedores(asArray<Proveedor>(data.proveedores));
       setEstadosVehiculo(asArray<EstadoVehiculo>(data.estadosVehiculo));
       setEstadosMantenimiento(asArray<EstadoMantenimiento>(data.estadosMantenimiento));
       setVehiculos(asArray<Vehiculo>(data.vehiculos));
@@ -618,6 +644,14 @@ export function Flota() {
   const nombreTipo = (id?: number | null) =>
     tiposVehiculo.find((item) => Number(item.id) === Number(id))?.nombre_tipo_vehiculo || "Sin tipo";
 
+  const nombreProveedor = (id?: number | null) => {
+    const proveedor = proveedores.find((item) => Number(item.id) === Number(id));
+    return proveedor?.nombre_comercial?.trim() || proveedor?.razon_social || "Sin proveedor";
+  };
+
+  const nitProveedor = (id?: number | null) =>
+    proveedores.find((item) => Number(item.id) === Number(id))?.nit || "-";
+
   const nombreEstado = (id?: number | null) =>
     estadosVehiculo.find((item) => Number(item.id) === Number(id))?.nombre_estado_vehiculo || "Sin estado";
 
@@ -650,24 +684,37 @@ export function Flota() {
 
     return vehiculos.filter((vehiculo) => {
       const tipo = vehiculo.tipo || nombreTipo(vehiculo.tipo_id);
+      const proveedor = vehiculo.proveedor || nombreProveedor(vehiculo.proveedor_id);
       const estado = vehiculo.estado || nombreEstado(vehiculo.estado_id);
       const mantenimiento =
         vehiculo.mantenimiento || nombreMantenimiento(vehiculo.estado_mantenimiento_id || vehiculo.estados_mantenimiento_id);
 
       const matchText =
         !term ||
-        `${vehiculo.codigo} ${tipo} ${estado} ${mantenimiento}`
+        `${vehiculo.codigo} ${tipo} ${proveedor} ${vehiculo.proveedor_nit || ""} ${estado} ${mantenimiento}`
           .toLowerCase()
           .includes(term);
 
       const matchEstado = filterEstado === "Todos" || Number(vehiculo.estado_id) === Number(filterEstado);
+      const matchProveedor =
+        filterProveedor === "Todos" || Number(vehiculo.proveedor_id) === Number(filterProveedor);
       const matchMantenimiento =
         filterMantenimiento === "Todos" ||
         Number(vehiculo.estado_mantenimiento_id || vehiculo.estados_mantenimiento_id) === Number(filterMantenimiento);
 
-      return matchText && matchEstado && matchMantenimiento;
+      return matchText && matchEstado && matchProveedor && matchMantenimiento;
     });
-  }, [vehiculos, search, filterEstado, filterMantenimiento, tiposVehiculo, estadosVehiculo, estadosMantenimiento]);
+  }, [
+    vehiculos,
+    search,
+    filterEstado,
+    filterProveedor,
+    filterMantenimiento,
+    tiposVehiculo,
+    proveedores,
+    estadosVehiculo,
+    estadosMantenimiento,
+  ]);
 
   const sortedVehiculos = useMemo(() => {
     const rows = [...filteredVehiculos];
@@ -675,6 +722,8 @@ export function Flota() {
     rows.sort((a, b) => {
       const tipoA = a.tipo || nombreTipo(a.tipo_id);
       const tipoB = b.tipo || nombreTipo(b.tipo_id);
+      const proveedorA = a.proveedor || nombreProveedor(a.proveedor_id);
+      const proveedorB = b.proveedor || nombreProveedor(b.proveedor_id);
       const estadoA = a.estado || nombreEstado(a.estado_id);
       const estadoB = b.estado || nombreEstado(b.estado_id);
       const mantenimientoA =
@@ -685,6 +734,7 @@ export function Flota() {
       const av =
         sortField === "codigo" ? a.codigo :
         sortField === "tipo" ? tipoA :
+        sortField === "proveedor" ? proveedorA :
         sortField === "estado" ? estadoA :
         sortField === "eficiencia" ? numeric(a.eficiencia) :
         sortField === "kilometraje" ? numeric(a.kilometraje) :
@@ -695,6 +745,7 @@ export function Flota() {
       const bv =
         sortField === "codigo" ? b.codigo :
         sortField === "tipo" ? tipoB :
+        sortField === "proveedor" ? proveedorB :
         sortField === "estado" ? estadoB :
         sortField === "eficiencia" ? numeric(b.eficiencia) :
         sortField === "kilometraje" ? numeric(b.kilometraje) :
@@ -706,7 +757,7 @@ export function Flota() {
     });
 
     return rows;
-  }, [filteredVehiculos, sortField, sortDirection, tiposVehiculo, estadosVehiculo, estadosMantenimiento]);
+  }, [filteredVehiculos, sortField, sortDirection, tiposVehiculo, proveedores, estadosVehiculo, estadosMantenimiento]);
 
 
   const totalPages = Math.max(1, Math.ceil(sortedVehiculos.length / pageSize));
@@ -719,7 +770,7 @@ export function Flota() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, filterEstado, filterMantenimiento, sortField, sortDirection, pageSize]);
+  }, [search, filterEstado, filterProveedor, filterMantenimiento, sortField, sortDirection, pageSize]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -790,12 +841,50 @@ export function Flota() {
     },
   ];
 
+  const createQuickProvider = async (form: QuickProviderForm): Promise<number> => {
+    const razonSocial = form.razon_social.trim();
+    const nombreComercial = form.nombre_comercial.trim();
+    const nit = form.nit.trim();
+    const correo = form.correo.trim();
+    const telefono = form.telefono.trim();
+
+    if (!razonSocial) throw new Error("Ingresa la razón social del proveedor.");
+    if (!nit) throw new Error("Ingresa el NIT del proveedor.");
+
+    if (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
+      throw new Error("El correo del proveedor no es válido.");
+    }
+
+    const result = await apiRequest("/proveedores", {
+      method: "POST",
+      body: JSON.stringify({
+        razon_social: razonSocial,
+        nombre_comercial: nombreComercial || razonSocial,
+        nit,
+        correo: correo || null,
+        telefono: telefono || null,
+        estado_id: 1,
+      }),
+    });
+
+    const id = Number(result?.id || result?.proveedor_id || result?.proveedor?.id);
+
+    if (!id) {
+      throw new Error("El proveedor se guardó, pero no se recibió su identificador.");
+    }
+
+    await load();
+    showNotice("Proveedor creado y seleccionado correctamente.");
+    return id;
+  };
+
   const openNuevo = () => {
     setErrors({});
     setSelected({
       id: 0,
       codigo: "",
       tipo_id: tiposVehiculo[0]?.id || null,
+      proveedor_id: null,
       estado_id: disponibleId,
       eficiencia: 80,
       kilometraje: "",
@@ -835,6 +924,7 @@ export function Flota() {
     }
 
     if (!selected.tipo_id) nextErrors.tipo_id = "Selecciona el tipo de vehículo.";
+    if (!selected.proveedor_id) nextErrors.proveedor_id = "Selecciona el proveedor propietario.";
     if (!selected.estado_id) nextErrors.estado_id = "Selecciona el estado.";
 
     if (selected.eficiencia === null || selected.eficiencia === undefined || selected.eficiencia === "") {
@@ -871,6 +961,7 @@ export function Flota() {
       const payload = {
         placa: cleanCode(selected.codigo || ""),
         tipo_id: selected.tipo_id,
+        proveedor_id: selected.proveedor_id,
         estado_id: selected.estado_id,
         eficiencia: numeric(selected.eficiencia),
         kilometraje: numeric(selected.kilometraje),
@@ -1021,6 +1112,8 @@ export function Flota() {
 
     line("Placa", vehiculo.codigo);
     line("Tipo", tipo);
+    line("Proveedor propietario", vehiculo.proveedor || nombreProveedor(vehiculo.proveedor_id));
+    line("NIT proveedor", vehiculo.proveedor_nit || nitProveedor(vehiculo.proveedor_id));
     line("Estado", estado);
     line("Eficiencia", `${vehiculo.eficiencia || 0}%`);
     line("Kilometraje", `${formatKm(vehiculo.kilometraje)} km`);
@@ -1053,6 +1146,7 @@ export function Flota() {
   const clearFilters = () => {
     setSearch("");
     setFilterEstado("Todos");
+    setFilterProveedor("Todos");
     setFilterMantenimiento("Todos");
     setSortField("");
     setSortDirection("asc");
@@ -1068,6 +1162,8 @@ export function Flota() {
       return {
         Placa: vehiculo.codigo,
         Tipo: tipo,
+        "Proveedor propietario": vehiculo.proveedor || nombreProveedor(vehiculo.proveedor_id),
+        "NIT proveedor": vehiculo.proveedor_nit || nitProveedor(vehiculo.proveedor_id),
         Estado: estado,
         Eficiencia: `${numeric(vehiculo.eficiencia)}%`,
         Kilometraje: numeric(vehiculo.kilometraje),
@@ -1124,7 +1220,7 @@ export function Flota() {
       58
     );
 
-    const columns = ["Placa", "Tipo", "Estado", "Eficiencia", "Kilometraje", "Mantenimiento", "Próximo"];
+    const columns = ["Placa", "Tipo", "Proveedor", "Estado", "Efic.", "Kilometraje", "Mantenimiento", "Próximo"];
     const rows = sortedVehiculos.map((vehiculo) => {
       const tipo = vehiculo.tipo || nombreTipo(vehiculo.tipo_id);
       const estado = vehiculo.estado || nombreEstado(vehiculo.estado_id);
@@ -1134,6 +1230,7 @@ export function Flota() {
       return [
         vehiculo.codigo || "-",
         tipo,
+        vehiculo.proveedor || nombreProveedor(vehiculo.proveedor_id),
         estado,
         `${numeric(vehiculo.eficiencia)}%`,
         `${formatKm(vehiculo.kilometraje)} km`,
@@ -1142,7 +1239,7 @@ export function Flota() {
       ];
     });
 
-    const widths = [34, 45, 34, 28, 34, 45, 32];
+    const widths = [28, 34, 48, 28, 20, 28, 42, 28];
     let y = 68;
 
     const drawTableHeader = () => {
@@ -1180,7 +1277,11 @@ export function Flota() {
 
       let x = 18;
       row.forEach((value, index) => {
-        doc.text(String(value).slice(0, index === 1 || index === 5 ? 30 : 18), x, y + 2);
+        doc.text(
+          String(value).slice(0, index === 1 || index === 2 || index === 6 ? 28 : 16),
+          x,
+          y + 2
+        );
         x += widths[index];
       });
 
@@ -1382,13 +1483,13 @@ export function Flota() {
         </div>
 
       <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(280px,1fr)_230px_250px_auto] gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_190px_220px_220px_auto] gap-3">
           <div className="relative min-w-0">
             <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por placa, tipo, estado..."
+              placeholder="Buscar por placa, tipo, proveedor, NIT o estado..."
               className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
             />
           </div>
@@ -1404,6 +1505,22 @@ export function Flota() {
               {estadosVehiculo.map((estado) => (
                 <option key={estado.id} value={estado.id}>
                   {estado.nombre_estado_vehiculo}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="relative">
+            <Filter className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <select
+              value={filterProveedor}
+              onChange={(event) => setFilterProveedor(event.target.value)}
+              className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-12 pr-4 text-sm outline-none shadow-sm focus:border-[#0C2D6B] focus:ring-2 focus:ring-[#0C2D6B]/20"
+            >
+              <option value="Todos">Todos los proveedores</option>
+              {proveedores.map((proveedor) => (
+                <option key={proveedor.id} value={proveedor.id}>
+                  {proveedor.nombre_comercial?.trim() || proveedor.razon_social}
                 </option>
               ))}
             </select>
@@ -1439,6 +1556,7 @@ export function Flota() {
           <span className="text-xs font-bold uppercase text-gray-400">Ordenar por:</span>
           <SortChip field="codigo" label="Placa" />
           <SortChip field="tipo" label="Tipo" />
+          <SortChip field="proveedor" label="Proveedor" />
           <SortChip field="estado" label="Estado" />
           <SortChip field="eficiencia" label="Eficiencia" />
           <SortChip field="kilometraje" label="Kilometraje" />
@@ -1487,6 +1605,12 @@ export function Flota() {
                       {vehiculo.codigo}
                     </h3>
                     <p className="text-sm text-gray-500 leading-5">{tipo}</p>
+                    <p className="mt-1 text-xs leading-5 text-gray-500">
+                      Proveedor:{" "}
+                      <span className="font-semibold text-[#0C2D6B]">
+                        {vehiculo.proveedor || nombreProveedor(vehiculo.proveedor_id)}
+                      </span>
+                    </p>
                   </div>
 
                   <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-[#0C2D6B]">
@@ -1638,9 +1762,13 @@ export function Flota() {
           errors={errors}
           setErrors={setErrors}
           tiposVehiculo={tiposVehiculo}
+          proveedores={proveedores}
           estadosVehiculo={estadosVehiculo}
           estadosMantenimiento={estadosMantenimiento}
           nombreTipo={nombreTipo}
+          nombreProveedor={nombreProveedor}
+          nitProveedor={nitProveedor}
+          onCreateProvider={createQuickProvider}
           nombreEstado={nombreEstado}
           nombreMantenimiento={nombreMantenimiento}
           enProcesoId={enProcesoId}
@@ -1688,9 +1816,13 @@ function VehicleModal({
   errors,
   setErrors,
   tiposVehiculo,
+  proveedores,
   estadosVehiculo,
   estadosMantenimiento,
   nombreTipo,
+  nombreProveedor,
+  nitProveedor,
+  onCreateProvider,
   nombreEstado,
   nombreMantenimiento,
   enProcesoId,
@@ -1703,9 +1835,13 @@ function VehicleModal({
   errors: FormErrors;
   setErrors: React.Dispatch<React.SetStateAction<FormErrors>>;
   tiposVehiculo: TipoVehiculo[];
+  proveedores: Proveedor[];
   estadosVehiculo: EstadoVehiculo[];
   estadosMantenimiento: EstadoMantenimiento[];
   nombreTipo: (id?: number | null) => string;
+  nombreProveedor: (id?: number | null) => string;
+  nitProveedor: (id?: number | null) => string;
+  onCreateProvider: (form: QuickProviderForm) => Promise<number>;
   nombreEstado: (id?: number | null) => string;
   nombreMantenimiento: (id?: number | null) => string;
   enProcesoId: number;
@@ -1715,11 +1851,107 @@ function VehicleModal({
   const readonly = modo === "ver";
   const mantenimientoId = selected.estado_mantenimiento_id || selected.estados_mantenimiento_id || null;
 
+  const proveedorInicial = selected.proveedor_id
+    ? proveedores.find((item) => Number(item.id) === Number(selected.proveedor_id))
+    : null;
+
+  const [providerSearch, setProviderSearch] = useState(
+    proveedorInicial?.nombre_comercial?.trim() ||
+      proveedorInicial?.razon_social ||
+      selected.proveedor ||
+      ""
+  );
+  const [providerOpen, setProviderOpen] = useState(false);
+  const [newProviderOpen, setNewProviderOpen] = useState(false);
+  const [savingProvider, setSavingProvider] = useState(false);
+  const [newProviderError, setNewProviderError] = useState("");
+  const [newProviderForm, setNewProviderForm] = useState<QuickProviderForm>({
+    razon_social: "",
+    nombre_comercial: "",
+    nit: "",
+    correo: "",
+    telefono: "",
+  });
+
   const clearError = (field: string) =>
     setErrors((prev) => ({
       ...prev,
       [field]: "",
     }));
+
+  const filteredProviders = useMemo(() => {
+    const term = providerSearch.trim().toLowerCase();
+
+    if (!term) return proveedores.slice(0, 12);
+
+    return proveedores
+      .filter((proveedor) =>
+        `${proveedor.codigo_proveedor || ""} ${proveedor.razon_social || ""} ${
+          proveedor.nombre_comercial || ""
+        } ${proveedor.nit || ""}`
+          .toLowerCase()
+          .includes(term)
+      )
+      .slice(0, 12);
+  }, [providerSearch, proveedores]);
+
+  const selectProvider = (proveedor: Proveedor) => {
+    const nombre = proveedor.nombre_comercial?.trim() || proveedor.razon_social;
+
+    setSelected({
+      ...selected,
+      proveedor_id: proveedor.id,
+      proveedor: nombre,
+      proveedor_codigo: proveedor.codigo_proveedor,
+      proveedor_razon_social: proveedor.razon_social,
+      proveedor_nombre_comercial: proveedor.nombre_comercial,
+      proveedor_nit: proveedor.nit,
+    });
+
+    setProviderSearch(nombre);
+    setProviderOpen(false);
+    clearError("proveedor_id");
+  };
+
+  const saveQuickProvider = async () => {
+    setNewProviderError("");
+
+    try {
+      setSavingProvider(true);
+
+      const id = await onCreateProvider(newProviderForm);
+      const nombre =
+        newProviderForm.nombre_comercial.trim() ||
+        newProviderForm.razon_social.trim();
+
+      setSelected({
+        ...selected,
+        proveedor_id: id,
+        proveedor: nombre,
+        proveedor_razon_social: newProviderForm.razon_social.trim(),
+        proveedor_nombre_comercial:
+          newProviderForm.nombre_comercial.trim() ||
+          newProviderForm.razon_social.trim(),
+        proveedor_nit: newProviderForm.nit.trim(),
+      });
+
+      setProviderSearch(nombre);
+      setProviderOpen(false);
+      setNewProviderOpen(false);
+      setNewProviderForm({
+        razon_social: "",
+        nombre_comercial: "",
+        nit: "",
+        correo: "",
+        telefono: "",
+      });
+      clearError("proveedor_id");
+    } catch (error: any) {
+      setNewProviderError(error?.message || "No se pudo crear el proveedor.");
+    } finally {
+      setSavingProvider(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-3">
@@ -1783,6 +2015,128 @@ function VehicleModal({
                   </option>
                 ))}
               </select>
+            </Field>
+
+            <Field label="Proveedor propietario *" error={errors.proveedor_id}>
+              <div className="flex items-start gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-[22px] h-4 w-4 -translate-y-1/2 text-gray-400" />
+
+                  <input
+                    value={providerSearch}
+                    disabled={readonly}
+                    autoComplete="off"
+                    onFocus={() => !readonly && setProviderOpen(true)}
+                    onChange={(event) => {
+                      setProviderSearch(event.target.value);
+                      setProviderOpen(true);
+
+                      if (selected.proveedor_id) {
+                        setSelected({
+                          ...selected,
+                          proveedor_id: null,
+                          proveedor: "",
+                          proveedor_codigo: "",
+                          proveedor_razon_social: "",
+                          proveedor_nombre_comercial: "",
+                          proveedor_nit: "",
+                        });
+                      }
+
+                      clearError("proveedor_id");
+                    }}
+                    className={`${inputClass} pl-10 ${errors.proveedor_id ? errorInput : ""}`}
+                    placeholder="Buscar por nombre, código o NIT..."
+                  />
+
+                  {!readonly && providerOpen && (
+                    <div className="absolute z-[90] mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border border-gray-200 bg-white p-1.5 shadow-xl">
+                      {filteredProviders.length > 0 ? (
+                        filteredProviders.map((proveedor) => {
+                          const nombre =
+                            proveedor.nombre_comercial?.trim() ||
+                            proveedor.razon_social;
+
+                          return (
+                            <button
+                              key={proveedor.id}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => selectProvider(proveedor)}
+                              className="flex w-full items-start justify-between gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-blue-50"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-bold text-[#0C2D6B]">
+                                  {nombre}
+                                </p>
+                                <p className="mt-0.5 truncate text-[11px] text-gray-500">
+                                  {proveedor.codigo_proveedor} · NIT {proveedor.nit || "-"}
+                                </p>
+                              </div>
+
+                              {Number(selected.proveedor_id) === Number(proveedor.id) && (
+                                <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
+                              )}
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <div className="p-3 text-center">
+                          <p className="text-sm font-semibold text-gray-500">
+                            No se encontró el proveedor.
+                          </p>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewProviderForm((current) => ({
+                                ...current,
+                                razon_social: providerSearch.trim(),
+                                nombre_comercial: providerSearch.trim(),
+                              }));
+                              setProviderOpen(false);
+                              setNewProviderOpen(true);
+                            }}
+                            className="mt-2 inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#0C2D6B] px-3 text-xs font-bold text-white hover:bg-[#143C8C]"
+                          >
+                            <Plus className="h-4 w-4" />
+                            Crear proveedor
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {selected.proveedor_id && (
+                    <p className="mt-1.5 text-[11px] font-semibold text-gray-500">
+                      NIT: {selected.proveedor_nit || nitProveedor(selected.proveedor_id)}
+                    </p>
+                  )}
+                </div>
+
+                {!readonly && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProviderOpen(false);
+                      setNewProviderError("");
+                      setNewProviderForm({
+                        razon_social: providerSearch.trim(),
+                        nombre_comercial: providerSearch.trim(),
+                        nit: "",
+                        correo: "",
+                        telefono: "",
+                      });
+                      setNewProviderOpen(true);
+                    }}
+                    className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-[#0C2D6B] px-4 text-sm font-bold text-white shadow-sm hover:bg-[#143C8C]"
+                    title="Crear un proveedor si no existe"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Nuevo
+                  </button>
+                )}
+              </div>
             </Field>
 
             <Field label="Estado *" error={errors.estado_id}>
@@ -1888,6 +2242,8 @@ function VehicleModal({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                 <Info label="Tipo" value={selected.tipo || nombreTipo(selected.tipo_id)} />
+                <Info label="Proveedor propietario" value={selected.proveedor || nombreProveedor(selected.proveedor_id)} />
+                <Info label="NIT proveedor" value={selected.proveedor_nit || nitProveedor(selected.proveedor_id)} />
                 <Info label="Estado" value={selected.estado || nombreEstado(selected.estado_id)} />
                 <Info label="Eficiencia" value={`${selected.eficiencia || 0}%`} />
                 <Info label="Kilometraje" value={`${formatKm(selected.kilometraje)} km`} />
@@ -1915,6 +2271,144 @@ function VehicleModal({
             </div>
           )}
         </div>
+
+        {newProviderOpen && !readonly && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm">
+            <div className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+              <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
+                <div>
+                  <h3 className="text-lg font-bold text-[#0C2D6B]">
+                    Nuevo proveedor
+                  </h3>
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    Regístralo sin salir de Flota y quedará seleccionado automáticamente.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => !savingProvider && setNewProviderOpen(false)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {newProviderError && (
+                <div className="mx-5 mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                  {newProviderError}
+                </div>
+              )}
+
+              <div
+                data-form
+                onKeyDown={moveOnEnter}
+                className="overflow-y-auto p-5"
+              >
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="Razón social *">
+                    <input
+                      value={newProviderForm.razon_social}
+                      onChange={(event) =>
+                        setNewProviderForm((current) => ({
+                          ...current,
+                          razon_social: event.target.value,
+                        }))
+                      }
+                      className={inputClass}
+                      placeholder="Ej. Transportes del Norte, S.A."
+                      autoFocus
+                    />
+                  </Field>
+
+                  <Field label="Nombre comercial">
+                    <input
+                      value={newProviderForm.nombre_comercial}
+                      onChange={(event) =>
+                        setNewProviderForm((current) => ({
+                          ...current,
+                          nombre_comercial: event.target.value,
+                        }))
+                      }
+                      className={inputClass}
+                      placeholder="Ej. Transportes del Norte"
+                    />
+                  </Field>
+
+                  <Field label="NIT *">
+                    <input
+                      value={newProviderForm.nit}
+                      onChange={(event) =>
+                        setNewProviderForm((current) => ({
+                          ...current,
+                          nit: event.target.value.trimStart(),
+                        }))
+                      }
+                      className={inputClass}
+                      placeholder="Ej. 7001001-1"
+                    />
+                  </Field>
+
+                  <Field label="Teléfono">
+                    <input
+                      inputMode="tel"
+                      value={newProviderForm.telefono}
+                      onChange={(event) =>
+                        setNewProviderForm((current) => ({
+                          ...current,
+                          telefono: event.target.value.replace(/\D/g, "").slice(0, 15),
+                        }))
+                      }
+                      className={inputClass}
+                      placeholder="Solo números"
+                    />
+                  </Field>
+
+                  <Field label="Correo" className="sm:col-span-2">
+                    <input
+                      type="email"
+                      value={newProviderForm.correo}
+                      onChange={(event) =>
+                        setNewProviderForm((current) => ({
+                          ...current,
+                          correo: event.target.value,
+                        }))
+                      }
+                      className={inputClass}
+                      placeholder="proveedor@empresa.com"
+                    />
+                  </Field>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-4">
+                <button
+                  type="button"
+                  disabled={savingProvider}
+                  onClick={() => setNewProviderOpen(false)}
+                  className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-sm font-bold text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  data-save-button="true"
+                  type="button"
+                  disabled={savingProvider}
+                  onClick={saveQuickProvider}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#0C2D6B] px-5 text-sm font-bold text-white hover:bg-[#143C8C] disabled:opacity-60"
+                >
+                  {savingProvider ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                  {savingProvider ? "Guardando..." : "Guardar proveedor"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {modo !== "ver" && (
           <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-4">

@@ -186,7 +186,7 @@ const EXTRA_COLUMNS = {
     "estado",
     "estado_proveedor_id",
   ],
-  pilotos: ["nombre_piloto", "nombre", "numero_licencia"],
+  pilotos: ["nombre_piloto", "nombre", "numero_licencia", "dpi", "nit", "fecha_nacimiento"],
   vehiculos: ["placa", "tipo", "tipo_vehiculo", "nombre_tipo_vehiculo"],
   rutas: ["nombre", "distancia"],
   ubicaciones: ["nombre"],
@@ -292,6 +292,10 @@ const detalleOperativoJson = (body, tipoAsignacion) => {
 
     pais_piloto:
       limpiar(recibido.pais_piloto || body.pais_piloto) || null,
+    licencia:
+      limpiar(recibido.licencia || body.licencia) || null,
+    placa_piloto:
+      limpiar(recibido.placa_piloto || body.placa_piloto || body.placa || body.cabezal) || null,
     dpi_piloto:
       limpiar(recibido.dpi_piloto || body.dpi_piloto) || null,
     fecha_nacimiento_piloto:
@@ -344,6 +348,10 @@ const detalleOperativoJson = (body, tipoAsignacion) => {
         recibido.tamano_equipo ||
           body.tamano_equipo
       ) || null,
+    unidad:
+      limpiar(recibido.unidad || body.unidad || body.placa || body.cabezal) || null,
+    tc:
+      limpiar(recibido.tc || body.tc) || null,
 
     fecha_posicionamiento:
       asDate(
@@ -841,6 +849,9 @@ const findOrCreatePiloto = async (connection, body) => {
       partes.primer_apellido,
       partes.segundo_apellido,
       licencia || `PEND-${Date.now().toString().slice(-6)}`,
+      limpiar(body.dpi || body.dpi_piloto) || null,
+      limpiar(body.nit || body.nit_piloto) || null,
+      asDate(body.fecha_nacimiento || body.fecha_nacimiento_piloto),
     ]
   );
 
@@ -1125,8 +1136,8 @@ const saveProvider = async (connection, body, id = null) => {
 const saveAssignment = async (connection, body, id = null) => {
   const asignacionIdEdit = asId(id || body.id);
   const tipoAsignacion = normalizeTipoAsignacion(body.tipo_asignacion);
-  const detalleJson = detalleOperativoJson(body, tipoAsignacion);
-  const detalle = parseJsonSeguro(detalleJson, {});
+  let detalleJson = detalleOperativoJson(body, tipoAsignacion);
+  let detalle = parseJsonSeguro(detalleJson, {});
 
   // Validaciones específicas de cada expediente operativo.
   // Los campos opcionales pueden guardar literalmente "N/A".
@@ -1168,8 +1179,8 @@ const saveAssignment = async (connection, body, id = null) => {
     }
     if (!nonEmpty(detalle.placa_piloto)) throw new Error("FIDUCA requiere placa del piloto / unidad.");
     if (!nonEmpty(detalle.dpi_piloto)) throw new Error("FIDUCA requiere DPI del piloto.");
-    if (!nonEmpty(detalle.fecha_nacimiento_piloto)) throw new Error("FIDUCA requiere fecha de nacimiento.");
-    if (!nonEmpty(detalle.nit_piloto)) throw new Error("FIDUCA requiere NIT del piloto.");
+    // Fecha de nacimiento y NIT se reutilizan de la ficha del piloto cuando existan.
+    // No se obligan porque hay pilotos históricos que todavía no cuentan con esos datos.
     if (!nonEmpty(detalle.empresa_transporte)) throw new Error("FIDUCA requiere nombre del transporte.");
     if (!nonEmpty(detalle.nit_transportista)) throw new Error("FIDUCA requiere NIT del transportista.");
     if (!nonEmpty(detalle.caat)) throw new Error("FIDUCA requiere CAAT.");
@@ -1225,6 +1236,22 @@ const saveAssignment = async (connection, body, id = null) => {
   const rutaId = await findOrCreateRuta(connection, body);
   const vehiculoId = await findOrCreateVehiculo(connection, body);
   const pilotoId = await findOrCreatePiloto(connection, body);
+
+  // Reutiliza la ficha maestra del piloto: no obliga a volver a escribir estos datos.
+  if (pilotoId) {
+    const [[pilotoMaster]] = await connection.query(
+      `SELECT licencia, dpi, nit, fecha_nacimiento FROM \`${T.piloto}\` WHERE id = ? LIMIT 1`,
+      [pilotoId]
+    );
+    if (pilotoMaster) {
+      detalle.licencia = pilotoMaster.licencia || detalle.licencia || null;
+      detalle.dpi_piloto = pilotoMaster.dpi || detalle.dpi_piloto || pilotoMaster.licencia || null;
+      detalle.nit_piloto = pilotoMaster.nit || detalle.nit_piloto || null;
+      detalle.fecha_nacimiento_piloto = asDate(pilotoMaster.fecha_nacimiento) || detalle.fecha_nacimiento_piloto || null;
+      detalleJson = JSON.stringify(detalle);
+    }
+  }
+
   const estadoId = asId(body.estado_asignacion_id || body.estado_id) || 1;
 
   const fechaCarga = asDate(body.fecha_carga || body.carga) || new Date().toISOString().slice(0, 10);
@@ -1527,6 +1554,9 @@ const queryAsignaciones = `
 
     ${fullNameSQL("p")} AS piloto,
     p.licencia AS licencia,
+    p.dpi AS dpi_piloto,
+    p.nit AS nit_piloto,
+    p.fecha_nacimiento AS fecha_nacimiento_piloto,
 
     uo.furgon,
     uo.auxiliar_id,
@@ -1753,6 +1783,44 @@ router.post("/operaciones/catalogos/pilotos", async (req, res) => {
   } catch (error) {
     await connection.rollback();
     return fail(res, 500, "No se pudo crear el piloto.", error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.post("/operaciones/catalogos/proveedores", async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const id = await saveProvider(connection, req.body);
+    const [[row]] = await connection.query(
+      `${queryProveedores} WHERE p.id = ? LIMIT 1`,
+      [id]
+    );
+    await connection.commit();
+    return ok(res, row, "Proveedor creado correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    return fail(res, 500, "No se pudo crear el proveedor.", error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.post("/operaciones/catalogos/vehiculos", async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const id = await findOrCreateVehiculo(connection, req.body);
+    const [[row]] = await connection.query(
+      `${queryVehiculos} WHERE v.id = ? LIMIT 1`,
+      [id]
+    );
+    await connection.commit();
+    return ok(res, row, "Vehículo creado correctamente.");
+  } catch (error) {
+    await connection.rollback();
+    return fail(res, 500, "No se pudo crear el vehículo.", error);
   } finally {
     connection.release();
   }

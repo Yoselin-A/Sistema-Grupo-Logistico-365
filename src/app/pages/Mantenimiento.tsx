@@ -553,6 +553,61 @@ const formatDateTimeGuatemala = (value: any, includeSeconds = false) => {
   return normalized.slice(0, includeSeconds ? 19 : 16);
 };
 
+/**
+ * Auditoría se guarda en UTC en MySQL, pero algunos drivers devuelven
+ * DATETIME/TIMESTAMP sin la Z final. Para Auditoría interpretamos esos
+ * valores como UTC y los mostramos en America/Guatemala (UTC-6).
+ */
+const formatAuditDateTimeGuatemala = (value: any, includeSeconds = false) => {
+  if (value === null || value === undefined || value === "") return "-";
+
+  const raw = String(value).trim();
+
+  // Si ya trae zona horaria, usamos el conversor normal.
+  if (hasExplicitTimeZone(raw)) {
+    return formatDateTimeGuatemala(raw, includeSeconds);
+  }
+
+  // MySQL suele devolver: YYYY-MM-DD HH:mm:ss. Lo tratamos como UTC.
+  const mysqlUtc = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/
+  );
+
+  if (mysqlUtc) {
+    const [, year, month, day, hour, minute, second = "00"] = mysqlUtc;
+    const isoUtc = `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
+    return formatDateTimeGuatemala(isoUtc, includeSeconds);
+  }
+
+  return formatDateTimeGuatemala(raw, includeSeconds);
+};
+
+
+/**
+ * Detecta las columnas de fecha/hora de Auditoría aunque MySQL las reporte
+ * como VARCHAR/TEXT en el bootstrap. Esto evita depender únicamente del tipo
+ * datetime/timestamp.
+ */
+const isAuditDateColumn = (column?: ColumnDef) => {
+  const name = String(column?.name || "").toLowerCase();
+
+  return (
+    isDateTimeType(column) ||
+    [
+      "fecha",
+      "fecha_hora",
+      "fecha_registro",
+      "fecha_creacion",
+      "created_at",
+      "updated_at",
+      "timestamp",
+      "fecha_auditoria",
+    ].includes(name) ||
+    name.includes("fecha") ||
+    name.includes("timestamp")
+  );
+};
+
 const toInputDateTime = (value: any) => {
   if (!value) return "";
 
@@ -767,6 +822,9 @@ export function Mantenimiento() {
   const schema = selectedTable ? bootstrap.schemas[selectedTable.name] : undefined;
   const primaryKey = schema?.primaryKey || "id";
   const isAuditTable = selectedTable?.name === "auditoria";
+  const auditDateColumn = isAuditTable
+    ? (schema?.columns || []).find((column) => isAuditDateColumn(column))?.name || ""
+    : "";
   const isUserTable = selectedTable?.name === "usuario" || selectedTable?.name === "usuarios";
   const isRoleTable = ["role", "rol", "roles"].includes(String(selectedTable?.name || "").toLowerCase());
   const hasSecurityAccess = canAccessModule(role, "seguridad", permissions);
@@ -908,6 +966,12 @@ export function Mantenimiento() {
 
     if (column.name === "__rol_usuario") return userRoleLabel(row);
 
+    // Auditoría: la fecha se guarda en UTC. Se convierte SIEMPRE a Guatemala,
+    // incluso cuando MySQL/driver reporta la columna como VARCHAR/TEXT.
+    if (isAuditTable && isAuditDateColumn(column)) {
+      return <span>{formatAuditDateTimeGuatemala(row[column.name], false)}</span>;
+    }
+
     return formatCell(row, column, bootstrap.options);
   };
 
@@ -961,8 +1025,61 @@ export function Mantenimiento() {
     try {
       const query = new URLSearchParams({ limit: "5000" });
       const data = await apiRequest<any>(`/mantenimiento/tablas/${table}/registros?${query.toString()}`);
-      setRecords(normalizeRows(data));
-      setTotalRecords(Number(data?.total || normalizeRows(data).length || 0));
+      const normalized = normalizeRows(data);
+
+      // AUDITORÍA:
+      // La BD guarda la hora en UTC. Algunos drivers devuelven la columna como
+      // DATETIME/TIMESTAMP y otros como VARCHAR/TEXT; por eso NO dependemos
+      // únicamente del tipo de MySQL. Convertimos por nombre de columna.
+      const rows = table === "auditoria"
+        ? normalized.map((row) => {
+            const next: AnyRow = { ...row };
+            const auditSchema = bootstrap.schemas?.[table];
+            const auditColumns = auditSchema?.columns || [];
+
+            auditColumns.forEach((column) => {
+              if (isAuditDateColumn(column) && next[column.name]) {
+                const rawUtc = next[column.name];
+
+                // Guardamos el valor original para poder ordenar correctamente.
+                next[`__utc_${column.name}`] = rawUtc;
+
+                // Convertimos UTC -> America/Guatemala.
+                next[column.name] = formatAuditDateTimeGuatemala(rawUtc, true);
+              }
+            });
+
+            // Respaldo adicional por si el backend no incluyó correctamente
+            // la columna de fecha dentro del schema.
+            Object.keys(next).forEach((key) => {
+              const lower = key.toLowerCase();
+              const looksLikeAuditDate =
+                lower === "fecha" ||
+                lower === "fecha_hora" ||
+                lower === "fecha_registro" ||
+                lower === "fecha_creacion" ||
+                lower === "created_at" ||
+                lower === "fecha_auditoria" ||
+                lower.includes("fecha");
+
+              if (
+                looksLikeAuditDate &&
+                next[key] &&
+                !key.startsWith("__utc_") &&
+                !next[`__utc_${key}`]
+              ) {
+                const rawUtc = next[key];
+                next[`__utc_${key}`] = rawUtc;
+                next[key] = formatAuditDateTimeGuatemala(rawUtc, true);
+              }
+            });
+
+            return next;
+          })
+        : normalized;
+
+      setRecords(rows);
+      setTotalRecords(Number(data?.total || rows.length || 0));
     } catch (error: any) {
       setRecords([]);
       setTotalRecords(0);
@@ -981,8 +1098,14 @@ export function Mantenimiento() {
     setTableSearch("");
     setColumnFilter("Todas");
     setColumnFilterValue("");
-    setSortColumn("");
-    setSortDirection("asc");
+    // Auditoría abre siempre con la acción más reciente arriba.
+    // En las demás tablas se conserva el comportamiento anterior.
+    const selectedSchema = bootstrap.schemas?.[selectedTable.name];
+    const auditDate = selectedTable.name === "auditoria"
+      ? (selectedSchema?.columns || []).find((column) => isAuditDateColumn(column))?.name || ""
+      : "";
+    setSortColumn(auditDate);
+    setSortDirection(selectedTable.name === "auditoria" ? "desc" : "asc");
     setUserStatusFilter("Todos");
     setCurrentPage(1);
     loadRecords(selectedTable.name);
@@ -1046,7 +1169,11 @@ export function Mantenimiento() {
   const totalRows = useMemo(() => (bootstrap.tables || []).reduce((sum, table) => sum + Number(table.records || 0), 0), [bootstrap.tables]);
   const totalRelations = useMemo(() => (Object.values(bootstrap.schemas || {}) as SchemaDef[]).reduce((sum, item) => sum + Number(item.foreignKeys?.length || 0), 0), [bootstrap.schemas]);
   const totalCatalogs = useMemo(() => (bootstrap.tables || []).filter((table) => table.category === "Catálogos").length, [bootstrap.tables]);
-  const defaultSortColumn = isUserTable ? "USER_NOMBRE" : columnsToShow[0]?.name || filterableColumns[0]?.name || "";
+  const defaultSortColumn = isAuditTable
+    ? auditDateColumn || columnsToShow[0]?.name || filterableColumns[0]?.name || ""
+    : isUserTable
+    ? "USER_NOMBRE"
+    : columnsToShow[0]?.name || filterableColumns[0]?.name || "";
   const activeSortColumn = sortColumn || defaultSortColumn;
 
   const displayedRecords = useMemo(() => {
@@ -1102,10 +1229,25 @@ export function Mantenimiento() {
           return sortDirection === "asc" ? av - bv : bv - av;
         }
 
-        if (selectedColumn && (isDateType(selectedColumn) || isDateTimeType(selectedColumn))) {
-          const av = String(avRaw ?? "");
-          const bv = String(bvRaw ?? "");
-          return sortDirection === "asc" ? av.localeCompare(bv, "es") : bv.localeCompare(av, "es");
+        if (
+          selectedColumn &&
+          (isDateType(selectedColumn) || isDateTimeType(selectedColumn) ||
+            (isAuditTable && isAuditDateColumn(selectedColumn)))
+        ) {
+          // En Auditoría ordenamos usando el valor UTC original si está disponible.
+          const av = String(
+            isAuditTable
+              ? (a[`__utc_${activeSortColumn}`] ?? avRaw ?? "")
+              : (avRaw ?? "")
+          );
+          const bv = String(
+            isAuditTable
+              ? (b[`__utc_${activeSortColumn}`] ?? bvRaw ?? "")
+              : (bvRaw ?? "")
+          );
+          return sortDirection === "asc"
+            ? av.localeCompare(bv, "es")
+            : bv.localeCompare(av, "es");
         }
 
         const av = normalizeForCompare(selectedColumn ? formatCellText(a, selectedColumn, bootstrap.options) : String(avRaw ?? ""));
@@ -1115,7 +1257,7 @@ export function Mantenimiento() {
     }
 
     return rows;
-  }, [records, tableSearch, columnFilter, activeSortColumn, sortDirection, filterableColumns, schema?.columns, bootstrap.options, isUserTable, userStatusFilter]);
+  }, [records, tableSearch, columnFilter, activeSortColumn, sortDirection, filterableColumns, schema?.columns, bootstrap.options, isUserTable, isAuditTable, userStatusFilter]);
 
   const totalPages = Math.max(1, Math.ceil(displayedRecords.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);

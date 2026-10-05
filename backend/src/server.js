@@ -9,9 +9,14 @@ const {
 
 const authRoutes = require("./routes/auth.routes");
 const crmRoutes = require("./routes/crm.routes");
+
+// NUEVO: Proveedores ahora es un módulo independiente
+const proveedoresRoutes = require("./routes/proveedores.routes");
+
 const operacionesRoutes = require("./routes/operaciones.routes");
 const logisticaRoutes = require("./routes/logistica.routes");
 const flotaRoutes = require("./routes/flota.routes");
+const pilotosRoutes = require("./routes/pilotos.routes");
 const rutasRoutes = require("./routes/rutas.routes");
 const comprobantesRoutes = require("./routes/comprobantes.routes");
 const reportesRoutes = require("./routes/reportes.routes");
@@ -61,8 +66,6 @@ app.use("/api", autenticarToken);
   Seguridad dinámica por módulo.
   - Mantenimiento puede abrirse con permiso de mantenimiento o seguridad.
   - Auditoría pertenece al bloque de Seguridad.
-  La validación fina de tablas sensibles se realiza también dentro de
-  mantenimiento.routes.js.
 */
 app.use(
   "/api/mantenimiento",
@@ -80,23 +83,52 @@ app.use("/api/auditoria", auditoriaRoutes);
   IMPORTANTE:
   Mantenimiento se monta antes de las rutas generales porque
   operaciones.routes.js conserva endpoints antiguos con el prefijo
-  /mantenimiento. De esta forma, el módulo usa siempre la lógica
-  específica de mantenimiento (normalización de fechas, hash de
-  contraseñas y validaciones de seguridad).
+  /mantenimiento.
 */
 app.use("/api/mantenimiento", mantenimientoRoutes);
 
+/*
+  ================================
+  MÓDULOS PRINCIPALES
+  ================================
+*/
+
+// CRM
 app.use("/api", crmRoutes);
+
+// PROVEEDORES
+// Ahora funciona como módulo independiente.
+app.use("/api", proveedoresRoutes);
+
+// OPERACIONES
 app.use("/api", operacionesRoutes);
+
+// LOGÍSTICA
 app.use("/api", logisticaRoutes);
+
+// FLOTA
 app.use("/api", flotaRoutes);
+
+// PILOTOS
+app.use("/api", pilotosRoutes);
+
+// RUTAS
 app.use("/api", rutasRoutes);
+
+// COMPROBANTES
 app.use("/api", comprobantesRoutes);
+
+// REPORTES
 app.use("/api", reportesRoutes);
 
+// IA
 app.use("/api/ia", autorizarModulo("ia"), iaRoutes);
 
-// RUTA NO ENCONTRADA
+/*
+  ================================
+  RUTA NO ENCONTRADA
+  ================================
+*/
 app.use((req, res) => {
   res.status(404).json({
     ok: false,
@@ -108,5 +140,7 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
-  console.log(`Servidor GL365 corriendo en http://localhost:${PORT}`);
+  console.log(
+    `Servidor GL365 corriendo en http://localhost:${PORT}`
+  );
 });
