@@ -5,11 +5,13 @@ import {
   ArrowUpDown,
   Building2,
   CheckCircle2,
+  ClipboardList,
   ChevronRight,
   Database,
   Eye,
   Filter,
   FileText,
+  Globe2,
   KeyRound,
   Layers3,
   Link2,
@@ -19,9 +21,11 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Route,
   Save,
   Search,
   Settings,
+  Target,
   Shield,
   Table2,
   Trash2,
@@ -109,6 +113,15 @@ type RoleModuleOption = {
   descripcion?: string | null;
   ruta?: string | null;
   orden?: number;
+};
+
+type RoleAccessGroup = {
+  key: string;
+  title: string;
+  description: string;
+  codes: string[];
+  items?: string[];
+  icon: any;
 };
 
 const API_BASE_URL =
@@ -1352,18 +1365,128 @@ export function Mantenimiento() {
     );
   };
 
+  /*
+   * La base conserva los permisos históricos, pero el menú actual del
+   * sistema ya está organizado por CRM, Operaciones, Recursos, Logística,
+   * Comprobantes, Reportes, IA, Mantenimiento y Seguridad.
+   *
+   * Este mapeo agrupa los códigos existentes para que el formulario de
+   * Roles se vea igual al menú real sin romper permisos ya registrados.
+   */
+  const roleAccessGroups = useMemo<RoleAccessGroup[]>(() => {
+    const available = new Set(
+      roleModules.map((item) => String(item.codigo_modulo || "").toLowerCase())
+    );
+
+    const onlyExisting = (codes: string[]) =>
+      codes.map((code) => code.toLowerCase()).filter((code) => available.has(code));
+
+    const groups: RoleAccessGroup[] = [
+      {
+        key: "crm",
+        title: "CRM y Ventas",
+        description: "Gestión comercial y relación con clientes.",
+        codes: onlyExisting(["crm"]),
+        items: ["Oportunidades", "Clientes", "Cotizaciones"],
+        icon: Users,
+      },
+      {
+        key: "operaciones",
+        title: "Operaciones",
+        description: "Asignaciones y gestión operativa de transporte.",
+        codes: onlyExisting(["operaciones"]),
+        items: ["Local", "FYDUCA", "Centroamérica", "Internacional"],
+        icon: Layers3,
+      },
+      {
+        key: "recursos",
+        title: "Recursos",
+        description: "Recursos necesarios para ejecutar las operaciones.",
+        codes: onlyExisting(["recursos", "proveedores", "flota", "pilotos"]),
+        items: ["Proveedores", "Flota", "Pilotos"],
+        icon: Building2,
+      },
+      {
+        key: "logistica",
+        title: "Logística",
+        description: "Seguimiento de viajes y administración de rutas.",
+        codes: onlyExisting(["logistica", "rutas"]),
+        items: ["Gestión", "Rutas"],
+        icon: Truck,
+      },
+      {
+        key: "facturacion",
+        title: "Comprobantes",
+        description: "Comprobantes, detalles y pagos.",
+        codes: onlyExisting(["facturacion", "comprobantes"]),
+        icon: FileText,
+      },
+      {
+        key: "reportes",
+        title: "Reportes",
+        description: "Indicadores, filtros y análisis.",
+        codes: onlyExisting(["reportes"]),
+        icon: Database,
+      },
+      {
+        key: "ia",
+        title: "IA",
+        description: "Consultas inteligentes sobre datos del sistema.",
+        codes: onlyExisting(["ia"]),
+        icon: Settings,
+      },
+      {
+        key: "mantenimiento",
+        title: "Mantenimiento",
+        description: "Catálogos y administración de datos del sistema.",
+        codes: onlyExisting(["mantenimiento"]),
+        icon: Wrench,
+      },
+      {
+        key: "seguridad",
+        title: "Seguridad",
+        description: "Usuarios, roles, credenciales y auditoría.",
+        codes: onlyExisting(["seguridad"]),
+        icon: Shield,
+      },
+    ];
+
+    return groups.filter((group) => group.codes.length > 0);
+  }, [roleModules]);
+
+  const toggleRoleGroup = (codes: string[]) => {
+    if (isProtectedRole() || !codes.length) return;
+
+    const normalizedCodes = codes.map((code) => String(code || "").toLowerCase());
+
+    setRolePermissions((prev) => {
+      const current = new Set(prev.map((item) => String(item || "").toLowerCase()));
+      const allSelected = normalizedCodes.every((code) => current.has(code));
+
+      normalizedCodes.forEach((code) => {
+        if (allSelected) current.delete(code);
+        else current.add(code);
+      });
+
+      return Array.from(current);
+    });
+  };
+
   const renderRoleAccessPanel = (disabled = false) => {
     if (!isRoleTable) return null;
 
     const protectedRole = isProtectedRole();
-    const allCodes = roleModules.map((item) => String(item.codigo_modulo).toLowerCase());
-    const effectivePermissions = protectedRole ? allCodes : rolePermissions;
+    const allCodes = Array.from(new Set(roleAccessGroups.flatMap((group) => group.codes)));
+    const effectivePermissions = protectedRole
+      ? allCodes
+      : rolePermissions.map((item) => String(item).toLowerCase());
+
     const allSelected =
       allCodes.length > 0 && allCodes.every((code) => effectivePermissions.includes(code));
 
     return (
       <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-blue-50 to-white p-5">
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.25em] text-[#FF6A00]">
               Control de acceso
@@ -1371,17 +1494,19 @@ export function Mantenimiento() {
             <h3 className="mt-1 text-lg font-black text-[#0C2D6B]">
               Módulos permitidos para este rol
             </h3>
-            <p className="mt-1 text-sm text-gray-500">
-              Inicio está disponible para todo usuario autenticado. Selecciona los demás módulos que podrá utilizar.
+            <p className="mt-1 max-w-3xl text-sm text-gray-500">
+              La estructura se muestra igual que el menú actual de GL365. Inicio está
+              disponible para todo usuario autenticado.
             </p>
             {protectedRole && (
               <p className="mt-2 text-xs font-bold text-indigo-700">
-                Gerencia/Administrador es un rol protegido y conserva acceso total para evitar bloquear la administración del sistema.
+                Gerencia/Administrador es un rol protegido y conserva acceso total para
+                evitar bloquear la administración del sistema.
               </p>
             )}
           </div>
 
-          {!disabled && !protectedRole && roleModules.length > 0 && (
+          {!disabled && !protectedRole && roleAccessGroups.length > 0 && (
             <button
               type="button"
               onClick={() => setRolePermissions(allSelected ? [] : allCodes)}
@@ -1397,63 +1522,128 @@ export function Mantenimiento() {
             <Loader2 className="h-4 w-4 animate-spin text-[#0C2D6B]" />
             Cargando accesos del rol...
           </div>
-        ) : roleModules.length ? (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {roleModules.map((module) => {
-              const code = String(module.codigo_modulo).toLowerCase();
-              const checked = effectivePermissions.includes(code);
-              const Icon =
-                code === "crm" ? Users :
-                code === "operaciones" ? Layers3 :
-                ["logistica", "flota", "rutas"].includes(code) ? Truck :
-                code === "facturacion" ? FileText :
-                code === "reportes" ? Database :
-                code === "seguridad" ? Shield : Settings;
+        ) : roleAccessGroups.length ? (
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-green-700 shadow-sm">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="font-black text-green-800">Inicio</p>
+                  <p className="text-xs text-green-700">
+                    Disponible automáticamente para cualquier usuario autenticado.
+                  </p>
+                </div>
+              </div>
+            </div>
 
-              return (
-                <button
-                  key={module.id || code}
-                  type="button"
-                  disabled={disabled || protectedRole}
-                  onClick={() => toggleRolePermission(code)}
-                  className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition ${
-                    checked
-                      ? "border-[#0C2D6B] bg-[#0C2D6B] text-white shadow-md"
-                      : "border-gray-200 bg-white text-gray-700 hover:border-blue-300 hover:bg-blue-50"
-                  } disabled:cursor-default`}
-                >
-                  <span
-                    className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
-                      checked ? "bg-white/15 text-white" : "bg-blue-50 text-[#0C2D6B]"
-                    }`}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {roleAccessGroups.map((group) => {
+                const selectedCount = group.codes.filter((code) =>
+                  effectivePermissions.includes(code)
+                ).length;
+
+                const checked =
+                  group.codes.length > 0 && selectedCount === group.codes.length;
+                const partial = selectedCount > 0 && selectedCount < group.codes.length;
+                const Icon = group.icon || Settings;
+
+                return (
+                  <button
+                    key={group.key}
+                    type="button"
+                    disabled={disabled || protectedRole}
+                    onClick={() => toggleRoleGroup(group.codes)}
+                    className={`overflow-hidden rounded-2xl border text-left transition ${
+                      checked
+                        ? "border-[#0C2D6B] bg-[#0C2D6B] text-white shadow-md"
+                        : partial
+                        ? "border-blue-300 bg-blue-50 text-gray-800 shadow-sm"
+                        : "border-gray-200 bg-white text-gray-700 hover:border-blue-300 hover:bg-blue-50"
+                    } disabled:cursor-default`}
                   >
-                    <Icon className="h-5 w-5" />
-                  </span>
+                    <div className="p-4">
+                      <div className="flex items-start gap-3">
+                        <span
+                          className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
+                            checked
+                              ? "bg-white/15 text-white"
+                              : "bg-blue-50 text-[#0C2D6B]"
+                          }`}
+                        >
+                          <Icon className="h-5 w-5" />
+                        </span>
 
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="font-black">{module.nombre_modulo}</span>
-                      <span
-                        className={`ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
-                          checked
-                            ? "border-white bg-white text-[#0C2D6B]"
-                            : "border-gray-300 bg-white"
-                        }`}
-                      >
-                        {checked && <CheckCircle2 className="h-4 w-4" />}
-                      </span>
-                    </span>
-                    <span className={`mt-1 block text-xs leading-5 ${checked ? "text-blue-100" : "text-gray-500"}`}>
-                      {module.descripcion || module.ruta || "Acceso al módulo."}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-2">
+                            <span className="text-base font-black">{group.title}</span>
+                            <span
+                              className={`ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                                checked
+                                  ? "border-white bg-white text-[#0C2D6B]"
+                                  : partial
+                                  ? "border-blue-400 bg-blue-100 text-[#0C2D6B]"
+                                  : "border-gray-300 bg-white"
+                              }`}
+                            >
+                              {checked && <CheckCircle2 className="h-4 w-4" />}
+                              {partial && (
+                                <span className="h-2 w-2 rounded-full bg-[#0C2D6B]" />
+                              )}
+                            </span>
+                          </span>
+
+                          <span
+                            className={`mt-1 block text-xs leading-5 ${
+                              checked ? "text-blue-100" : "text-gray-500"
+                            }`}
+                          >
+                            {group.description}
+                          </span>
+                        </span>
+                      </div>
+
+                      {group.items?.length ? (
+                        <div
+                          className={`mt-4 rounded-xl border p-3 ${
+                            checked
+                              ? "border-white/15 bg-white/10"
+                              : "border-gray-100 bg-gray-50"
+                          }`}
+                        >
+                          <p
+                            className={`mb-2 text-[10px] font-black uppercase tracking-[0.18em] ${
+                              checked ? "text-blue-100" : "text-gray-400"
+                            }`}
+                          >
+                            Incluye
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {group.items.map((item) => (
+                              <span
+                                key={item}
+                                className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                                  checked
+                                    ? "bg-white/15 text-white"
+                                    : "border border-gray-200 bg-white text-[#0C2D6B]"
+                                }`}
+                              >
+                                {item}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         ) : (
           <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4 text-sm font-bold text-orange-700">
-            No se encontraron módulos de acceso. Ejecuta el script SQL de permisos y vuelve a actualizar.
+            No se encontraron módulos de acceso. Revisa la tabla modulo_sistema y vuelve a actualizar.
           </div>
         )}
       </div>
