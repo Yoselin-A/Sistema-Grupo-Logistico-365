@@ -119,21 +119,21 @@ export function Sidebar({ isOpen = false, onClose }: any) {
   return (
     <aside
       className={cn(
-        "w-52 bg-gradient-to-b from-[#0C2D6B] to-[#081F4A] h-screen flex flex-col fixed left-0 top-0 z-50 transition-transform duration-300",
+        "w-52 bg-gradient-to-b from-[#0C2D6B] to-[#081F4A] h-screen h-[100dvh] flex flex-col fixed left-0 top-0 z-50 transition-transform duration-300",
         isOpen
           ? "translate-x-0"
           : "-translate-x-full md:translate-x-0"
       )}
     >
       {/* LOGO */}
-      <div className="px-5 py-5 border-b border-[#143C8C]">
+      <div className="shrink-0 px-5 py-5 border-b border-[#143C8C]">
         <h1 className="text-white text-xl font-bold leading-tight">
           GL365 ERP
         </h1>
       </div>
 
       {/* NAV */}
-      <nav className="flex-1 overflow-y-auto py-4">
+      <nav className="min-h-0 flex-1 overflow-y-auto py-4">
         <Link
           to="/dashboard"
           onClick={cerrarEnMovil}
@@ -455,7 +455,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
       </nav>
 
       {/* LOGOUT */}
-      <div className="p-4 border-t border-[#143C8C]">
+      <div className="shrink-0 p-4 border-t border-[#143C8C] pb-[max(1rem,env(safe-area-inset-bottom))]">
         <button
           type="button"
           onClick={async () => {

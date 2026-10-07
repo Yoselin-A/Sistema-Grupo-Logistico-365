@@ -7,6 +7,7 @@ import {
   Clock3,
   FileWarning,
   Menu,
+  LogOut,
   Moon,
   Route,
   Sun,
@@ -153,7 +154,7 @@ const isOperationalAlert = (alert: any) => {
 };
 
 export function Header({ onMenuClick }: HeaderProps) {
-  const { role, userName } = useAuth();
+  const { role, userName, logout } = useAuth();
   const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -731,6 +732,15 @@ export function Header({ onMenuClick }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-3">
+        <button
+          type="button"
+          onClick={() => { logout(); navigate("/login", { replace: true }); }}
+          aria-label="Cerrar sesión"
+          title="Cerrar sesión"
+          className="md:hidden flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-[#0C2D6B] hover:bg-gray-50"
+        >
+          <LogOut className="h-5 w-5" />
+        </button>
         <button
           type="button"
           onClick={() =>

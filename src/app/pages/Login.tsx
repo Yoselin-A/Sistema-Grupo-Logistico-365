@@ -21,7 +21,7 @@ import { useAuth } from "../context/AuthContext";
 
 import logoImage from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
 import fondoOficina from "../../assets/fondo-oficina-gl365.jpg";
-import universidadLogo from "../../assets/universidad-mariano-galvez.jpg";
+import universidadLogo from "../../assets/universidad-mariano-galvez-transparente.png";
 
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_URL || "/api";
@@ -246,9 +246,8 @@ export default function Login() {
   return (
     <>
       {/*
-        UNA SOLA PANTALLA:
-        h-screen + overflow-hidden evita que el login principal genere scroll.
-        Los modales sí pueden desplazarse internamente en pantallas pequeñas.
+        El contenido se adapta a la altura disponible sin barras internas.
+        En pantallas bajas, la página completa puede desplazarse.
       */}
       <style>{`
         @keyframes glFadeUp {
@@ -360,7 +359,7 @@ export default function Login() {
         }
       `}</style>
 
-      <div className="h-screen overflow-hidden bg-white flex flex-col">
+      <div className="min-h-screen min-h-[100dvh] bg-white flex flex-col">
         {/* HEADER */}
         <header className="h-[60px] shrink-0 bg-white border-b border-gray-100 shadow-sm flex items-center justify-between px-5 lg:px-7">
           <img
@@ -376,7 +375,7 @@ export default function Login() {
 
         <main className="flex flex-1 min-h-0">
           {/* LOGIN GRANDE Y PROFESIONAL */}
-          <section className="relative w-full lg:w-1/2 bg-[#0C2D6B] flex items-start justify-center px-5 lg:px-10 py-3 overflow-x-hidden overflow-y-auto">
+          <section className="relative w-full lg:w-1/2 bg-[#0C2D6B] flex items-start justify-center px-5 lg:px-10 py-3 overflow-hidden">
             <div className="gl-glow absolute -top-24 -left-24 h-72 w-72 rounded-full bg-[#FF6A00]/15 blur-3xl" />
             <div className="absolute -bottom-32 -right-24 h-80 w-80 rounded-full bg-white/[0.06] blur-3xl" />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_25%,rgba(255,255,255,0.06),transparent_25%)]" />
@@ -635,9 +634,9 @@ export default function Login() {
             </div>
           </section>
         </main>
-        <footer className="shrink-0 flex items-center justify-center gap-3 border-t border-gray-100 bg-white px-4 py-2 text-[#0C2D6B]">
-          <img src={universidadLogo} alt="Universidad Mariano Gálvez de Guatemala" className="h-12 w-12 shrink-0 object-contain" />
-          <div className="text-xs leading-relaxed sm:text-sm">
+        <footer className="shrink-0 flex items-center justify-center gap-2 bg-[#071E49] px-3 py-1.5 text-blue-100">
+          <img src={universidadLogo} alt="Universidad Mariano Gálvez de Guatemala" className="h-8 w-8 shrink-0 object-contain" />
+          <div className="text-[10px] leading-[14px] sm:text-[11px]">
             <p className="font-semibold">Proyecto 2026 · Yoselin Alvarez</p>
             <p>Universidad Mariano Gálvez de Guatemala</p>
           </div>
