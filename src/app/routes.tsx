@@ -4,6 +4,7 @@ import { useAuth } from "./context/AuthContext";
 
 // Páginas
 import Login from "./pages/Login";
+import { Landing } from "./pages/Landing";
 import { Dashboard } from "./pages/Dashboard";
 import { CRM } from "./pages/CRM";
 import { Operaciones } from "./pages/Operaciones";
@@ -87,7 +88,7 @@ function PrivateRoute({
 export const router = createBrowserRouter([
   {
     path: "/",
-    element: <Navigate to="/login" replace />,
+    element: <Landing />,
   },
 
   {

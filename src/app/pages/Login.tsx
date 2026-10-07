@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
   Mail,
   Lock,
@@ -21,6 +21,7 @@ import { useAuth } from "../context/AuthContext";
 
 import logoImage from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
 import fondoOficina from "../../assets/fondo-oficina-gl365.jpg";
+import universidadLogo from "../../assets/universidad-mariano-galvez.jpg";
 
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_URL || "/api";
@@ -368,20 +369,19 @@ export default function Login() {
             className="h-11 object-contain"
           />
 
-          <div className="hidden md:flex items-center gap-2 rounded-full border border-gray-100 bg-gray-50 px-4 py-2 text-[11px] font-semibold text-gray-500">
-            <Truck className="h-4 w-4 text-[#FF6A00]" />
-            Transporte · Logística · Operaciones
-          </div>
+          <Link to="/" className="rounded-lg border border-[#0C2D6B]/20 px-3 py-2 text-xs font-semibold text-[#0C2D6B] hover:bg-blue-50 sm:text-sm">
+            Regresar al inicio
+          </Link>
         </header>
 
         <main className="flex flex-1 min-h-0">
           {/* LOGIN GRANDE Y PROFESIONAL */}
-          <section className="relative w-full lg:w-1/2 bg-[#0C2D6B] flex items-center justify-center px-5 lg:px-10 py-3 overflow-hidden">
+          <section className="relative w-full lg:w-1/2 bg-[#0C2D6B] flex items-start justify-center px-5 lg:px-10 py-3 overflow-x-hidden overflow-y-auto">
             <div className="gl-glow absolute -top-24 -left-24 h-72 w-72 rounded-full bg-[#FF6A00]/15 blur-3xl" />
             <div className="absolute -bottom-32 -right-24 h-80 w-80 rounded-full bg-white/[0.06] blur-3xl" />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_25%,rgba(255,255,255,0.06),transparent_25%)]" />
 
-            <div className="relative z-10 w-full max-w-[500px]">
+            <div className="relative z-10 my-auto w-full max-w-[500px] shrink-0">
               <div className="gl-login-brand gl-fade-up text-center mb-4">
                 <h1 className="text-[31px] lg:text-[36px] leading-tight font-extrabold tracking-tight text-white">
                   Grupo Logístico <span className="text-[#FF6A00]">365</span>
@@ -635,6 +635,13 @@ export default function Login() {
             </div>
           </section>
         </main>
+        <footer className="shrink-0 flex items-center justify-center gap-3 border-t border-gray-100 bg-white px-4 py-2 text-[#0C2D6B]">
+          <img src={universidadLogo} alt="Universidad Mariano Gálvez de Guatemala" className="h-12 w-12 shrink-0 object-contain" />
+          <div className="text-xs leading-relaxed sm:text-sm">
+            <p className="font-semibold">Proyecto 2026 · Yoselin Alvarez</p>
+            <p>Universidad Mariano Gálvez de Guatemala</p>
+          </div>
+        </footer>
       </div>
 
       {/* MODAL SOLICITAR CAMBIO */}

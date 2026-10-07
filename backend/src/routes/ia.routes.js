@@ -6,7 +6,7 @@ const router = express.Router();
 const BOOTSTRAP_SAMPLE_LIMIT = 15;
 const MODULE_ROW_LIMIT = 30;
 const DETAIL_ROW_LIMIT = 60;
-const MAX_GROQ_CONTEXT_CHARS = 18000;
+
 const MAX_QUESTION_CHARS = 1500;
 
 const money = (value) =>
@@ -14,32 +14,6 @@ const money = (value) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
-
-const normalizeGroqModel = () => {
-  const raw = String(process.env.GROQ_MODEL || "").trim();
-
-  const deprecatedModels = new Set([
-    "llama-3.1-8b-instant",
-    "llama3-8b-8192",
-    "llama3-70b-8192",
-  ]);
-
-  if (!raw || deprecatedModels.has(raw)) {
-    return "openai/gpt-oss-20b";
-  }
-
-  return raw;
-};
-
-const GROQ_FALLBACK_MODELS = [
-  normalizeGroqModel(),
-  "openai/gpt-oss-20b",
-  "openai/gpt-oss-120b",
-  "qwen/qwen3.6-27b",
-].filter(
-  (model, index, arr) =>
-    Boolean(model) && arr.indexOf(model) === index
-);
 
 const safeQuery = async (label, sql, params = []) => {
   try {
@@ -275,6 +249,7 @@ const STOPWORDS = new Set(
     "pago",
     "pagos",
     "saldo",
+    "cobrar",
     "cobranza",
     "asignacion",
     "asignaciones",
@@ -1225,8 +1200,8 @@ const getContextoCompacto = async () => {
 
   return {
     ok: errors.length === 0,
-    groqConfigured: Boolean(process.env.GROQ_API_KEY),
-    model: normalizeGroqModel(),
+    groqConfigured: false,
+    model: null,
     data,
     diagnostics: {
       errors,
@@ -2398,6 +2373,25 @@ const buildLocalAnswer = (question, ctx) => {
   const { kpis } = ctx.data;
   const relevant = ctx.relevant || {};
 
+  if (/\b(cuantos|cuantas|cantidad|total de)\b/.test(q)) {
+    const counts = [
+      [/clientes?\b/, "clientes", "clientes"],
+      [/rutas?\b/, "rutas", "rutas"],
+      [/proveedores?\b/, "proveedores", "proveedores"],
+      [/vehiculos?\b/, "vehiculos_total", "vehículos"],
+      [/comprobantes?\b/, "comprobantes", "comprobantes"],
+      [/cotizaciones?\b/, "cotizaciones", "cotizaciones"],
+      [/oportunidades?\b/, "oportunidades", "oportunidades"],
+      [/envios?\b/, "envios", "envíos"],
+      [/viajes?\b/, "viajes_total", "viajes"],
+    ];
+    // Los totales generales no sustituyen consultas con filtros o estados.
+    if (!/activo|pendiente|vencid|disponible|pagad|cancelad|entregad|retras|cliente\s+\w+|proveedor\s+\w+/.test(q)) {
+      const match = counts.find(([pattern]) => pattern.test(q));
+      if (match) return `# Consulta GL365\n\nHay **${kpis[match[1]] || 0} ${match[2]}** registrados en el sistema.`;
+    }
+  }
+
   if (isSystemOverviewQuestion(question)) {
     const moduleTable = markdownTable(
       ["Módulo", "Información consultable", "Registros principales"],
@@ -2754,282 +2748,6 @@ Podés consultar un cliente, proveedor, viaje, servicio de transporte, ruta, veh
 };
 
 /* =========================================================
-   GROQ
-========================================================= */
-
-const buildRentabilidadGroqContext = (ctx) => {
-  const kpis = ctx?.data?.kpis || {};
-  const asignaciones = Array.isArray(
-    ctx?.relevant?.operations?.asignaciones
-  )
-    ? ctx.relevant.operations.asignaciones
-    : [];
-
-  // Tomamos únicamente los campos que realmente sirven para analizar
-  // rentabilidad. No enviamos teléfonos, licencias, contactos,
-  // mantenimientos, datos documentales, etc.
-  const operaciones = asignaciones
-    .map((row) => ({
-      asignacion: row.codigo_asignacion || "-",
-      cliente: row.cliente || "-",
-      ruta: row.ruta || "-",
-      proveedor: row.proveedor || "-",
-      estado: row.estado || "-",
-      ingreso_cliente: Number(row.ingreso_cliente || 0),
-      costo_proveedor: Number(row.costo_proveedor || 0),
-      costo_asignacion: Number(row.costo_asignacion || 0),
-      margen: Number(row.margen || 0),
-    }))
-    .sort((a, b) => b.margen - a.margen);
-
-  const conIngreso = operaciones.filter(
-    (row) => row.ingreso_cliente > 0
-  );
-
-  const totalIngreso = Number(kpis.ingreso_cliente || 0);
-  const totalCosto = Number(kpis.costo_proveedor || 0);
-  const margenTotal = Number(kpis.margen_operativo || 0);
-
-  const margenPorcentaje =
-    totalIngreso > 0
-      ? Number(
-          ((margenTotal / totalIngreso) * 100).toFixed(2)
-        )
-      : 0;
-
-  const rentables = operaciones.filter(
-    (row) => row.margen > 0
-  ).length;
-
-  const sinMargen = operaciones.filter(
-    (row) => row.margen === 0
-  ).length;
-
-  const conPerdida = operaciones.filter(
-    (row) => row.margen < 0
-  ).length;
-
-  const topRentables = operaciones
-    .filter((row) => row.margen > 0)
-    .slice(0, 6);
-
-  const menorMargen = [...operaciones]
-    .sort((a, b) => a.margen - b.margen)
-    .slice(0, 6);
-
-  return sanitizeForAI({
-    resumen_financiero: {
-      ingreso_cliente: totalIngreso,
-      costo_proveedor: totalCosto,
-      margen_operativo: margenTotal,
-      margen_porcentaje: margenPorcentaje,
-      asignaciones_analizadas: operaciones.length,
-      asignaciones_con_ingreso: conIngreso.length,
-      operaciones_rentables: rentables,
-      operaciones_sin_margen: sinMargen,
-      operaciones_con_perdida: conPerdida,
-    },
-    operaciones_mas_rentables: topRentables,
-    operaciones_menor_margen: menorMargen,
-  });
-};
-
-const buildRentabilidadPrompt = (
-  question,
-  ctx,
-  verifiedAnswer
-) => {
-  const compactContext = JSON.stringify(
-    buildRentabilidadGroqContext(ctx)
-  );
-
-  return [
-    {
-      role: "system",
-      content:
-        "Eres GL365 Intelligence, analista de rentabilidad del ERP Grupo Logístico 365. " +
-        "Responde en español de Guatemala, claro, profesional y ejecutivo. " +
-        "Usa únicamente las cifras reales de MySQL entregadas. " +
-        "No inventes ingresos, costos, márgenes, clientes, proveedores o rutas. " +
-        "No confundas facturación general con ingreso de una asignación. " +
-        "Cuando muestres operaciones usa una tabla Markdown compacta de máximo 6 filas.",
-    },
-    {
-      role: "user",
-      content:
-        `Pregunta del usuario:\n${String(
-          question || ""
-        ).slice(0, 1000)}\n\n` +
-        `Resumen local verificado:\n${String(
-          verifiedAnswer || ""
-        ).slice(0, 2400)}\n\n` +
-        `Contexto compacto de rentabilidad:\n${compactContext}\n\n` +
-        "Entrega la respuesta con estas secciones: " +
-        "Resumen ejecutivo, Indicadores de rentabilidad, " +
-        "Operaciones destacadas, Riesgos/Prioridades y Acciones recomendadas. " +
-        "Mantén las cifras exactas y evita texto innecesario.",
-    },
-  ];
-};
-
-const buildGroqContext = (ctx) => {
-  const safe = sanitizeForAI({
-    resumen: ctx.data.summary,
-    kpis: ctx.data.kpis,
-    modulos_consultados: ctx.modules,
-    terminos_busqueda: ctx.terms,
-    informacion_relevante: ctx.relevant,
-  });
-
-  const serialized = JSON.stringify(safe);
-
-  return serialized.length > MAX_GROQ_CONTEXT_CHARS
-    ? serialized.slice(0, MAX_GROQ_CONTEXT_CHARS)
-    : serialized;
-};
-
-const buildGroqPrompt = (question, ctx, verifiedAnswer) => {
-  if (isRentabilidadQuestion(question)) {
-    return buildRentabilidadPrompt(
-      question,
-      ctx,
-      verifiedAnswer
-    );
-  }
-
-  const contextText = buildGroqContext(ctx);
-
-  return [
-    {
-      role: "system",
-      content:
-        "Eres GL365 Intelligence, el asistente gerencial del ERP Grupo Logístico 365. " +
-        "Responde en español de Guatemala, claro, profesional y accionable. " +
-        "Utiliza únicamente la información real de MySQL entregada en el contexto. " +
-        "No inventes registros, fechas, estados, montos, nombres, teléfonos ni direcciones. " +
-        "Si no hay coincidencias suficientes, dilo claramente. " +
-        "Si el usuario pide información general del sistema, organiza la respuesta por módulos y usa los totales reales de MySQL. " +
-        "Si pide un registro específico, responde primero el dato solicitado y después agrega contexto breve. " +
-        "Cuando compares registros usa una tabla Markdown de pocas columnas. " +
-        "Para análisis usa secciones y viñetas. " +
-        "Nunca pidas ni reveles contraseñas, hashes, tokens o credenciales.",
-    },
-    {
-      role: "user",
-      content:
-        `Pregunta del usuario:\n${String(question || "").slice(
-          0,
-          MAX_QUESTION_CHARS
-        )}\n\n` +
-        `Borrador local verificado con MySQL:\n${verifiedAnswer.slice(
-          0,
-          5000
-        )}\n\n` +
-        `Contexto real relevante de MySQL:\n${contextText}\n\n` +
-        "Redacta la mejor respuesta posible. Conserva las cifras exactas del contexto. " +
-        "Si la pregunta pide un dato puntual, responde primero ese dato y luego agrega contexto breve. " +
-        "Si pide informe, usa: Resumen ejecutivo, Hallazgos, Riesgos/Prioridades, Acciones recomendadas y Conclusión.",
-    },
-  ];
-};
-
-const askGroq = async (question, ctx) => {
-  const verifiedAnswer = buildLocalAnswer(question, ctx);
-
-  if (!process.env.GROQ_API_KEY) {
-    return {
-      provider: {
-        name: "local",
-        used: false,
-        groqConfigured: false,
-        model: ctx.model,
-        warning:
-          "Groq no está configurado. Se usó análisis local verificado.",
-      },
-      answer: verifiedAnswer,
-    };
-  }
-
-  const messages = buildGroqPrompt(
-    question,
-    ctx,
-    verifiedAnswer
-  );
-
-  let lastError = null;
-
-  for (const model of GROQ_FALLBACK_MODELS) {
-    try {
-      const response = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            messages,
-            temperature: 0.1,
-            // Rentabilidad usa un contexto mucho más compacto,
-            // por eso también reservamos menos tokens de salida.
-            // Las demás consultas mantienen el comportamiento anterior.
-            max_tokens: isRentabilidadQuestion(question)
-              ? 850
-              : 1500,
-          }),
-        }
-      );
-
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        lastError =
-          payload?.error?.message ||
-          `Groq respondió ${response.status}`;
-
-        console.error("Error Groq IA:", payload);
-        continue;
-      }
-
-      const answer = String(
-        payload?.choices?.[0]?.message?.content || ""
-      ).trim();
-
-      return {
-        provider: {
-          name: "groq",
-          used: true,
-          groqConfigured: true,
-          model,
-          warning: null,
-        },
-        answer: answer || verifiedAnswer,
-      };
-    } catch (error) {
-      lastError = error?.message || "Error conectando con Groq";
-      console.error("Error Groq IA:", error);
-    }
-  }
-
-  return {
-    provider: {
-      name: "local",
-      used: false,
-      groqConfigured: true,
-      model: ctx.model,
-      warning: isRentabilidadQuestion(question)
-        ? "Groq alcanzó temporalmente su límite al analizar rentabilidad. Se mostró el análisis local verificado con datos reales de MySQL."
-        : lastError
-        ? `Groq no respondió correctamente: ${lastError}. Se usó análisis local verificado.`
-        : "Groq no respondió correctamente. Se usó análisis local verificado.",
-    },
-    answer: verifiedAnswer,
-  };
-};
-
-/* =========================================================
    ENDPOINTS
 ========================================================= */
 
@@ -3042,7 +2760,7 @@ router.get("/bootstrap", async (_req, res) => {
       groqConfigured: ctx.groqConfigured,
       model: ctx.model,
       provider: {
-        name: ctx.groqConfigured ? "groq" : "local",
+        name: "database",
         used: false,
         groqConfigured: ctx.groqConfigured,
         model: ctx.model,
@@ -3093,7 +2811,10 @@ const handleQuestion = async (req, res) => {
 
   try {
     const ctx = await getRelevantContext(question);
-    const result = await askGroq(question, ctx);
+    const result = {
+      answer: buildLocalAnswer(question, ctx),
+      provider: { name: "database", used: false, groqConfigured: false, model: null, warning: null },
+    };
 
     return res.json({
       ok: true,

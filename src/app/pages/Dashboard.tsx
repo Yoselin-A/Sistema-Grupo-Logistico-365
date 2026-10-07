@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
   Truck,
   FileText,
@@ -792,6 +792,9 @@ export function Dashboard() {
           </p>
         </div>
 
+        <Link to="/" className="rounded-lg border border-[#0C2D6B]/20 px-4 py-2 text-sm font-semibold text-[#0C2D6B] hover:bg-blue-50">
+          Regresar al inicio
+        </Link>
         <button
           onClick={actualizarTodo}
           className="bg-[#0C2D6B] text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-[#143C8C] transition-colors w-full sm:w-auto"

@@ -35,7 +35,7 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
-import { Card } from "../components/ui/Card";
+import { Card } from "../components/ui/card";
 
 const API_BASE_URL = "/api";
 
@@ -844,12 +844,7 @@ export function IALogistica() {
             payload?.answer ||
             "No se recibió respuesta de la IA.",
           createdAt: new Date().toISOString(),
-          provider:
-            payload?.provider?.name === "groq"
-              ? `Groq · ${
-                  payload?.provider?.model || "modelo"
-                }`
-              : "Análisis local",
+          provider: "GL365 Intelligence",
           warning:
             payload?.warning ||
             payload?.provider?.warning ||
@@ -915,11 +910,7 @@ export function IALogistica() {
     }
   };
 
-  const groqReady = Boolean(
-    provider?.groqConfigured ||
-      provider?.used ||
-      provider?.name === "groq"
-  );
+  const assistantReady = diagnostics?.errors?.length === 0;
 
   const diagnosticsErrors = Array.isArray(
     diagnostics?.errors
@@ -975,22 +966,20 @@ export function IALogistica() {
 
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-black ${
-                      groqReady
+                      assistantReady
                         ? "bg-green-50 text-green-700"
                         : "bg-amber-50 text-amber-700"
                     }`}
                   >
                     <span
                       className={`h-2 w-2 rounded-full ${
-                        groqReady
+                        assistantReady
                           ? "bg-green-500"
                           : "bg-amber-500"
                       }`}
                     />
 
-                    {groqReady
-                      ? "Groq conectado"
-                      : "Groq conectado / respaldo local"}
+                    {assistantReady ? "Asistente conectado" : "Revisar conexión"}
                   </span>
                 </div>
 
@@ -1422,13 +1411,13 @@ export function IALogistica() {
                         IA + base de datos
                       </p>
                       <p className="truncate text-[10px] text-white/70">
-                        {groqReady ? "Groq activo" : "Respaldo local"} · credenciales protegidas
+                        Consultas sobre datos del sistema
                       </p>
                     </div>
                   </div>
 
                   <span className="max-w-[145px] shrink-0 truncate rounded-full bg-white/10 px-2.5 py-1 text-[9px] font-bold text-white/90">
-                    {provider?.model || "modelo IA"}
+                    GL365
                   </span>
                 </div>
               </section>

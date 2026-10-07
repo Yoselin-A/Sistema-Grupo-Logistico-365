@@ -1695,7 +1695,7 @@ export function Facturacion() {
   };
 
   return (
-    <div className="w-full min-w-0 max-w-[calc(100vw-17rem)] space-y-7 overflow-x-hidden px-2 sm:px-3 pb-12">
+    <div className="w-full min-w-0 max-w-full space-y-7 overflow-x-hidden px-2 sm:px-3 pb-12">
       <div className="flex min-w-0 flex-col gap-4 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-[0.25em] text-[#FF6A00]">Facturación</p>
@@ -1751,7 +1751,7 @@ export function Facturacion() {
         </div>
 
       <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_175px_210px_190px_105px_90px_100px]">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-4">
           <div className="relative min-w-0">
             <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
             <input
@@ -1823,8 +1823,44 @@ export function Facturacion() {
         </div>
       </div>
 
+      <div className="mt-6 space-y-3 lg:hidden">
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="comprobantes-sort" className="text-sm font-semibold text-gray-600">Ordenar por</label>
+          <select id="comprobantes-sort" value={sortField} onChange={(event) => handleSort(event.target.value)} className="min-w-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm">
+            <option value="">Sin ordenar</option>
+            <option value="comprobante">Comprobante</option><option value="cliente">Cliente</option><option value="fecha">Fecha</option><option value="total">Total</option><option value="saldo">Saldo</option><option value="estado">Estado</option><option value="forma">Forma de pago</option><option value="emisor">Emisor</option>
+          </select>
+          <button type="button" disabled={!sortField} onClick={() => handleSort(sortField)} className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-40">{sortDirection === "asc" ? "Ascendente ↑" : "Descendente ↓"}</button>
+        </div>
+        {paginatedComprobantes.map((comprobante) => (
+          <article key={comprobante.id} className="min-w-0 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="break-all font-mono font-bold text-[#0C2D6B]">{comprobante.serie}-{comprobante.numero_comprobante}</p>
+              <Badge estado={comprobante.estado} />
+            </div>
+            <p className="mt-2 break-words font-semibold text-gray-800">{comprobante.cliente || "-"}</p>
+            <p className="text-xs text-gray-500">NIT: {comprobante.cliente_nit || "C/F"}</p>
+            <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+              <div className="min-w-0"><dt className="text-gray-500">Total</dt><dd className="break-words font-bold">{formatMoney(comprobante.total, comprobante.moneda || "GTQ")}</dd></div>
+              <div className="min-w-0"><dt className="text-gray-500">Saldo</dt><dd className="break-words font-bold text-[#0C2D6B]">{formatMoney(comprobante.saldo, comprobante.moneda || "GTQ")}</dd></div>
+              <div><dt className="text-gray-500">Emisión</dt><dd>{formatDate(comprobante.fecha_emision)}</dd></div>
+              <div><dt className="text-gray-500">Vencimiento</dt><dd>{formatDate(comprobante.fecha_vencimiento)}</dd></div>
+              <div className="min-w-0"><dt className="text-gray-500">Forma de pago</dt><dd className="break-words">{comprobante.forma_pago || "-"}</dd></div>
+              <div className="min-w-0"><dt className="text-gray-500">Emisor</dt><dd className="break-words">{comprobante.usuario || "-"}</dd></div>
+            </dl>
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-gray-100 pt-3">
+              <ActionButton title="Ver" icon={Eye} tone="blue" onClick={() => setViewModal(comprobante)} />
+              <ActionButton title="Editar" icon={Edit2} tone="orange" onClick={() => openEditModal(comprobante)} />
+              <ActionButton title="Registrar pago" icon={CreditCard} tone="green" onClick={() => openPagoModal(comprobante)} />
+              <ActionButton title="Descargar PDF" icon={Download} onClick={() => exportComprobantePDF(comprobante)} />
+              <ActionButton title="Eliminar" icon={Trash2} tone="red" onClick={() => setDeleteModal(comprobante)} />
+            </div>
+          </article>
+        ))}
+      </div>
+
       <div className="mt-6 min-w-0 max-w-full overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-        <div className="w-full max-w-full overflow-x-auto">
+        <div className="hidden w-full max-w-full overflow-x-auto lg:block">
           <table className="w-full min-w-[1040px] text-left text-[12.5px]">
             <thead className="border-b border-gray-100 bg-gray-50 text-[11px] uppercase tracking-wide text-gray-400">
               <tr>
@@ -2055,7 +2091,7 @@ function ComprobanteModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-2 sm:p-4 backdrop-blur-sm">
-      <div className="my-2 flex max-h-[90vh] w-full max-w-[980px] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+      <div className="my-2 flex max-h-[calc(100dvh-2rem)] w-full max-w-[980px] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
           <div>
             <h2 className="text-xl font-bold text-[#0C2D6B]">{mode === "create" ? "Nuevo Comprobante" : "Editar Comprobante"}</h2>
@@ -2269,7 +2305,7 @@ function SummaryLine({ label, value, strong }: { label: string; value: string; s
 function DetalleComprobanteModal({ comprobante, detalles, pagos, onClose, onEdit, onPago, onPDF }: { comprobante: ComprobanteRow; detalles: DetalleComprobanteRow[]; pagos: PagoRow[]; onClose: () => void; onEdit: () => void; onPago: () => void; onPDF: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
-      <div className="flex max-h-[94vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+      <div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
           <div>
             <h2 className="text-xl font-bold text-[#0C2D6B]">Detalle de Comprobante</h2>
@@ -2396,7 +2432,7 @@ function PagoModal({ comprobante, form, setForm, errors, setErrors, formasPago, 
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
-      <div className="w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+      <div className="max-h-[calc(100dvh-1.5rem)] w-full max-w-xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
           <div>
             <h2 className="text-xl font-bold text-[#0C2D6B]">Registrar pago</h2>
@@ -2437,7 +2473,7 @@ function PagoModal({ comprobante, form, setForm, errors, setErrors, formasPago, 
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-4">
+        <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-4">
           <button type="button" onClick={onClose} className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-sm font-bold text-gray-700 hover:bg-gray-100">Cancelar</button>
           <button data-save-button="true" type="button" onClick={onSave} disabled={saving} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#0C2D6B] px-5 text-sm font-bold text-white hover:bg-[#143C8C] disabled:opacity-60">
             {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
