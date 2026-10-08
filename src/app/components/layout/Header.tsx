@@ -715,10 +715,10 @@ export function Header({ onMenuClick }: HeaderProps) {
 
   return (
     <header className="gl365-header bg-white border-b border-gray-200 px-4 sm:px-6 py-3 shadow-sm flex items-center justify-between z-30 relative h-16 sticky top-0">
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <button
           onClick={onMenuClick}
-          className="md:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+          className="lg:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
           aria-label="Abrir menú"
         >
           <Menu className="w-6 h-6 text-[#0C2D6B]" />
@@ -727,17 +727,17 @@ export function Header({ onMenuClick }: HeaderProps) {
         <img
           src={logoImage}
           alt="Grupo Logístico 365"
-          className="h-8 sm:h-10 w-auto object-contain"
+          className="h-7 sm:h-10 max-w-[110px] sm:max-w-[150px] w-auto object-contain"
         />
       </div>
 
-      <div className="flex items-center gap-1.5 sm:gap-3">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-3">
         <button
           type="button"
           onClick={() => { logout(); navigate("/login", { replace: true }); }}
           aria-label="Cerrar sesión"
           title="Cerrar sesión"
-          className="md:hidden flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-[#0C2D6B] hover:bg-gray-50"
+          className="lg:hidden flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-[#0C2D6B] hover:bg-gray-50"
         >
           <LogOut className="h-5 w-5" />
         </button>
@@ -795,7 +795,7 @@ export function Header({ onMenuClick }: HeaderProps) {
           </button>
 
           {notificationsOpen && (
-            <div className="gl365-notification-panel absolute right-0 top-12 w-[min(92vw,430px)] bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden z-50">
+            <div className="gl365-notification-panel flex max-h-[calc(100dvh-88px)] flex-col fixed left-3 right-3 top-[72px] sm:absolute sm:left-auto sm:right-0 sm:top-12 sm:w-[430px] bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden z-50">
               <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
                 <div>
                   <h3 className="font-bold text-[#0C2D6B]">
@@ -867,7 +867,7 @@ export function Header({ onMenuClick }: HeaderProps) {
                 </div>
               </div>
 
-              <div className="max-h-[540px] overflow-y-auto">
+              <div className="min-h-0 flex-1 max-h-[540px] overflow-y-auto">
                 {loadingNotifications &&
                 notifications.length === 0 ? (
                   <div className="px-5 py-8 text-center text-sm text-gray-500">
@@ -1041,8 +1041,8 @@ export function Header({ onMenuClick }: HeaderProps) {
           )}
         </div>
 
-        <div className="text-right hidden sm:block">
-          <p className="text-sm font-bold text-[#0C2D6B]">
+        <div className="min-w-0 max-w-[180px] xl:max-w-[260px] text-right hidden sm:block">
+          <p className="truncate text-sm font-bold text-[#0C2D6B]" title={userName}>
             {userName}
           </p>
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
@@ -1050,7 +1050,7 @@ export function Header({ onMenuClick }: HeaderProps) {
           </p>
         </div>
 
-        <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#0C2D6B] flex items-center justify-center text-white font-bold shadow-sm text-sm">
+        <div className="shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[#0C2D6B] flex items-center justify-center text-white font-bold shadow-sm text-sm">
           {userName.charAt(0)}
         </div>
       </div>

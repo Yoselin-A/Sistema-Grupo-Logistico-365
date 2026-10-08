@@ -670,3 +670,61 @@ html.dark .bg-gray-100,
 html.dark .bg-slate-200 {
   background-color: #26344A !important;
 }
+
+/* Shared presentation rules for every ERP module. */
+.gl365-main { width: 100%; }
+.gl365-main > *, .gl365-main .grid > *, .gl365-main .flex > * { min-width: 0; }
+.gl365-main :is(h1,h2,h3,h4,label) { overflow-wrap: anywhere; }
+.gl365-main :is(input,select,textarea) { max-width: 100%; }
+.gl365-main :is(.overflow-x-auto,.overflow-auto) { max-width: 100%; overscroll-behavior-x: contain; }
+.gl365-main table { font-variant-numeric: tabular-nums; }
+.gl365-main :is(button,a,input,select,textarea):focus-visible,
+.gl365-header button:focus-visible, .gl365-sidebar :is(a,button):focus-visible {
+  outline: 2px solid #60a5fa; outline-offset: 3px;
+}
+.gl365-sidebar { box-shadow: 6px 0 24px rgb(0 0 0 / .12); }
+html.dark .gl365-header > div > img { background: #fff; padding: 4px 8px; border-radius: 8px; height: 40px; }
+html.dark { color-scheme: dark; }
+html:not(.dark) { color-scheme: light; }
+html.dark :is(.text-slate-900,.text-slate-800,.text-slate-700,.text-zinc-900,.text-neutral-900) { color: #e8eef7 !important; }
+html.dark :is(.text-slate-600,.text-zinc-600,.text-neutral-600) { color: #bccbdd !important; }
+html.dark :is(.border-slate-100,.border-slate-200,.border-slate-300,.border-zinc-200) { border-color: #304157 !important; }
+html.dark :is(.ring-slate-200,.ring-gray-200,.ring-slate-100) { --tw-ring-color: #304157 !important; }
+html.dark :is(.text-indigo-600,.text-indigo-700,.text-indigo-800,.text-blue-900) { color: #a5c7ff !important; }
+html.dark :is(.text-emerald-600,.text-emerald-700,.text-emerald-800,.text-green-900) { color: #86e4b6 !important; }
+html.dark :is(.text-amber-600,.text-amber-700,.text-amber-800) { color: #f8cf7c !important; }
+html.dark :is(.text-rose-600,.text-rose-700,.text-rose-800) { color: #ffabb9 !important; }
+html.dark :is(.bg-indigo-50,.bg-indigo-100,.bg-sky-50,.bg-sky-100) { background-color: #1d304b !important; }
+html.dark :is(.bg-emerald-50,.bg-emerald-100) { background-color: #173c35 !important; }
+html.dark :is(.bg-amber-50,.bg-amber-100) { background-color: #3c3020 !important; }
+html.dark :is(.bg-rose-50,.bg-rose-100) { background-color: #402633 !important; }
+html.dark :is(.hover\:bg-slate-50,.hover\:bg-slate-100,.hover\:bg-blue-50):hover { background-color: #23344a !important; }
+html.dark .gl365-main :is(.shadow-sm,.shadow-md,.shadow-lg) { --tw-shadow-color: rgb(0 0 0 / .18); }
+html.dark .recharts-cartesian-axis-tick-value { fill: #bccbdd; }
+html.dark .recharts-cartesian-grid line { stroke: #304157; }
+html.dark .recharts-default-tooltip { background-color: #182438 !important; border: 1px solid #3d516d !important; border-radius: 12px; color: #e8eef7 !important; }
+html.dark .recharts-tooltip-label { color: #e8eef7 !important; }
+html.dark .recharts-legend-item-text { color: #bccbdd !important; }
+html.dark .recharts-wrapper [fill="#0C2D6B"] { fill: #8ab9ff; }
+html.dark .recharts-wrapper [stroke="#0C2D6B"] { stroke: #8ab9ff; }
+html.dark .recharts-tooltip-cursor { fill: rgb(148 163 184 / .08); }
+html.dark :is(input,textarea)::placeholder { color: #9aacc3 !important; }
+html.dark :is(input,select,textarea):focus { border-color: #7eb2ff !important; box-shadow: 0 0 0 3px rgb(96 165 250 / .14); }
+html.dark .gl365-sidebar { background: linear-gradient(180deg,#132b4b,#0e1d34); border-right: 1px solid #293e59; }
+html.dark .gl365-notification-panel .sticky { background: #1b2b42 !important; }
+html.dark .bg-gray-50\/95 { background-color: #1b2b42 !important; }
+@media (max-width: 639px) {
+  .gl365-main { padding: 16px 12px; }
+  .gl365-main h1 { font-size: 1.5rem; line-height: 1.3; }
+  .gl365-main :is(input:not([type=checkbox]):not([type=radio]),select,textarea) { font-size: 16px; }
+  .gl365-main :is(button,input:not([type=checkbox]):not([type=radio]),select) { min-height: 44px; }
+  .gl365-main > div > .flex.items-center.justify-between { flex-wrap: wrap; gap: 12px; }
+  .gl365-modal footer, .gl365-modal > div:last-child { max-width: 100%; }
+  .gl365-modal > div:last-child > .flex { flex-wrap: wrap; gap: 8px; }
+  .gl365-main .recharts-wrapper { max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gl365-app-shell *, .gl365-sidebar { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+.gl365-notification-panel > div:not(.overflow-y-auto) { flex-shrink: 0; }

@@ -19,6 +19,7 @@ import {
   Globe2,
   MapPinned,
   UserRound,
+  X,
 } from "lucide-react";
 import { cn } from "../../utils/cn";
 import { useAuth } from "../../context/AuthContext";
@@ -46,7 +47,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
   );
 
   const [openRecursos, setOpenRecursos] = useState(
-    location.pathname === "/flota" || location.pathname === "/pilotos" || (location.pathname === "/crm" && tabActual === "proveedores")
+    location.pathname === "/proveedores" || location.pathname === "/flota" || location.pathname === "/pilotos" || (location.pathname === "/crm" && tabActual === "proveedores")
   );
 
   const puedeModulo = (module: Parameters<typeof canAccessModule>[1]) =>
@@ -74,10 +75,10 @@ export function Sidebar({ isOpen = false, onClose }: any) {
       setOpenLogistica(true);
     }
 
-    if (location.pathname === "/flota" || location.pathname === "/pilotos" || (location.pathname === "/crm" && tabActual === "proveedores")) {
+    if (location.pathname === "/proveedores" || location.pathname === "/flota" || location.pathname === "/pilotos" || (location.pathname === "/crm" && tabActual === "proveedores")) {
       setOpenRecursos(true);
     }
-  }, [location.pathname]);
+  }, [location.pathname, tabActual]);
 
   const menuClass = (path: string) =>
     cn(
@@ -118,18 +119,20 @@ export function Sidebar({ isOpen = false, onClose }: any) {
 
   return (
     <aside
+      aria-label="Menú principal"
       className={cn(
-        "w-52 bg-gradient-to-b from-[#0C2D6B] to-[#081F4A] h-screen h-[100dvh] flex flex-col fixed left-0 top-0 z-50 transition-transform duration-300",
+        "gl365-sidebar w-52 bg-gradient-to-b from-[#0C2D6B] to-[#081F4A] h-screen h-[100dvh] flex flex-col fixed left-0 top-0 z-50 transition-transform duration-300",
         isOpen
           ? "translate-x-0"
-          : "-translate-x-full md:translate-x-0"
+          : "-translate-x-full lg:translate-x-0"
       )}
     >
       {/* LOGO */}
-      <div className="shrink-0 px-5 py-5 border-b border-[#143C8C]">
+      <div className="shrink-0 flex items-center justify-between px-5 py-5 border-b border-[#143C8C]">
         <h1 className="text-white text-xl font-bold leading-tight">
           GL365 ERP
         </h1>
+        <button type="button" onClick={onClose} aria-label="Cerrar menú" className="lg:hidden flex h-11 w-11 items-center justify-center rounded-lg text-white hover:bg-white/10"><X className="h-5 w-5" /></button>
       </div>
 
       {/* NAV */}
@@ -292,7 +295,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
           </>
         )}
 
-        {/* RECURSOS: Proveedores, Flota y Pilotos */}
+        {/* PRICING: Proveedores, Flota y Pilotos */}
         {puedeGrupoRecursos && (
           <>
             <button
@@ -306,7 +309,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
             >
               <div className="flex items-center gap-3 min-w-0">
                 <PackageOpen className="w-5 h-5 text-blue-200 shrink-0" />
-                <span className="truncate">Recursos</span>
+                <span className="truncate">Pricing</span>
               </div>
               <ChevronDown className={cn("w-4 h-4 text-blue-200 transition-transform", openRecursos && "rotate-180")} />
             </button>

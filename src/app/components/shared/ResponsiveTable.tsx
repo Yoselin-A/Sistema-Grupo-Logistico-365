@@ -23,7 +23,7 @@ export function ResponsiveTable({
 
   // Vista Desktop: Tabla tradicional
   const DesktopView = () => (
-    <div className="hidden md:block overflow-x-auto">
+    <div className="hidden md:block max-w-full overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-b-2 border-gray-200">
           <tr>
@@ -82,11 +82,11 @@ export function ResponsiveTable({
           ) : (
             <div className="space-y-2">
               {columns.map((col, colIdx) => (
-                <div key={colIdx} className="flex justify-between items-start">
+                <div key={colIdx} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-3 items-start">
                   <span className="text-xs font-semibold text-gray-500 uppercase">
                     {col.header}
                   </span>
-                  <span className={`text-sm font-medium text-right ${col.className || ''}`}>
+                  <span className={`min-w-0 break-words text-sm font-medium text-right ${col.className || ''}`}>
                     {col.render
                       ? col.render(row[col.accessor], row)
                       : row[col.accessor]

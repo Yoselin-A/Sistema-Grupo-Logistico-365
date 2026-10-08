@@ -6485,7 +6485,7 @@ export function CRM() {
 
       {/* TABS */}
       <div className="overflow-x-auto">
-        <div className="flex border-b border-gray-200 gap-5 sm:gap-8 min-w-max">
+        <div className="grid grid-cols-3 border-b border-gray-200 gap-1 sm:flex sm:gap-8">
           {[
             ["seguimiento", "Oportunidades"],
             ["clientes", "Clientes"],
@@ -6501,7 +6501,7 @@ export function CRM() {
                 setStatusFilter("Todos");
                 setLeadStageFilter("Todos");
               }}
-              className={`px-2 sm:px-4 pb-4 pt-2 font-bold text-base sm:text-lg relative transition-colors ${activeTab === id ? "text-[#0C2D6B]" : "text-gray-500 hover:text-[#0C2D6B]"}`}
+              className={`min-w-0 px-1 sm:px-4 pb-4 pt-2 font-bold text-sm sm:text-lg relative transition-colors ${activeTab === id ? "text-[#0C2D6B]" : "text-gray-500 hover:text-[#0C2D6B]"}`}
             >
               {label}
               {activeTab === id && <div className="absolute bottom-0 left-0 w-full h-1 bg-[#FF6A00] rounded-t" />}

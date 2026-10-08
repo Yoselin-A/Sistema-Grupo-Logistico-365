@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Outlet } from "react-router";
 
 import { Sidebar } from "./Sidebar";
@@ -16,6 +16,24 @@ interface MainLayoutProps {
  */
 export function MainLayout(_props: MainLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarOpen(false);
+    };
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const onDesktop = () => { if (desktop.matches) setSidebarOpen(false); };
+    document.addEventListener("keydown", onKeyDown);
+    desktop.addEventListener("change", onDesktop);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+      desktop.removeEventListener("change", onDesktop);
+    };
+  }, [sidebarOpen]);
 
   return (
     <div
@@ -46,18 +64,18 @@ export function MainLayout(_props: MainLayoutProps) {
             z-40
             bg-black/50
             backdrop-blur-[1px]
-            md:hidden
+            lg:hidden
           "
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col md:ml-52">
+      <div className="flex min-w-0 flex-1 flex-col lg:ml-52">
         <Header onMenuClick={() => setSidebarOpen(true)} />
 
         <main
           className="
-            min-w-0
+            gl365-main min-w-0
             max-w-full
             flex-1
             overflow-x-hidden
