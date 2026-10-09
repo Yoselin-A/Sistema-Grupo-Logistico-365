@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Outlet } from "react-router";
+import { Outlet, useLocation } from "react-router";
+import { useAuth } from "../../context/AuthContext";
 
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
@@ -16,6 +17,12 @@ interface MainLayoutProps {
  */
 export function MainLayout(_props: MainLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
+  const { refreshSession } = useAuth();
+
+  useEffect(() => {
+    void refreshSession();
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!sidebarOpen) return;

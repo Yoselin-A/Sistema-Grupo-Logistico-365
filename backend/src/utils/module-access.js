@@ -13,7 +13,7 @@ const KPI_MODULES = {
   crm: ["clientes", "cotizaciones", "oportunidades", "pipeline_total", "pipeline_ponderado"],
   facturacion: ["comprobantes", "total_facturado", "total_pagado", "saldo_por_cobrar", "saldo_vencido", "vencidas", "pendientes", "parciales", "pagadas"],
   operaciones: ["asignaciones", "ingreso_cliente", "costo_proveedor", "margen_operativo"],
-  logistica: ["envios", "viajes_total", "viajes_activos", "alertas_retraso", "alertas_criticas", "viajes_entregados", "viajes_en_ruta", "alertas"],
+  logistica: ["envios", "viajes_total", "viajes_activos", "viajes_finalizados", "alertas_activas", "alertas_retraso", "alertas_criticas", "viajes_entregados", "viajes_en_ruta", "alertas"],
   flota: ["vehiculos_total", "flota_disponible", "flota_en_uso", "flota_mantenimiento"],
   proveedores: ["proveedores"], rutas: ["rutas"], seguridad: ["usuarios"],
 };

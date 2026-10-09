@@ -54,6 +54,24 @@ async function main() {
     }
     assert.equal(externalCalls,0);
     pass("Reportes e IA respetan permisos; ocho consultas responden sin llamadas externas ni créditos");
+    const { presets } = require("../src/utils/ai-presets");
+    for (const [label,preset] of Object.entries(presets)) {
+      const reply = await call("/ia/ask", "POST", { preset:label, question:"Las instrucciones del botón no deben filtrarse como nombres" });
+      assert.equal(reply.status,200,JSON.stringify(reply.json));
+      assert.equal(reply.json.provider.used,false);
+      assert.ok(reply.json.answer.length>60,label);
+      assert.ok(!/undefined|NaN/.test(reply.json.answer),label);
+      assert.deepEqual(reply.json.diagnostics.ia.terms,[],label);
+      if (["Clientes","Cotizaciones","Proveedores","Rutas","Usuarios"].includes(label)) assert.ok(reply.json.answer.includes("|"),label+" debe incluir registros reales");
+      if (label==="Proveedores") assert.equal((await call("/ia/ask","POST",{preset:label},melissa)).status,403);
+      if (preset.modules?.includes("crm") || preset.modules===null) {
+        const scoped=await call("/ia/ask","POST",{preset:label},token);
+        assert.equal(scoped.status,200,JSON.stringify(scoped.json));
+        assert.ok(!/proveedores|saldo por cobrar|vehiculos/i.test(scoped.json.answer),label+" respeta el rol");
+      }
+    }
+    assert.equal(externalCalls,0);
+    pass("Los 24 botones de IA muestran indicadores/registros reales, sin filtros de instrucciones ni llamadas externas; respetan permisos");
     const pilot = await call("/operaciones/catalogos/pilotos","POST",{piloto:"Prueba Temporal",licencia:"TEST-GL365-2609",dpi:"9999999999991",nit:"TEST-2609",fecha_nacimiento:"1985-04-23"});
     assert.equal(pilot.status,200,JSON.stringify(pilot.json)); fixture.pilots.push(pilot.json.data.id);
     assert.equal(String(pilot.json.data.fecha_nacimiento).slice(0,10),"1985-04-23"); assert.equal(pilot.json.data.dpi,"9999999999991");

@@ -63,7 +63,7 @@ function PrivateRoute({
   children: React.ReactNode;
   module: ModuleKey;
 }) {
-  const { role, permissions } = useAuth();
+  const { role, permissions, sessionReady } = useAuth();
   const location = useLocation();
 
   const usuarioLocal = obtenerUsuarioLocal();
@@ -72,6 +72,8 @@ function PrivateRoute({
   if (!roleFinal) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
+
+  if (!sessionReady) return <LoadingScreen />;
 
   // Aunque el usuario escriba manualmente la URL de otro módulo,
   // el frontend valida el permiso y muestra un 404 sin exponer contenido.

@@ -1104,7 +1104,7 @@ export function Mantenimiento() {
 
   useEffect(() => {
     loadBootstrap();
-  }, []);
+  }, [role, JSON.stringify(permissions)]);
 
   useEffect(() => {
     if (!selectedTable) return;

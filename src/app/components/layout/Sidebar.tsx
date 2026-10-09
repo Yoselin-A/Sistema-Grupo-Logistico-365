@@ -27,7 +27,7 @@ import { canAccessModule } from "../../utils/permissions";
 
 export function Sidebar({ isOpen = false, onClose }: any) {
   const location = useLocation();
-  const { role, permissions, logout } = useAuth();
+  const { role, permissions, sessionReady, logout } = useAuth();
 
   const params = new URLSearchParams(location.search);
   const tabActual = String(params.get("tab") || "").toLowerCase();
@@ -51,7 +51,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
   );
 
   const puedeModulo = (module: Parameters<typeof canAccessModule>[1]) =>
-    canAccessModule(role, module, permissions);
+    sessionReady && canAccessModule(role, module, permissions);
 
   const puedeGrupoLogistica =
     puedeModulo("logistica") || puedeModulo("flota") || puedeModulo("rutas");

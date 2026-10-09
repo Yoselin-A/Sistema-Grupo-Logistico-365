@@ -820,6 +820,7 @@ export function IALogistica() {
           },
           body: JSON.stringify({
             message: formattedQuestion,
+            preset: quickPrompts.find(prompt => prompt.value === question)?.label,
           }),
         }
       );

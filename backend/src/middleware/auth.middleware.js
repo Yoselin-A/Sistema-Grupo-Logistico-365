@@ -229,6 +229,7 @@ const obtenerToken = (req) => {
    AUTENTICAR
 ========================================================= */
 const autenticarToken = async (req, res, next) => {
+  res.set("Cache-Control", "private, no-store");
   try {
     const token = obtenerToken(req);
 

@@ -2252,10 +2252,11 @@ const getUsersContext = async (terms) => {
   };
 };
 
-const getRelevantContext = async (question, auth) => {
+const { presets } = require("../utils/ai-presets");
+const getRelevantContext = async (question, auth, preset) => {
   const base = scopeAiContext(await getContextoCompacto(), auth);
-  const modules = detectModules(question).filter(module => hasModule(auth, AI_MODULES[module]));
-  const terms = extractSearchTerms(question);
+  const modules = (preset?.modules || detectModules(question)).filter(module => hasModule(auth, AI_MODULES[module]));
+  const terms = preset ? [] : extractSearchTerms(question);
 
   const loaders = {
     crm: getCrmContext,
@@ -2300,9 +2301,26 @@ const getRelevantContext = async (question, auth) => {
     errors.push(...(result.errors || []));
   });
 
+  // Estos filtros actúan sobre estados y cifras reales, no sobre palabras
+  // de la descripción del botón. No se sustituyen resultados por datos inventados.
+  const f = preset?.filter;
+  if (f === "available") relevant.fleet.vehiculos = (relevant.fleet.vehiculos || []).filter(r => /disponible/.test(clean(r.estado)));
+  if (f === "maintenance") relevant.fleet.vehiculos = (relevant.fleet.vehiculos || []).filter(r => /mantenimiento/.test(clean(r.estado)) || /pendiente|vencido|requerido|programado/.test(clean(r.mantenimiento)));
+  if (f === "balance" || f === "overdue") relevant.finance.comprobantes = (relevant.finance.comprobantes || []).filter(r => Number(r.saldo) > 0 && (f === "balance" || /vencid/.test(clean(r.estado)) || String(r.fecha_vencimiento || "9999").slice(0,10) < new Date().toISOString().slice(0,10)));
+  if (f === "margin") relevant.operations.asignaciones = (relevant.operations.asignaciones || []).filter(r => Number(r.margen) <= 0 || (Number(r.ingreso_cliente)>0 && Number(r.margen)/Number(r.ingreso_cliente)<0.1));
+  if (f === "finished") relevant.operations.asignaciones = (relevant.operations.asignaciones || []).filter(r => /finaliz|complet/.test(clean(r.estado)));
+  if (f === "delay" || f === "critical") {
+    const alerts = (relevant.logistics.alertas || []).filter(r => !Number(r.leida) && (f === "critical" ? /crit/.test(clean(r.nivel)) : /retras|demora|espera|cierre parcial/.test(clean(r.tipo) + " " + clean(r.descripcion))));
+    const tripIds = new Set(alerts.map(r => r.viaje_id).filter(Boolean).map(Number));
+    const tripCodes = new Set(alerts.map(r => r.viaje).filter(Boolean));
+    relevant.logistics.alertas = alerts;
+    relevant.logistics.viajes = (relevant.logistics.viajes || []).filter(r => tripIds.has(Number(r.id)) || tripCodes.has(r.codigo) || (f === "delay" && /retras|demora/.test(clean(r.estado_envio))));
+  }
+
   return {
     ...base,
     question,
+    preset,
     terms,
     modules,
     relevant,
@@ -2372,6 +2390,19 @@ const buildLocalAnswer = (question, ctx) => {
   const q = clean(question);
   const { kpis } = ctx.data;
   const relevant = ctx.relevant || {};
+
+  if (ctx.preset && ctx.preset.modules === null && !isSystemOverviewQuestion(question)) {
+    const labels = {clientes:"Clientes",cotizaciones:"Cotizaciones",oportunidades:"Oportunidades",pipeline_ponderado:"Pipeline ponderado",saldo_por_cobrar:"Saldo por cobrar",saldo_vencido:"Saldo vencido",asignaciones:"Asignaciones",margen_operativo:"Margen operativo",viajes_activos:"Viajes activos",alertas_criticas:"Alertas críticas",alertas_retraso:"Alertas de retraso",flota_disponible:"Vehículos disponibles",flota_mantenimiento:"Vehículos en mantenimiento",proveedores:"Proveedores",rutas:"Rutas"};
+    const rows = Object.entries(kpis).filter(([key]) => labels[key]).map(([key,value]) => [labels[key], /saldo|pipeline|margen/.test(key) ? money(value) : value]);
+    const actions = [];
+    if (Number(kpis.alertas_criticas)>0) actions.push("Logística: atender las alertas críticas y confirmar el avance de los viajes.");
+    if (Number(kpis.alertas_retraso)>0) actions.push("Logística: revisar retrasos y comunicar nuevas fechas de entrega.");
+    if (Number(kpis.saldo_vencido)>0) actions.push("Facturación: priorizar saldos vencidos y registrar la próxima gestión de cobro.");
+    if (Number(kpis.flota_mantenimiento)>0) actions.push("Flota: programar mantenimiento y verificar disponibilidad antes de asignar unidades.");
+    if (Number(kpis.oportunidades)>0) actions.push("Ventas: dar seguimiento a oportunidades y revisar cotizaciones pendientes con cada cliente.");
+    if (Number(kpis.asignaciones)>0) actions.push("Operaciones: confirmar costos e ingresos antes de aprobar el cierre.");
+    return `# ${question}\n\n## Indicadores actuales\n${markdownTable(["Indicador","Valor"],rows,30) || "Tu rol no tiene módulos de datos habilitados."}\n\n## Prioridades y acciones\n${actions.map((a,i)=>`${i+1}. ${a}`).join("\n") || "No hay alertas cuantificadas en los indicadores disponibles para tu rol. Mantén la revisión de los registros autorizados."}\n\nLos indicadores corresponden a la información registrada; no constituyen una predicción.`;
+  }
 
   if (/\b(cuantos|cuantas|cantidad|total de)\b/.test(q)) {
     const counts = [
@@ -2486,7 +2517,7 @@ Podés consultar un cliente, proveedor, viaje, servicio de transporte, ruta, veh
 
   if (ctx.modules.includes("crm") && relevant.crm) {
     const crm = relevant.crm;
-    const hasSpecificTerms = ctx.terms.length > 0;
+    const hasSpecificTerms = ctx.terms.length > 0 || ctx.preset;
 
     if (hasSpecificTerms) {
       const customerTable = markdownTable(
@@ -2520,6 +2551,11 @@ Podés consultar un cliente, proveedor, viaje, servicio de transporte, ruta, veh
         ])
       );
 
+      if (ctx.preset) {
+        if (q.includes("cotizacion")) return `# Cotizaciones\n\nTotal registrado: **${kpis.cotizaciones}**.\n\n${quoteTable || "No hay cotizaciones registradas."}`;
+        if (q.includes("oportunidad")) return `# Oportunidades comerciales\n\nTotal registrado: **${kpis.oportunidades}**. Pipeline ponderado: **${money(kpis.pipeline_ponderado)}**.\n\n${markdownTable(["Código","Oportunidad","Cliente","Estado","Monto","Probabilidad"],(crm.oportunidades||[]).map(r=>[r.codigo_oportunidad,r.nombre_oportunidad,r.cliente,r.estado,money(r.monto_estimado),`${r.probabilidad}%`]),15) || "No hay oportunidades registradas."}\n\nSiguiente paso: revisar la etapa y programar seguimiento con el cliente.`;
+        return `# Clientes\n\nTotal registrado: **${kpis.clientes}**.\n\n${customerTable || "No hay clientes registrados."}\n\n## Contactos\n${contactTable || "No hay contactos registrados para los clientes consultados."}`;
+      }
       return `# Consulta CRM GL365\n\n## Clientes encontrados\n${
         customerTable || "Sin coincidencias."
       }\n\n## Contactos\n${
@@ -2614,9 +2650,11 @@ Podés consultar un cliente, proveedor, viaje, servicio de transporte, ruta, veh
       q.includes("logistica") ||
       q.includes("retras") ||
       q.includes("alerta"))
+    || (ctx.modules.includes("logistics") && relevant.logistics && ctx.preset)
   ) {
     const viajes = relevant.logistics.viajes || [];
     const alertas = relevant.logistics.alertas || [];
+    if (ctx.preset && q.includes("servicios")) return `# Servicios de transporte\n\nTotal registrado: **${kpis.envios}**.\n\n${markdownTable(["Código","Cliente","Origen","Destino","Estado"],(relevant.logistics.envios||[]).map(r=>[r.codigo,r.cliente,r.origen,r.destino,r.estado]),15) || "No hay servicios de transporte registrados."}`;
 
     return `# Atención logística GL365\n\n## Resumen\n- Viajes activos: ${
       kpis.viajes_activos
@@ -2637,7 +2675,7 @@ Podés consultar un cliente, proveedor, viaje, servicio de transporte, ruta, veh
           `${row.progreso}%`,
           row.eta,
         ])
-      ) || "Sin viajes coincidentes."
+      ) || (ctx.preset ? "No hay viajes que cumplan este criterio en los registros consultados. Revisa los indicadores y alertas de abajo para el seguimiento." : "Sin viajes coincidentes.")
     }\n\n## Alertas\n${lineList(
       alertas,
       (row) =>
@@ -2802,7 +2840,8 @@ const handleQuestion = async (req, res) => {
     .trim()
     .slice(0, MAX_QUESTION_CHARS);
 
-  const question = normalizeIncomingQuestion(rawQuestion);
+  const preset = Object.hasOwn(presets,req.body?.preset) ? presets[req.body.preset] : undefined;
+  const question = preset ? preset.question : normalizeIncomingQuestion(rawQuestion);
 
   if (!question) {
     return res.status(400).json({
@@ -2812,7 +2851,7 @@ const handleQuestion = async (req, res) => {
   }
 
   try {
-    const requested = detectModules(question);
+    const requested = preset?.modules || detectModules(question);
     // Las preguntas generales se limitan a los módulos concedidos; una consulta
     // específica no puede usar la IA para saltarse la autorización.
     if (/\bpilotos?\b/.test(clean(question)) && hasModule(req.auth,"pilotos")) {
@@ -2820,10 +2859,10 @@ const handleQuestion = async (req, res) => {
       return res.json({ok:true,answer:/cuantos|cantidad|total/.test(clean(question)) ? `Hay **${rows.length} pilotos** registrados en el sistema.` : `# Pilotos\n\n${markdownTable(["Código","Nombre","Licencia","Nacimiento"],rows.map(p=>[p.codigo_piloto,p.nombre,p.licencia,p.nacimiento||"Sin registrar"]),50)}`,
         provider:{name:"database",used:false,groqConfigured:false,model:null},contextUsed:{modules:["pilotos"],searchTerms:[]}});
     }
-    if (!isSystemOverviewQuestion(question) && requested.length < 7 && requested.some(m => !hasModule(req.auth, AI_MODULES[m]))) {
+    if (!(preset && preset.modules === null) && !isSystemOverviewQuestion(question) && requested.length < 7 && requested.some(m => !hasModule(req.auth, AI_MODULES[m]))) {
       return res.status(403).json({ok:false,message:"No tienes permiso para consultar los módulos solicitados."});
     }
-    const ctx = await getRelevantContext(question, req.auth);
+    const ctx = await getRelevantContext(question, req.auth, preset);
     const result = {
       answer: buildLocalAnswer(question, ctx),
       provider: { name: "database", used: false, groqConfigured: false, model: null, warning: null },

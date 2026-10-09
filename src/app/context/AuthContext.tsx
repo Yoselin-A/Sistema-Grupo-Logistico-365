@@ -12,6 +12,7 @@ import {
 export type UserRole = string;
 
 interface AuthContextType {
+  sessionReady: boolean;
   role: UserRole | null;
   setRole: (role: UserRole | null) => void;
   permissions: string[] | null;
@@ -142,6 +143,7 @@ function saveUserPatch(
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const [sessionReady, setSessionReady] = useState(() => !getStoredRole());
   const [roleState, setRoleState] = useState<UserRole | null>(() => getStoredRole());
   const [permissionsState, setPermissionsState] = useState<string[] | null>(() =>
     getStoredPermissions()
@@ -168,6 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       : null;
 
     setPermissionsState(normalized);
+    setSessionReady(true);
     saveUserPatch(getStoredRole() || roleState, userNameState, normalized);
   };
 
@@ -183,6 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshSession = async () => {
     if (!getStoredRole()) return;
+    const identity = getStoredUser()?.id;
 
     try {
       const response = await fetch(`${API_BASE_URL}/auth/me`, {
@@ -192,11 +196,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       const json = await response.json().catch(() => null);
+      if (identity !== getStoredUser()?.id) return;
       if (response.status === 401 || response.status === 403) { logout(); return; }
       if (!response.ok || json?.ok === false) return;
 
       const user = json?.data || json?.user;
       if (!user) return;
+      // Una respuesta de la sesión anterior no puede reemplazar otro login.
 
       const nextRole = normalizeRole(user.role || user.nombre_rol);
       const nextPermissions = Array.isArray(user.permissions)
@@ -205,8 +211,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const nextName = String(user.name || user.nombre_completo || user.nombre_usuario || "Usuario").trim();
 
       setRoleState(nextRole);
-      setPermissionsState(nextPermissions);
+      setPermissionsState(current => JSON.stringify(current) === JSON.stringify(nextPermissions) ? current : nextPermissions);
       setUserNameState(nextName || "Usuario");
+      setSessionReady(true);
 
       const updatedUser = {
         ...(getStoredUser() || {}),
@@ -256,12 +263,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const sync = () => { if (!document.hidden) void refreshSession(); };
     sync();
-    const timer = window.setInterval(sync, 15000);
+    const timer = window.setInterval(sync, 5000);
     window.addEventListener("focus", sync);
+    window.addEventListener("storage", sync);
     document.addEventListener("visibilitychange", sync);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("focus", sync);
+      window.removeEventListener("storage", sync);
       document.removeEventListener("visibilitychange", sync);
     };
     // Los permisos del menú se sincronizan también en sesiones ya abiertas.
@@ -271,6 +280,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider
       value={{
+        sessionReady,
         role: roleState,
         setRole,
         permissions: permissionsState,
@@ -287,6 +297,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 const defaultAuth: AuthContextType = {
+  sessionReady: false,
   role: null,
   setRole: () => {},
   permissions: null,
