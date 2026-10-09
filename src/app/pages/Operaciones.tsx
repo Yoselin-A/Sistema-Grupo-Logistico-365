@@ -1260,6 +1260,9 @@ export function Operaciones() {
       tipo_asignacion: type,
       pilotos_id: item.pilotos_id || item.piloto_id || "",
       licencia: detail.licencia || item.licencia || pilot?.licencia || "",
+      dpi_piloto: detail.dpi_piloto || item.dpi_piloto || pilot?.dpi || "",
+      nit_piloto: detail.nit_piloto || item.nit_piloto || pilot?.nit || "",
+      fecha_nacimiento_piloto: date10(detail.fecha_nacimiento_piloto || item.fecha_nacimiento_piloto || pilot?.fecha_nacimiento),
       vehiculo_id: item.vehiculo_id || "",
       placa_operativa: detail.placa_operativa || vehicle?.codigo || item.cabezal || "",
       cabezal: detail.cabezal || vehicle?.codigo || item.cabezal || "",
@@ -1601,54 +1604,7 @@ export function Operaciones() {
             0
         );
 
-        // Además de localStorage, guardamos el estado previo dentro del detalle
-        // operativo para que "Regresar" funcione incluso después de recargar,
-        // cambiar de navegador o abrir un cierre antiguo.
-        if (target.id && previousStateId > 0) {
-          try {
-            const typeForTarget = String(
-              target.tipo_asignacion ||
-                targetDetail.tipo_asignacion ||
-                type
-            ) as AssignmentType;
-
-            const sourceForBackup = {
-              ...targetDetail,
-              ...target,
-              pilotos_id:
-                target.pilotos_id ||
-                target.piloto_id,
-            };
-
-            const backupPayload =
-              buildOperationalPayload(
-                sourceForBackup,
-                typeForTarget
-              );
-
-            backupPayload.detalle_operativo_json =
-              JSON.stringify({
-                ...parseJson(
-                  backupPayload.detalle_operativo_json
-                ),
-                estado_previo_finalizar: previousStateId,
-              });
-
-            await apiRequest(
-              `/operaciones/asignaciones/${target.id}`,
-              {
-                method: "PUT",
-                body: JSON.stringify(backupPayload),
-              }
-            );
-          } catch (backupError) {
-            console.warn(
-              "No se pudo persistir el estado previo antes de finalizar:",
-              backupError
-            );
-          }
-        }
-
+        // El backend conserva el estado previo sin modificar el expediente.
         await apiRequest(
           `/operaciones/asignaciones/${target.id}/finalizar`,
           { method: "PATCH" }
@@ -1988,114 +1944,11 @@ export function Operaciones() {
           previousStateId = Number(alternative?.id || 1);
         }
 
-        const rawStatuses = Array.isArray(
-          target.estatus_seguimiento
-        )
-          ? target.estatus_seguimiento
-          : Array.isArray(
-              targetDetail.estatus_seguimiento
-            )
-          ? targetDetail.estatus_seguimiento
-          : [];
-
-        const cleanStatuses = rawStatuses
-          .map((row: AnyRow) => ({
-            fecha:
-              row?.fecha ||
-              date10(
-                target.fecha_carga ||
-                  targetDetail.fecha_carga
-              ) ||
-              new Date().toISOString().slice(0, 10),
-            hora:
-              row?.hora ||
-              targetDetail.hora_carga ||
-              "08:00",
-            estatus: String(
-              row?.estatus || ""
-            ).trim(),
-          }))
-          .filter((row: AnyRow) =>
-            String(row.estatus || "").trim()
-          );
-
-        const previousOperationalStatus =
-          [...cleanStatuses]
-            .reverse()
-            .find((row: AnyRow) =>
-              String(row.estatus || "").trim()
-            )?.estatus ||
-          String(
-            target.estatus_operativo ||
-              targetDetail.estatus_operativo ||
-              ""
-          ).trim();
-
-        const restoredStatus =
-          previousOperationalStatus ||
-          (type === "local"
-            ? "Operación reabierta"
-            : assignmentStateLabel(preferredFallback) ||
-              "Pendiente");
-
-        const restoredStatuses =
-          cleanStatuses.length > 0
-            ? cleanStatuses
-            : restoredStatus
-            ? [
-                {
-                  fecha:
-                    date10(
-                      target.fecha_carga ||
-                        targetDetail.fecha_carga
-                    ) ||
-                    new Date().toISOString().slice(0, 10),
-                  hora:
-                    targetDetail.hora_carga ||
-                    "08:00",
-                  estatus: restoredStatus,
-                },
-              ]
-            : [];
-
-        const source = {
-          ...targetDetail,
-          ...target,
-          pilotos_id:
-            target.pilotos_id ||
-            target.piloto_id,
-          estatus_seguimiento: restoredStatuses,
-          estatus_operativo: restoredStatus,
-        };
-
-        const detailForReopen = {
-          ...parseJson(
-            buildOperationalPayload(source, type)
-              .detalle_operativo_json
-          ),
-          estatus_seguimiento: restoredStatuses,
-          estatus_operativo: restoredStatus,
-          estado_previo_finalizar: previousStateId,
-        };
-
-        const payload = {
-          ...buildOperationalPayload(source, type),
-          detalle_operativo_json:
-            JSON.stringify(detailForReopen),
-          estatus_seguimiento: restoredStatuses,
-          estatus_operativo: restoredStatus,
-          estado_asignacion_id: previousStateId,
-          estado_id: previousStateId,
-          cierre_operacion: false,
-        };
-
-        await apiRequest(
-          `/operaciones/asignaciones/${target.id}`,
-          {
-            method: "PUT",
-            body: JSON.stringify(payload),
-          }
-        );
+        // Reabrir cambia únicamente el estado; no vuelve a validar datos históricos.
+        await apiRequest(`/operaciones/asignaciones/${target.id}/reabrir`, {
+          method: "PATCH",
+          body: JSON.stringify({ estado_asignacion_id: previousStateId }),
+        });
 
         delete previousStates[String(target.id)];
       }
@@ -3742,16 +3595,16 @@ function AssignmentModal({
   const selectPilot = (id: any, item?: AnyRow) => {
     const selected = item || getPiloto(id);
     const selectedLicense = selected?.licencia || selected?.numero_licencia || "";
-    const selectedDpi = selected?.dpi || selected?.dpi_piloto || selected?.documento_identificacion || selectedLicense || "";
+    const selectedDpi = selected?.dpi || selected?.dpi_piloto || selected?.documento_identificacion || "";
     const selectedBirth = date10(selected?.fecha_nacimiento || selected?.fecha_nacimiento_piloto || selected?.nacimiento || "");
     const selectedNit = selected?.nit || selected?.nit_piloto || selected?.numero_nit || "";
     setForm({
       ...form,
       pilotos_id: id,
       licencia: selectedLicense,
-      dpi_piloto: selectedDpi || form.dpi_piloto || "",
-      fecha_nacimiento_piloto: selectedBirth || form.fecha_nacimiento_piloto || "",
-      nit_piloto: selectedNit || form.nit_piloto || "",
+      dpi_piloto: selectedDpi,
+      fecha_nacimiento_piloto: selectedBirth,
+      nit_piloto: selectedNit,
     });
   };
 
@@ -3908,7 +3761,7 @@ function AssignmentModal({
                 <Field label="Placa / vehículo *">{vehiclePicker("placa_piloto", "Buscar placa del vehículo...")}<ErrorText text={errors.placa_piloto} /></Field>
                 <Field label="Licencia"><input readOnly value={form.licencia || pilot?.licencia || ""} className={`${input} mt-1 bg-gray-100`} /></Field>
                 <Field label="País del piloto"><CountryPicker disabled={readonly} value={form.pais_piloto || "Guatemala"} otherValue={form.pais_piloto_otro} onChange={(value) => setForm({ ...form, pais_piloto: value })} onOtherChange={(value) => setForm({ ...form, pais_piloto_otro: value })} /></Field>
-                <Field label="DPI *"><input readOnly value={form.dpi_piloto || pilot?.dpi || pilot?.licencia || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.dpi_piloto} /></Field>
+                <Field label="DPI *"><input readOnly value={form.dpi_piloto || pilot?.dpi || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.dpi_piloto} /></Field>
                 <Field label="Fecha de nacimiento *"><input type="date" readOnly value={form.fecha_nacimiento_piloto || date10(pilot?.fecha_nacimiento) || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.fecha_nacimiento_piloto} /></Field>
                 <Field label="NIT piloto *"><input readOnly value={form.nit_piloto || pilot?.nit || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.nit_piloto} /></Field>
                 <Field label="Transportes / proveedor *" className="lg:col-span-2">{providerPicker}<ErrorText text={errors.empresa_transporte} /></Field>
@@ -3930,7 +3783,7 @@ function AssignmentModal({
                 <Field label="Código de ruta"><input readOnly value={form.ruta_codigo || selectedRoute?.codigo_ruta || ""} className={`${input} mt-1 bg-gray-100`} /></Field>
                 <Field label="Nombre del piloto *" className="lg:col-span-2">{pilotPicker}<ErrorText text={errors.pilotos_id} /></Field>
                 <Field label="Licencia *"><input readOnly value={form.licencia || pilot?.licencia || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.licencia} /></Field>
-                <Field label="DPI *"><input readOnly value={form.dpi_piloto || pilot?.dpi || pilot?.licencia || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.dpi_piloto} /></Field>
+                <Field label="DPI *"><input readOnly value={form.dpi_piloto || pilot?.dpi || ""} className={`${input} mt-1 bg-gray-100`} /><ErrorText text={errors.dpi_piloto} /></Field>
                 <Field label="Pasaporte *"><TextWithNA disabled={readonly} value={form.pasaporte} onChange={(value) => setForm({ ...form, pasaporte: value })} upper /><ErrorText text={errors.pasaporte} /></Field>
                 <Field label="Cabezal / placa *">{vehiclePicker("cabezal", "Buscar otra placa / cabezal...")}<ErrorText text={errors.cabezal} /></Field>
                 <Field label="Furgón *"><TextWithNA disabled={readonly} value={form.furgon} onChange={(value) => setForm({ ...form, furgon: value })} upper /><ErrorText text={errors.furgon} /></Field>

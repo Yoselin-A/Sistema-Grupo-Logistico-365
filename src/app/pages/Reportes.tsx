@@ -1,3 +1,5 @@
+import { useAuth } from "../context/AuthContext";
+import { canAccessModule } from "../utils/permissions";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   BarChart,
@@ -535,6 +537,9 @@ async function addCorporatePdfHeader(
 }
 
 export function Reportes() {
+  const {role, permissions}=useAuth();
+  const reportModules: Partial<Record<ReportType, Parameters<typeof canAccessModule>[1]>>={cobranza:"facturacion",rentabilidad:"operaciones",operaciones:"operaciones",logistica:"logistica",comercial:"crm",proveedores:"proveedores",flota:"flota",rutas:"rutas"};
+  const visibleReports=REPORT_OPTIONS.filter(item=>!reportModules[item.id]||canAccessModule(role,reportModules[item.id]!,permissions));
   const [data, setData] = useState<ApiData>(EMPTY_DATA);
   const [reportType, setReportType] = useState<ReportType>("ejecutivo");
   const [inicio, setInicio] = useState("");
@@ -548,6 +553,8 @@ export function Reportes() {
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState("");
   const [diagnostics, setDiagnostics] = useState<any>(null);
+
+  useEffect(()=>{ if (!visibleReports.some(item=>item.id===reportType)) setReportType("ejecutivo"); },[role,permissions,reportType]);
 
   const loadData = async () => {
     setLoading(true);
@@ -576,8 +583,9 @@ export function Reportes() {
   };
 
   useEffect(() => {
+    setData(EMPTY_DATA);
     void loadData();
-  }, []);
+  }, [role, permissions?.join("|")]);
 
   useEffect(() => {
     setPage(1);
@@ -2930,7 +2938,7 @@ export function Reportes() {
       )}
 
       <div className="mb-5 grid w-full min-w-0 max-w-full grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-        {REPORT_OPTIONS.map((item) => {
+        {visibleReports.map((item) => {
           const Icon = item.icon;
           const active = reportType === item.id;
 

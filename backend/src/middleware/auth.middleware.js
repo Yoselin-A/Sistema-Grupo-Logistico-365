@@ -194,33 +194,14 @@ const obtenerPermisosRol = async (rolId, roleFallback = null) => {
   const id = Number(rolId);
   if (!Number.isInteger(id) || id <= 0) return permisosLegacy(roleFallback);
 
-  try {
-    const tablas = await resolverTablasPermisos();
-    if (!tablas) return permisosLegacy(roleFallback);
-
-    const [rows] = await pool.query(
-      `
-      SELECT m.codigo_modulo
-      FROM ${q(tablas.roleModulo)} rm
-      INNER JOIN ${q(tablas.modulo)} m
-        ON m.id = rm.modulo_id
-      WHERE rm.role_id = ?
-        AND m.activo = 1
-      ORDER BY m.orden, m.id
-      `,
-      [id]
-    );
-
-    return rows
-      .map((row) => String(row.codigo_modulo || "").trim().toLowerCase())
-      .filter(Boolean);
-  } catch (error) {
-    console.warn(
-      "No se pudieron leer los permisos dinámicos; se usará compatibilidad por rol:",
-      error.message
-    );
-    return permisosLegacy(roleFallback);
-  }
+  const tablas = await resolverTablasPermisos();
+  if (!tablas) return permisosLegacy(roleFallback);
+  // Un fallo de MySQL no debe volver a conceder permisos revocados.
+  const [rows] = await pool.query(`
+    SELECT m.codigo_modulo FROM ${q(tablas.roleModulo)} rm
+    INNER JOIN ${q(tablas.modulo)} m ON m.id = rm.modulo_id
+    WHERE rm.role_id = ? AND m.activo = 1 ORDER BY m.orden, m.id`, [id]);
+  return rows.map(row => String(row.codigo_modulo || "").trim().toLowerCase()).filter(Boolean);
 };
 
 /* =========================================================

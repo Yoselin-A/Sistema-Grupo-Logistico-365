@@ -1,3 +1,4 @@
+const { hasModule } = require("../utils/module-access");
 const express = require("express");
 const pool = require("../config/db");
 const { autorizarModulo } = require("../middleware/auth.middleware");
@@ -19,7 +20,7 @@ const safeQuery = async (label, sql, params = []) => {
 
 const q = (label, sql, params = []) => safeQuery(label, sql, params);
 
-router.get("/reportes/bootstrap", async (_req, res) => {
+router.get("/reportes/bootstrap", async (req, res) => {
   try {
     const results = await Promise.all([
       q("cliente", `
@@ -339,15 +340,29 @@ router.get("/reportes/bootstrap", async (_req, res) => {
       if (results[index].error) errors.push(results[index].error);
     });
 
+    const domains = {
+      crm:["clientes","oportunidades","cotizaciones","cotizacionDetalle"], seguridad:["usuarios"],
+      rutas:["ubicaciones","rutas"], operaciones:["asignaciones","costos","proveedorAsignacion","facturaAsignacion","estadosAsignacion"],
+      proveedores:["proveedores","cumplimiento","desempeno","estadosProveedor"],
+      facturacion:["comprobantes","detalles","pagos","estadosFactura","formasPago"],
+      logistica:["viajes","envios","tracking","estadosEnvio","alertas"],
+      flota:["vehiculos","mantenimiento","estadosMantenimiento","tiposVehiculo","estadosVehiculo"],
+    };
+    for (const [module, fields] of Object.entries(domains)) {
+      if (!hasModule(req.auth,module)) for (const field of fields) data[field]=[];
+    }
+    // Los diagnósticos no revelan errores de módulos no concedidos.
+    const visibleErrors = errors.filter(e => Object.entries(domains).some(([module, fields])=>hasModule(req.auth,module)&&fields.includes(e.tabla)));
+
     const counts = Object.fromEntries(
       Object.entries(data).map(([key, value]) => [key, Array.isArray(value) ? value.length : 0])
     );
 
     res.json({
-      success: errors.length === 0,
-      message: errors.length === 0 ? "Reportes cargados desde MySQL." : "Reportes cargados parcialmente.",
+      success: visibleErrors.length === 0,
+      message: visibleErrors.length === 0 ? "Reportes cargados desde MySQL." : "Reportes cargados parcialmente.",
       data,
-      diagnostics: { counts, errors },
+      diagnostics: { counts, errors: visibleErrors },
     });
   } catch (error) {
     console.error("Error /reportes/bootstrap:", error);

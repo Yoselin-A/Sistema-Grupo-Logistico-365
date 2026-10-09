@@ -431,26 +431,8 @@ const upperPdf = (value: any) =>
     .replace(/\s+/g, " ")
     .trim();
 
-const serieDtePdf = (comprobante: ComprobanteRow) => {
-  const serie = String(comprobante.serie || "").trim().toUpperCase();
-
-  // Si la serie del sistema es interna, como GL25, se usa una serie visual SAT
-  // para que el PDF se vea como la factura cambiaria de referencia.
-  if (/^[A-Z]{2}\d{6}$/.test(serie)) return serie;
-
-  return "AA530516";
-};
-
-const numeroDtePdf = (comprobante: ComprobanteRow) => {
-  const raw =
-    (comprobante as any).numero_dte ||
-    (comprobante as any).numero_dte_sat ||
-    (comprobante as any).dte_numero;
-
-  if (raw && /^\d+$/.test(String(raw))) return String(raw);
-
-  return String(3527000000 + Number(comprobante.id || 0) * 98608).slice(0, 10);
-};
+const serieDtePdf = (comprobante: ComprobanteRow) => String(comprobante.serie || "").trim().toUpperCase();
+const numeroDtePdf = (comprobante: ComprobanteRow) => String(comprobante.numero_comprobante || "").trim();
 
 const autorizacionDtePdf = (comprobante: ComprobanteRow) => {
   const raw =
@@ -460,7 +442,7 @@ const autorizacionDtePdf = (comprobante: ComprobanteRow) => {
 
   if (raw) return String(raw).toUpperCase();
 
-  return `${serieDtePdf(comprobante)}-D23B-40F0-A368-59241AE84CD5`;
+  return "Sin autorización registrada";
 };
 
 function numeroALetrasGTQPdf(value: number, moneda: CurrencyCode | string = "GTQ") {
@@ -611,43 +593,6 @@ function drawCorporateHeaderComprobantes(
   doc.setDrawColor(255, 106, 0);
   doc.setLineWidth(1);
   doc.line(70, 31, pageWidth - 12, 31);
-}
-
-function drawQrFacturaPdf(doc: jsPDF, x: number, y: number, size = 24, seed = 1) {
-  const cells = 21;
-  const cell = size / cells;
-
-  const finder = (ox: number, oy: number) => {
-    doc.setFillColor(0, 0, 0);
-    doc.rect(x + ox * cell, y + oy * cell, 7 * cell, 7 * cell, "F");
-    doc.setFillColor(255, 255, 255);
-    doc.rect(x + (ox + 1) * cell, y + (oy + 1) * cell, 5 * cell, 5 * cell, "F");
-    doc.setFillColor(0, 0, 0);
-    doc.rect(x + (ox + 2) * cell, y + (oy + 2) * cell, 3 * cell, 3 * cell, "F");
-  };
-
-  finder(0, 0);
-  finder(14, 0);
-  finder(0, 14);
-
-  doc.setFillColor(0, 0, 0);
-
-  for (let row = 0; row < cells; row += 1) {
-    for (let col = 0; col < cells; col += 1) {
-      const inFinder =
-        (row < 7 && col < 7) ||
-        (row < 7 && col >= 14) ||
-        (row >= 14 && col < 7);
-
-      if (inFinder) continue;
-
-      const value = (row * 17 + col * 31 + seed * 13 + row * col) % 7;
-
-      if (value === 0 || value === 2 || value === 5) {
-        doc.rect(x + col * cell, y + row * cell, cell, cell, "F");
-      }
-    }
-  }
 }
 
 function drawFitTextFactura(
@@ -1145,7 +1090,7 @@ export function Facturacion() {
     try {
       const payload = {
         ...form,
-        numero_comprobante: modalMode === "edit" ? cleanCode(form.numero_comprobante, 20) : form.numero_comprobante,
+        numero_comprobante: cleanCode(form.numero_comprobante, 20),
         serie: cleanCode(form.serie, 15),
         observaciones: cleanDescription(form.observaciones, 255),
         detalles: form.detalles.map((line) => ({
@@ -1688,8 +1633,7 @@ export function Facturacion() {
     doc.text("NIT: 107902281", 8, y + 6);
     doc.text(`FECHA: ${fechaEmision}`, 8, y + 12);
 
-    // QR visual
-    drawQrFacturaPdf(doc, 8, y + 18, 24, comprobante.id);
+
 
     doc.save(`Factura_Cambiaria_${serieDte}_${numeroDte}.pdf`);
   };
@@ -2108,8 +2052,8 @@ function ComprobanteModal({
         <div data-form onKeyDown={moveOnEnter} className="min-h-0 overflow-y-auto px-4 py-4">
           {mode === "create" && (
             <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-              <p className="text-sm font-bold text-[#0C2D6B]">Número automático</p>
-              <p className="mt-1 text-xs text-gray-600">El sistema asignará el correlativo al guardar. Solo debes seleccionar cliente, emisor y líneas del comprobante.</p>
+              <p className="text-sm font-bold text-[#0C2D6B]">Serie y número</p>
+              <p className="mt-1 text-xs text-gray-600">Puedes escribir la serie y el número del comprobante. Si dejas el número vacío, el sistema asignará el correlativo al guardar.</p>
             </div>
           )}
 
@@ -2118,11 +2062,9 @@ function ComprobanteModal({
               <input value={form.serie} maxLength={15} onChange={(event) => { updateForm({ serie: cleanCode(event.target.value, 15) }); clearError("serie"); }} className={`${inputClass} ${errors.serie ? errorInput : ""}`} placeholder="GL365-A" />
             </Field>
 
-            {mode === "edit" && (
-              <Field label="Número *" error={errors.numero_comprobante}>
+              <Field label={mode === "edit" ? "Número *" : "Número (opcional)"} error={errors.numero_comprobante}>
                 <input value={form.numero_comprobante} maxLength={20} onChange={(event) => { updateForm({ numero_comprobante: cleanCode(event.target.value, 20) }); clearError("numero_comprobante"); }} className={`${inputClass} ${errors.numero_comprobante ? errorInput : ""}`} placeholder="000001" />
               </Field>
-            )}
 
             <Field label="Fecha emisión *" error={errors.fecha_emision}>
               <input type="date" value={form.fecha_emision} onChange={(event) => { updateForm({ fecha_emision: event.target.value, fecha_vencimiento: form.fecha_vencimiento || addDays(event.target.value, 15) }); clearError("fecha_emision"); }} className={`${inputClass} ${errors.fecha_emision ? errorInput : ""}`} />

@@ -3,13 +3,13 @@ const pool = require("../config/db");
 const { autorizarModulo } = require("../middleware/auth.middleware");
 const router = express.Router();
 
-// Pilotos forma parte del bloque de recursos logísticos y reutiliza el permiso de Flota.
-router.use("/pilotos", autorizarModulo("flota"));
+// Acceso independiente, administrado desde Roles.
+router.use("/pilotos", autorizarModulo("pilotos"));
 
 const ok = (res, data=null, message="Operación realizada correctamente.") => res.json({ok:true,message,data});
 const fail = (res,status,message,error=null) => res.status(status).json({ok:false,message,error:error?.message||error||null});
 const txt=(v,max=80)=>String(v??"").trim().replace(/\s+/g," ").slice(0,max);
-const date=(v)=>/^\d{4}-\d{2}-\d{2}/.test(String(v||""))?String(v).slice(0,10):null;
+const date=(v)=>v instanceof Date && !Number.isNaN(v.getTime()) ? `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,"0")}-${String(v.getDate()).padStart(2,"0")}` : /^\d{4}-\d{2}-\d{2}/.test(String(v||""))?String(v).slice(0,10):null;
 const id=(v)=>Number.isInteger(Number(v))&&Number(v)>0?Number(v):null;
 
 
@@ -41,6 +41,15 @@ router.get('/pilotos', async(req,res)=>{
    DATEDIFF(p.fecha_vencimiento_licencia,CURDATE()) dias_licencia,
    DATEDIFF(p.fecha_vencimiento_dpi,CURDATE()) dias_dpi
    FROM piloto p ORDER BY p.id DESC`);
+  const [history] = await pool.query("SELECT id,codigo_asignacion,tipo_asignacion,piloto_id,detalle_operativo_json FROM asignacion WHERE piloto_id IS NOT NULL ORDER BY id DESC");
+  for (const p of rows) {
+    p.expedientes = history.filter(a => Number(a.piloto_id)===Number(p.id)).map(a => {
+      let d={}; try { d=typeof a.detalle_operativo_json==='string'?JSON.parse(a.detalle_operativo_json):a.detalle_operativo_json||{}; } catch {}
+      // Solo documentos del piloto; no publica costos ni datos de otros módulos.
+      return {codigo:a.codigo_asignacion,tipo:a.tipo_asignacion,licencia:d.licencia||null,dpi:d.dpi_piloto||null,
+        nit:d.nit_piloto||null,fecha_nacimiento:date(d.fecha_nacimiento_piloto),pasaporte:d.pasaporte||null,pais:d.pais_piloto||d.nacionalidad||null};
+    });
+  }
   return ok(res,rows);
  }catch(e){return fail(res,500,'No se pudieron cargar los pilotos.',e)}
 });
@@ -49,7 +58,7 @@ router.post('/pilotos', async(req,res)=>{
  const c=await pool.getConnection();
  try{await c.beginTransaction();
   const b=req.body||{}; const validacion=validarPiloto(b); if(validacion){await c.rollback(); return fail(res,400,validacion);} const licencia=txt(b.licencia,25).toUpperCase(); const dpi=txt(b.dpi,20); const nit=txt(b.nit,20);
-  if(!txt(b.primer_nombre,30)||!txt(b.primer_apellido,35)||!licencia) return fail(res,400,'Primer nombre, primer apellido y licencia son obligatorios.');
+  if(!txt(b.primer_nombre,30)||!txt(b.primer_apellido,35)||!licencia) { await c.rollback(); return fail(res,400,'Primer nombre, primer apellido y licencia son obligatorios.'); }
   const [dup]=await c.query('SELECT id FROM piloto WHERE licencia=? OR (?<>\'\' AND dpi=?) LIMIT 1',[licencia,dpi,dpi]);
   if(dup.length){await c.rollback(); return fail(res,409,'Ya existe un piloto con esa licencia o DPI.');}
   const codigo=await nextCode(c);
@@ -60,7 +69,12 @@ router.post('/pilotos', async(req,res)=>{
 });
 
 router.put('/pilotos/:id', async(req,res)=>{
- try{const pid=id(req.params.id); if(!pid)return fail(res,400,'Piloto inválido.'); const b=req.body||{}; const validacion=validarPiloto(b); if(validacion)return fail(res,400,validacion);
+ try{const pid=id(req.params.id); if(!pid)return fail(res,400,'Piloto inválido.'); const [[existing]]=await pool.query('SELECT * FROM piloto WHERE id=?',[pid]);
+  if(!existing)return fail(res,404,'El piloto no existe.');
+  const b={...existing,...(req.body||{})}; const validacion=validarPiloto(b); if(validacion)return fail(res,400,validacion);
+  if(!txt(b.primer_nombre,30)||!txt(b.primer_apellido,35)||!txt(b.licencia,25))return fail(res,400,'Primer nombre, primer apellido y licencia son obligatorios.');
+  const [dup]=await pool.query("SELECT id FROM piloto WHERE id<>? AND (licencia=? OR (?<>'' AND dpi=?)) LIMIT 1",[pid,txt(b.licencia,25).toUpperCase(),txt(b.dpi,20),txt(b.dpi,20)]);
+  if(dup.length)return fail(res,409,'Ya existe un piloto con esa licencia o DPI.');
   await pool.query(`UPDATE piloto SET primer_nombre=?,segundo_nombre=?,primer_apellido=?,segundo_apellido=?,licencia=?,dpi=?,nit=?,fecha_nacimiento=?,fecha_emision_licencia=?,fecha_vencimiento_licencia=?,fecha_emision_dpi=?,fecha_vencimiento_dpi=? WHERE id=?`,[
    txt(b.primer_nombre,30),txt(b.segundo_nombre,30)||null,txt(b.primer_apellido,35),txt(b.segundo_apellido,35)||null,txt(b.licencia,25).toUpperCase(),txt(b.dpi,20)||null,txt(b.nit,20)||null,date(b.fecha_nacimiento),date(b.fecha_emision_licencia),date(b.fecha_vencimiento_licencia),date(b.fecha_emision_dpi),date(b.fecha_vencimiento_dpi),pid]);
   return ok(res,null,'Piloto actualizado correctamente.');

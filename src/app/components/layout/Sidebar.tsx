@@ -56,7 +56,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
   const puedeGrupoLogistica =
     puedeModulo("logistica") || puedeModulo("flota") || puedeModulo("rutas");
 
-  const puedeGrupoRecursos = puedeModulo("crm") || puedeModulo("flota");
+  const puedeGrupoRecursos = puedeModulo("proveedores") || puedeModulo("flota") || puedeModulo("pilotos");
 
   const cerrarEnMovil = () => {
     if (onClose) onClose();
@@ -316,7 +316,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
 
             {openRecursos && (
               <div className="flex flex-col">
-                {puedeModulo("crm") && (
+                {puedeModulo("proveedores") && (
                   <Link to="/proveedores" onClick={cerrarEnMovil} className={submenuClass("/proveedores")}>
                     <Building2 className="w-4 h-4 shrink-0"/><span>Proveedores</span>
                   </Link>
@@ -326,7 +326,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
                     <Truck className="w-4 h-4 shrink-0"/><span>Flota</span>
                   </Link>
                 )}
-                {puedeModulo("flota") && (
+                {puedeModulo("pilotos") && (
                   <Link to="/pilotos" onClick={cerrarEnMovil} className={submenuClass("/pilotos")}>
                     <UserRound className="w-4 h-4 shrink-0"/><span>Pilotos</span>
                   </Link>

@@ -164,7 +164,7 @@ export const router = createBrowserRouter([
   {
     path: "/proveedores",
     element: (
-      <PrivateRoute module="crm">
+      <PrivateRoute module="proveedores">
         <MainLayout title="Proveedores" breadcrumbs={["Inicio", "Proveedores"]} />
       </PrivateRoute>
     ),
@@ -184,7 +184,7 @@ export const router = createBrowserRouter([
   {
     path: "/pilotos",
     element: (
-      <PrivateRoute module="flota">
+      <PrivateRoute module="pilotos">
         <MainLayout title="Pilotos" breadcrumbs={["Inicio", "Pilotos"]} />
       </PrivateRoute>
     ),

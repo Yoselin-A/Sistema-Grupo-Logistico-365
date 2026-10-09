@@ -1,3 +1,4 @@
+const { hasModule, AI_MODULES, scopeAiContext } = require("../utils/module-access");
 const express = require("express");
 const pool = require("../config/db");
 
@@ -485,7 +486,6 @@ const detectModules = (question) => {
     ])
   ) {
     modules.add("suppliers");
-    modules.add("operations");
   }
 
   if (
@@ -2252,9 +2252,9 @@ const getUsersContext = async (terms) => {
   };
 };
 
-const getRelevantContext = async (question) => {
-  const base = await getContextoCompacto();
-  const modules = detectModules(question);
+const getRelevantContext = async (question, auth) => {
+  const base = scopeAiContext(await getContextoCompacto(), auth);
+  const modules = detectModules(question).filter(module => hasModule(auth, AI_MODULES[module]));
   const terms = extractSearchTerms(question);
 
   const loaders = {
@@ -2392,6 +2392,12 @@ const buildLocalAnswer = (question, ctx) => {
     }
   }
 
+  const scopedSummary = () => {
+    const labels = {clientes:"Clientes",cotizaciones:"Cotizaciones",oportunidades:"Oportunidades",pipeline_total:"Pipeline total",pipeline_ponderado:"Pipeline ponderado",comprobantes:"Comprobantes",saldo_por_cobrar:"Saldo por cobrar",saldo_vencido:"Saldo vencido",asignaciones:"Asignaciones",margen_operativo:"Margen operativo",envios:"Envíos",viajes_total:"Viajes",viajes_activos:"Viajes activos",vehiculos_total:"Vehículos",flota_disponible:"Flota disponible",flota_mantenimiento:"Flota en mantenimiento",proveedores:"Proveedores",rutas:"Rutas",usuarios:"Usuarios"};
+    const lines=Object.entries(kpis).filter(([key])=>labels[key]).map(([key,value])=>`- ${labels[key]}: **${value}**.`);
+    return `# Resumen GL365\n\n${lines.join("\n") || "Tu rol no tiene módulos de datos habilitados. Solicita a Gerencia que revise tus accesos."}`;
+  };
+  if (ctx.restricted && isSystemOverviewQuestion(question)) return scopedSummary();
   if (isSystemOverviewQuestion(question)) {
     const moduleTable = markdownTable(
       ["Módulo", "Información consultable", "Registros principales"],
@@ -2720,6 +2726,7 @@ Podés consultar un cliente, proveedor, viaje, servicio de transporte, ruta, veh
     }`;
   }
 
+  if (ctx.restricted) return scopedSummary();
   return `# Resumen gerencial de GL365\n\n## Situación actual\n- Clientes: ${
     kpis.clientes
   }.\n- Viajes activos: ${
@@ -2751,9 +2758,9 @@ Podés consultar un cliente, proveedor, viaje, servicio de transporte, ruta, veh
    ENDPOINTS
 ========================================================= */
 
-router.get("/bootstrap", async (_req, res) => {
+router.get("/bootstrap", async (req, res) => {
   try {
-    const ctx = await getContextoCompacto();
+    const ctx = scopeAiContext(await getContextoCompacto(), req.auth);
 
     return res.json({
       ok: true,
@@ -2765,16 +2772,11 @@ router.get("/bootstrap", async (_req, res) => {
         groqConfigured: ctx.groqConfigured,
         model: ctx.model,
       },
-      capabilities: [
-        "CRM: clientes, contactos, oportunidades y cotizaciones",
-        "Facturación: comprobantes, detalles, pagos y saldos",
-        "Operaciones: asignaciones, costos, pilotos y proveedores",
-        "Logística: viajes, envíos, tracking y alertas",
-        "Flota: vehículos y mantenimientos",
-        "Proveedores: cumplimiento, SAT y desempeño",
-        "Rutas: ubicaciones, distancias, tiempos y costos",
-        "Usuarios y roles sin datos sensibles",
-      ],
+      capabilities: ctx.allowedModules.map(module => ({
+        crm:"CRM: clientes, contactos, oportunidades y cotizaciones", finance:"Comprobantes, pagos y saldos",
+        operations:"Operaciones y costos", logistics:"Viajes, envíos y alertas", fleet:"Flota y mantenimiento",
+        suppliers:"Proveedores y documentación", routes:"Rutas y ubicaciones", users:"Usuarios y roles",
+      })[module]),
       data: ctx.data,
       summary: ctx.data.summary,
       diagnostics: ctx.diagnostics,
@@ -2810,7 +2812,18 @@ const handleQuestion = async (req, res) => {
   }
 
   try {
-    const ctx = await getRelevantContext(question);
+    const requested = detectModules(question);
+    // Las preguntas generales se limitan a los módulos concedidos; una consulta
+    // específica no puede usar la IA para saltarse la autorización.
+    if (/\bpilotos?\b/.test(clean(question)) && hasModule(req.auth,"pilotos")) {
+      const [rows] = await pool.query("SELECT codigo_piloto,TRIM(CONCAT_WS(' ',primer_nombre,segundo_nombre,primer_apellido,segundo_apellido)) nombre,licencia,DATE_FORMAT(fecha_nacimiento,'%Y-%m-%d') nacimiento FROM piloto ORDER BY id");
+      return res.json({ok:true,answer:/cuantos|cantidad|total/.test(clean(question)) ? `Hay **${rows.length} pilotos** registrados en el sistema.` : `# Pilotos\n\n${markdownTable(["Código","Nombre","Licencia","Nacimiento"],rows.map(p=>[p.codigo_piloto,p.nombre,p.licencia,p.nacimiento||"Sin registrar"]),50)}`,
+        provider:{name:"database",used:false,groqConfigured:false,model:null},contextUsed:{modules:["pilotos"],searchTerms:[]}});
+    }
+    if (!isSystemOverviewQuestion(question) && requested.length < 7 && requested.some(m => !hasModule(req.auth, AI_MODULES[m]))) {
+      return res.status(403).json({ok:false,message:"No tienes permiso para consultar los módulos solicitados."});
+    }
+    const ctx = await getRelevantContext(question, req.auth);
     const result = {
       answer: buildLocalAnswer(question, ctx),
       provider: { name: "database", used: false, groqConfigured: false, model: null, warning: null },

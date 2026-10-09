@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { canAccessModule } from "../../utils/permissions";
 import logoImage from "../../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
 
 interface HeaderProps {
@@ -154,7 +155,7 @@ const isOperationalAlert = (alert: any) => {
 };
 
 export function Header({ onMenuClick }: HeaderProps) {
-  const { role, userName, logout } = useAuth();
+  const { role, permissions, userName, logout } = useAuth();
   const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -194,19 +195,9 @@ export function Header({ onMenuClick }: HeaderProps) {
       document.removeEventListener("mousedown", onDocumentClick);
   }, []);
 
-  const canSeeLogistics = [
-    "gerencia",
-    "logistica",
-    "mensajeria",
-  ].includes(role);
-
-  const canSeeFleet = ["gerencia", "logistica"].includes(role);
-
-  const canSeePilots = [
-    "gerencia",
-    "logistica",
-    "operaciones",
-  ].includes(role);
+  const canSeeLogistics = canAccessModule(role, "logistica", permissions);
+  const canSeeFleet = canAccessModule(role, "flota", permissions);
+  const canSeePilots = canAccessModule(role, "pilotos", permissions);
 
   const loadNotifications = async () => {
     setLoadingNotifications(true);

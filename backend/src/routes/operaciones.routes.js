@@ -387,6 +387,9 @@ const detalleOperativoJson = (body, tipoAsignacion) => {
 };
 
 const asDate = (valor) => {
+  if (valor instanceof Date && !Number.isNaN(valor.getTime())) {
+    return `${valor.getFullYear()}-${String(valor.getMonth() + 1).padStart(2, "0")}-${String(valor.getDate()).padStart(2, "0")}`;
+  }
   const v = limpiar(valor);
   if (!v) return null;
   if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
@@ -839,8 +842,8 @@ const findOrCreatePiloto = async (connection, body) => {
   const [insert] = await connection.query(
     `
     INSERT INTO \`${T.piloto}\`
-    (codigo_piloto, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, licencia)
-    VALUES (?, ?, ?, ?, ?, ?)
+    (codigo_piloto, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, licencia, dpi, nit, fecha_nacimiento)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       codigo,
@@ -1139,6 +1142,23 @@ const saveAssignment = async (connection, body, id = null) => {
   let detalleJson = detalleOperativoJson(body, tipoAsignacion);
   let detalle = parseJsonSeguro(detalleJson, {});
 
+  // Reutiliza la ficha maestra del piloto: no obliga a volver a escribir estos datos.
+  const pilotForDocuments = asId(body.piloto_id || body.pilotos_id || body.pilotoId);
+  if (pilotForDocuments) {
+    const [[pilotoMaster]] = await connection.query(
+      `SELECT licencia, dpi, nit, fecha_nacimiento FROM \`${T.piloto}\` WHERE id = ? LIMIT 1`,
+      [pilotForDocuments]
+    );
+    if (pilotoMaster) {
+      detalle.licencia = pilotoMaster.licencia || detalle.licencia || null;
+      detalle.dpi_piloto = pilotoMaster.dpi || detalle.dpi_piloto || null;
+      detalle.nit_piloto = pilotoMaster.nit || detalle.nit_piloto || null;
+      detalle.fecha_nacimiento_piloto = asDate(pilotoMaster.fecha_nacimiento) || detalle.fecha_nacimiento_piloto || null;
+      detalleJson = JSON.stringify(detalle);
+    }
+  }
+
+
   // Validaciones específicas de cada expediente operativo.
   // Los campos opcionales pueden guardar literalmente "N/A".
   const nonEmpty = (value) => limpiar(value).length > 0;
@@ -1237,20 +1257,6 @@ const saveAssignment = async (connection, body, id = null) => {
   const vehiculoId = await findOrCreateVehiculo(connection, body);
   const pilotoId = await findOrCreatePiloto(connection, body);
 
-  // Reutiliza la ficha maestra del piloto: no obliga a volver a escribir estos datos.
-  if (pilotoId) {
-    const [[pilotoMaster]] = await connection.query(
-      `SELECT licencia, dpi, nit, fecha_nacimiento FROM \`${T.piloto}\` WHERE id = ? LIMIT 1`,
-      [pilotoId]
-    );
-    if (pilotoMaster) {
-      detalle.licencia = pilotoMaster.licencia || detalle.licencia || null;
-      detalle.dpi_piloto = pilotoMaster.dpi || detalle.dpi_piloto || pilotoMaster.licencia || null;
-      detalle.nit_piloto = pilotoMaster.nit || detalle.nit_piloto || null;
-      detalle.fecha_nacimiento_piloto = asDate(pilotoMaster.fecha_nacimiento) || detalle.fecha_nacimiento_piloto || null;
-      detalleJson = JSON.stringify(detalle);
-    }
-  }
 
   const estadoId = asId(body.estado_asignacion_id || body.estado_id) || 1;
 
@@ -1982,10 +1988,12 @@ router.patch("/operaciones/asignaciones/:id/finalizar", async (req, res) => {
       );
     }
 
-    await connection.query(
-      `UPDATE \`${T.asignacion}\` SET estado_asignacion_id = ? WHERE id = ?`,
-      [finalState.id, id]
-    );
+    const [[actual]] = await connection.query(`SELECT estado_asignacion_id,detalle_operativo_json FROM \`${T.asignacion}\` WHERE id=? FOR UPDATE`, [id]);
+    if (!actual) { await connection.rollback(); return fail(res,404,"La operación no existe."); }
+    const detail = parseJsonSeguro(actual.detalle_operativo_json, {});
+    if (Number(actual.estado_asignacion_id) !== Number(finalState.id)) detail.estado_previo_finalizar = actual.estado_asignacion_id;
+    await connection.query(`UPDATE \`${T.asignacion}\` SET estado_asignacion_id=?, detalle_operativo_json=? WHERE id=?`,
+      [finalState.id, JSON.stringify(detail), id]);
 
     await connection.commit();
     return ok(res, { id, estado_asignacion_id: finalState.id }, "Operación finalizada correctamente.");
@@ -1996,6 +2004,30 @@ router.patch("/operaciones/asignaciones/:id/finalizar", async (req, res) => {
   } finally {
     connection.release();
   }
+});
+
+// Reabrir un expediente histórico no crea ni revalida documentos del piloto.
+router.patch("/operaciones/asignaciones/:id/reabrir", async (req, res) => {
+  const c = await pool.getConnection();
+  try {
+    await c.beginTransaction();
+    const id = asId(req.params.id);
+    if (!id) { await c.rollback(); return fail(res,400,"ID de asignación inválido."); }
+    const [[actual]] = await c.query(`SELECT estado_asignacion_id,detalle_operativo_json FROM \`${T.asignacion}\` WHERE id=? FOR UPDATE`, [id]);
+    if (!actual) { await c.rollback(); return fail(res,404,"La operación no existe."); }
+    const detail = parseJsonSeguro(actual.detalle_operativo_json, {});
+    const [states] = await c.query(`SELECT id,nombre_estado_asignacion FROM \`${T.estadoAsignacion}\` ORDER BY id`);
+    const available = states.filter(s => !/final|complet|cerrad/i.test(s.nombre_estado_asignacion));
+    const wanted = [detail.estado_previo_finalizar, req.body?.estado_asignacion_id, actual.estado_asignacion_id];
+    const state = wanted.map(id => available.find(s => Number(s.id)===Number(id))).find(Boolean)
+      || available.find(s => /pendiente/i.test(s.nombre_estado_asignacion)) || available[0];
+    if (!state) { await c.rollback(); return fail(res,400,"No existe un estado operativo para reabrir."); }
+    // Conserva íntegros los documentos, costos y fechas, incluso si falta DPI.
+    await c.query(`UPDATE \`${T.asignacion}\` SET estado_asignacion_id=? WHERE id=?`, [state.id,id]);
+    await c.commit();
+    return ok(res,{id,estado_asignacion_id:state.id},"Operación reabierta correctamente.");
+  } catch (e) { await c.rollback(); return fail(res,500,"No se pudo reabrir la operación.",e); }
+  finally { c.release(); }
 });
 
 router.put("/operaciones/asignaciones/:id/cierre", async (req, res) => {

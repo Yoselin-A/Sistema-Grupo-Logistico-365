@@ -119,6 +119,7 @@ function saveUserPatch(
   userName: string,
   permissions: string[] | null
 ) {
+  if (!role) return; // No crea una sesión ficticia en la pantalla de login.
   const currentUser = getStoredUser() || {};
 
   const updatedUser: Record<string, any> = {
@@ -181,7 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshSession = async () => {
-    if (!getStoredUser() && !roleState) return;
+    if (!getStoredRole()) return;
 
     try {
       const response = await fetch(`${API_BASE_URL}/auth/me`, {
@@ -191,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       const json = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403) { logout(); return; }
       if (!response.ok || json?.ok === false) return;
 
       const user = json?.data || json?.user;
@@ -252,9 +254,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [roleState, userNameState, permissionsState]);
 
   useEffect(() => {
-    void refreshSession();
-    // Solo al montar el proveedor. El middleware consulta MySQL en cada petición;
-    // refreshSession actualiza además el menú visible del frontend.
+    const sync = () => { if (!document.hidden) void refreshSession(); };
+    sync();
+    const timer = window.setInterval(sync, 15000);
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+    // Los permisos del menú se sincronizan también en sesiones ya abiertas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

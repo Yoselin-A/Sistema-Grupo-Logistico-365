@@ -79,6 +79,7 @@ type Piloto = {
   dias_licencia?: number | null;
 
   dias_dpi?: number | null;
+  expedientes?: { codigo: string; tipo: string; licencia?: string; dpi?: string; nit?: string; fecha_nacimiento?: string; pasaporte?: string; pais?: string }[];
 
 };
 
@@ -3667,6 +3668,14 @@ function PilotViewModal({
 
             />
 
+            {(pilot.expedientes || []).map((exp, index) => (
+              <ViewBox key={`${exp.codigo}-${index}`} title={`Documentos en ${exp.codigo} · ${exp.tipo === "fiduca" ? "FYDUCA" : exp.tipo}`}
+                className="md:col-span-2" items={[
+                  ["Licencia", exp.licencia || "Sin registrar"], ["DPI", exp.dpi || "Sin registrar"],
+                  ["NIT", exp.nit || "Sin registrar"], ["Nacimiento", formatoFecha(exp.fecha_nacimiento)],
+                  ["Pasaporte", exp.pasaporte || "Sin registrar"], ["País", exp.pais || "Sin registrar"],
+                ]} />
+            ))}
           </div>
 
         </div>

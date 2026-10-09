@@ -6,6 +6,8 @@ export type ModuleKey =
   | "operaciones"
   | "logistica"
   | "facturacion"
+  | "proveedores"
+  | "pilotos"
   | "flota"
   | "rutas"
   | "reportes"
@@ -19,6 +21,8 @@ const todosLosModulos: ModuleKey[] = [
   "operaciones",
   "logistica",
   "facturacion",
+  "proveedores",
+  "pilotos",
   "flota",
   "rutas",
   "reportes",

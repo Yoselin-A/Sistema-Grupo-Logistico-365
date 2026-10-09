@@ -4,12 +4,8 @@ const { autorizarModulo } = require("../middleware/auth.middleware");
 
 const router = express.Router();
 
-/*
-  Se mantiene el permiso CRM para no romper los roles actuales.
-  Si en auth.middleware ya tienes un módulo llamado "proveedores",
-  cambia "crm" por "proveedores".
-*/
-const soloProveedores = autorizarModulo("crm");
+// El permiso de CRM no concede acceso al directorio de proveedores.
+const soloProveedores = autorizarModulo("proveedores");
 router.use("/proveedores", soloProveedores);
 
 const T = {

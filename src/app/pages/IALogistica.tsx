@@ -1,3 +1,5 @@
+import { useAuth } from "../context/AuthContext";
+import { canAccessModule } from "../utils/permissions";
 import {
   useEffect,
   useMemo,
@@ -492,6 +494,8 @@ function AssistantMessageContent({ text }: { text: string }) {
 }
 
 export function IALogistica() {
+  const {role,permissions}=useAuth();
+  const canSee=(module: Parameters<typeof canAccessModule>[1])=>canAccessModule(role,module,permissions);
   const [context, setContext] =
     useState<IABootstrapData>(EMPTY_CONTEXT);
   const [diagnostics, setDiagnostics] = useState<any>(null);
@@ -544,8 +548,10 @@ export function IALogistica() {
   };
 
   useEffect(() => {
+    setContext(EMPTY_CONTEXT);
+    setChat([]);
     void loadContext();
-  }, []);
+  }, [role, permissions?.join("|")]);
 
   // Desplaza únicamente el panel interno del chat.
   // No mueve la página completa.
@@ -755,6 +761,15 @@ export function IALogistica() {
       icon: ShieldCheck,
     },
   ];
+
+  const promptModules: Record<string, Parameters<typeof canAccessModule>[1]> = {
+    "Viajes con retraso":"logistica","Viajes críticos":"logistica","Flota disponible":"flota","Mantenimiento":"flota",
+    "Cobranza":"facturacion","Rentabilidad":"operaciones","Pipeline comercial":"crm","Proveedores":"proveedores",
+    "Clientes":"crm","Cotizaciones":"crm","Oportunidades":"crm","Servicios de transporte":"logistica","Rutas":"rutas",
+    "Facturación vencida":"facturacion","Costos operativos":"operaciones","Márgenes bajos":"operaciones","Operaciones finalizadas":"operaciones",
+    "Usuarios":"seguridad","Estado SAT":"proveedores",
+  };
+  const visiblePrompts=quickPrompts.filter(prompt=>!promptModules[prompt.label]||canSee(promptModules[prompt.label]));
 
   const send = async (forcedText?: string) => {
     const question = String(
@@ -1031,6 +1046,7 @@ export function IALogistica() {
 
         {/* KPIs */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {canSee("logistica") && (
           <MiniKpi
             icon={Truck}
             label="Viajes activos"
@@ -1038,7 +1054,9 @@ export function IALogistica() {
             detail={`${summary.viajesRetraso} alerta retraso · ${summary.viajesCriticos} crítico`}
             tone="blue"
           />
+          )}
 
+          {canSee("flota") && (
           <MiniKpi
             icon={CheckCircle2}
             label="Flota disponible"
@@ -1048,7 +1066,9 @@ export function IALogistica() {
             detail={`${summary.vehiculosMantenimiento} requieren atención`}
             tone="green"
           />
+          )}
 
+          {canSee("facturacion") && (
           <MiniKpi
             icon={CircleDollarSign}
             label="Saldo por cobrar"
@@ -1058,7 +1078,9 @@ export function IALogistica() {
             )} vencido`}
             tone="orange"
           />
+          )}
 
+          {canSee("crm") && (
           <MiniKpi
             icon={TrendingUp}
             label="Pipeline ponderado"
@@ -1068,6 +1090,7 @@ export function IALogistica() {
             detail={`${summary.oportunidadesActivas} oportunidades activas`}
             tone="purple"
           />
+          )}
         </div>
 
         <div
@@ -1278,7 +1301,7 @@ export function IALogistica() {
                 </div>
 
                 <div className="flex flex-wrap gap-1.5 overflow-visible">
-                  {quickPrompts.map((prompt) => {
+                  {visiblePrompts.map((prompt) => {
                     const Icon = prompt.icon;
 
                     return (
