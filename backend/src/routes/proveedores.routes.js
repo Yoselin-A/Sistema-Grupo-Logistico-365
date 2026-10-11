@@ -619,6 +619,26 @@ const guardarProveedor = async (connection, body, proveedorId = null) => {
 // =====================================================
 // GET - CARGAR PROVEEDORES
 // =====================================================
+const CAMPOS_FICHA_PROVEEDOR = ["contacto_principal","nombre_propietario","dpi_propietario","direccion_predio","tipo_contribuyente","direccion_fisica","cuenta_bancaria","banco","dueno_cuenta","tipo_cuenta","contacto_telefono","investigacion_sat","investigacion_clinton"];
+router.get("/proveedores/:id/ficha",async(req,res)=>{
+ try{
+  const id=asId(req.params.id);if(!id)return fail(res,400,"Proveedor inválido.");
+  const [[r]]=await pool.query('SELECT * FROM proveedor WHERE id=?',[id]);if(!r)return fail(res,404,"Proveedor no encontrado.");
+  return ok(res,{...r,referencias: typeof r.referencias==='string'?JSON.parse(r.referencias||'[]').join(', '):(r.referencias||[]).join(', ')});
+ }catch(e){return fail(res,500,"No se pudo cargar la ficha.",e)}
+});
+router.put("/proveedores/:id/ficha",async(req,res)=>{
+ try{
+  const id=asId(req.params.id);if(!id)return fail(res,400,"Proveedor inválido.");
+  const b=req.body||{};
+  const setSql=CAMPOS_FICHA_PROVEEDOR.map(k=>"`"+k+"`=?").join(', ');
+  const vals=CAMPOS_FICHA_PROVEEDOR.map(k=>String(b[k]||'').trim().slice(0,k.includes('direccion')?255:150)||null);
+  const refs=String(b.referencias||'').split(',').map(x=>x.trim()).filter(Boolean).slice(0,12);
+  const [r]=await pool.query(`UPDATE proveedor SET ${setSql}, referencias=? WHERE id=?`,[...vals,JSON.stringify(refs),id]);
+  return r.affectedRows?ok(res,{id},"Ficha de proveedor guardada."):fail(res,404,"Proveedor inexistente.");
+ }catch(e){return fail(res,500,"No se pudo guardar la ficha.",e)}
+});
+
 router.get("/proveedores", async (req, res) => {
   try {
     return ok(

@@ -19,6 +19,7 @@ const flotaRoutes = require("./routes/flota.routes");
 const pilotosRoutes = require("./routes/pilotos.routes");
 const rutasRoutes = require("./routes/rutas.routes");
 const comprobantesRoutes = require("./routes/comprobantes.routes");
+const recibosRoutes = require("./routes/recibos.routes");
 const reportesRoutes = require("./routes/reportes.routes");
 const iaRoutes = require("./routes/ia.routes");
 const mantenimientoRoutes = require("./routes/mantenimiento.routes");
@@ -29,7 +30,7 @@ const { auditoriaGlobal } = require("./middleware/auditoriaGlobal.middleware");
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 app.get("/", (req, res) => {
   res.json({
@@ -117,6 +118,7 @@ app.use("/api", rutasRoutes);
 
 // COMPROBANTES
 app.use("/api", comprobantesRoutes);
+app.use("/api", recibosRoutes);
 
 // REPORTES
 app.use("/api", reportesRoutes);

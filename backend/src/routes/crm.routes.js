@@ -800,11 +800,11 @@ router.get("/crm/bootstrap", async (req, res) => {
         ud.nombre_ubicacion AS destino,
         COUNT(cd.id) AS lineas,
         COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) AS subtotal,
-        COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * 0.12 AS iva,
-        COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * 1.12 AS total,
-        CURDATE() AS fecha,
+        COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * (CASE WHEN ct.aplica_iva = 1 THEN 0.12 ELSE 0 END) AS iva,
+        COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * (CASE WHEN ct.aplica_iva = 1 THEN 1.12 ELSE 1 END) AS total,
+        ct.fecha_emision AS fecha,
         COALESCE(NULLIF(ct.estado_ui, ''), 'Borrador') AS estado,
-        'GTQ' AS moneda
+        ct.moneda_ui AS moneda
       FROM \`${T.cotizacion}\` ct
       LEFT JOIN \`${T.cliente}\` c ON c.id = ct.cliente_id
       LEFT JOIN \`${T.contacto}\` cc ON cc.id = ct.contacto_id
@@ -878,6 +878,44 @@ router.get("/crm/bootstrap", async (req, res) => {
 // =====================================================
 // CLIENTES
 // =====================================================
+// Ficha formal Solicitud de Datos del Cliente (formato de Logistics Group 365).
+const camposSolicitud = ["contacto_empresa","puesto_empresa","email_contacto","contacto_comercial","email_comercial","telefono_comercial","contacto_financiero","email_financiero","telefono_financiero","cuentas_pagar","email_cuentas_pagar","telefono_cuentas_pagar","representante_legal","email_representante","telefono_representante","telefonos_empresa","documentos_solicitados"];
+router.get("/clientes/:id/solicitud", async (req,res)=>{
+ try{
+  const id = asId(req.params.id);
+  if(!id)return fail(res,400,"Cliente inválido.");
+  const [[row]]=await pool.query(`SELECT c.id,c.codigo_cliente,c.nombre_empresa,c.nit,c.direccion,c.actividad_economica,c.email_empresarial,
+     cs.codigo_documento, DATE_FORMAT(cs.fecha_solicitud,'%Y-%m-%d') AS fecha_solicitud,
+     DATE_FORMAT(c.registro_inicial,'%Y-%m-%d') AS registro_inicial,cs.datos_contactos
+     FROM cliente c LEFT JOIN cliente_solicitud cs ON cs.cliente_id=c.id WHERE c.id=?`,[id]);
+  if(!row)return fail(res,404,"No se encontró el cliente.");
+  const contactos=typeof row.datos_contactos === 'string' ? JSON.parse(row.datos_contactos) : row.datos_contactos || {};
+  const [[principal]]=await pool.query(`SELECT TRIM(CONCAT_WS(' ', cc.primer_nombre,cc.segundo_nombre,cc.primer_apellido,cc.segundo_apellido)) AS nombre, cc.cargo,cc.correo
+   FROM contacto_cliente cc WHERE cc.cliente_id=? ORDER BY cc.es_principal DESC,cc.id DESC LIMIT 1`,[id]);
+  const fallback=principal?{contacto_empresa:principal.nombre,puesto_empresa:principal.cargo,email_contacto:principal.correo}:{};
+  const fecha = new Date().toISOString().slice(0,10);
+  return ok(res,{...row,...fallback,...contactos,codigo_documento:row.codigo_documento||'DC-SD-01-03-2022-VR-01',fecha_solicitud:row.fecha_solicitud||fecha});
+ }catch(e){return fail(res,500,"No se pudo consultar la solicitud del cliente.",e)}
+});
+router.put("/clientes/:id/solicitud",async(req,res)=>{
+ const c=await pool.getConnection();
+ try{
+  const id=asId(req.params.id);if(!id)return fail(res,400,"Cliente inválido.");
+  const [[row]]=await c.query(`SELECT codigo_cliente FROM cliente WHERE id=?`,[id]);
+  if(!row)return fail(res,404,"Cliente inexistente.");
+  const b=req.body||{};const fecha=/^\d{4}-\d{2}-\d{2}$/.test(String(b.fecha_solicitud||''))?b.fecha_solicitud:new Date().toISOString().slice(0,10);
+  const codigo=String(b.codigo_documento||'DC-SD-01-03-2022-VR-01').trim().slice(0,40);
+  const datos=Object.fromEntries(camposSolicitud.map(k=>[k,String(b[k]||'').trim().slice(0,250)]));
+  await c.beginTransaction();
+  await c.query(`UPDATE cliente SET actividad_economica=?, email_empresarial=?, registro_inicial=? WHERE id=?`,[
+    String(b.actividad_economica||'').trim().slice(0,255)||null,String(b.email_empresarial||'').trim().slice(0,150)||null,
+    /^\d{4}-\d{2}-\d{2}$/.test(String(b.registro_inicial||''))?b.registro_inicial:null,id]);
+  await c.query(`INSERT INTO cliente_solicitud(cliente_id,codigo_documento,fecha_solicitud,datos_contactos) VALUES(?,?,?,?)
+    ON DUPLICATE KEY UPDATE codigo_documento=VALUES(codigo_documento),fecha_solicitud=VALUES(fecha_solicitud),datos_contactos=VALUES(datos_contactos)`,[id,codigo,fecha,JSON.stringify(datos)]);
+  await c.commit();return ok(res,{codigo_documento:codigo,fecha_solicitud:fecha},"Solicitud de cliente guardada.");
+ }catch(e){await c.rollback();return fail(res,500,"Error al guardar la solicitud.",e)} finally{c.release()}
+});
+
 router.get("/clientes", async (req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -1939,6 +1977,24 @@ router.delete("/oportunidades/:id", async (req, res) => {
   }
 });
 
+// Indicadores comerciales para seguimiento de clientes y llamadas de ventas.
+router.get("/crm/seguimiento-clientes", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT c.id, c.codigo_cliente, c.nombre_empresa,
+        COUNT(q.id) AS cotizaciones_total,
+        MAX(q.fecha_emision) AS ultima_cotizacion,
+        DATEDIFF(CURDATE(), MAX(q.fecha_emision)) AS dias_sin_cotizar
+      FROM cliente c LEFT JOIN cotizacion q ON q.cliente_id = c.id
+      GROUP BY c.id, c.codigo_cliente, c.nombre_empresa
+      ORDER BY cotizaciones_total DESC, ultima_cotizacion DESC
+    `);
+    return ok(res, rows);
+  } catch (error) {
+    return fail(res, 500, "No se pudieron obtener los indicadores comerciales.", error);
+  }
+});
+
 // =====================================================
 // COTIZACIONES
 // =====================================================
@@ -1957,6 +2013,7 @@ router.get("/cotizaciones", async (req, res) => {
         ct.forma_pago_id,
         ct.origen_id,
         ct.destino_id,
+        ct.moneda_ui, ct.aplica_iva, ct.tipo_asignacion, ct.fecha_emision,
 
         c.nombre_empresa,
         c.nombre_empresa AS razon_social,
@@ -1977,18 +2034,18 @@ router.get("/cotizaciones", async (req, res) => {
         MIN(cd.descripcion) AS descripcion,
         COALESCE(SUM(cd.cantidad), 1) AS cantidad,
         COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) AS subtotal,
-        COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * 0.12 AS iva,
-        COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * 1.12 AS total,
+        COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * (CASE WHEN ct.aplica_iva = 1 THEN 0.12 ELSE 0 END) AS iva,
+        COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) * (CASE WHEN ct.aplica_iva = 1 THEN 1.12 ELSE 1 END) AS total,
         CASE
           WHEN COALESCE(SUM(cd.cantidad), 0) > 0
           THEN COALESCE(SUM(cd.cantidad * cd.precio_unitario), 0) / COALESCE(SUM(cd.cantidad), 1)
           ELSE 0
         END AS precio_unitario,
 
-        CURDATE() AS fecha,
+        ct.fecha_emision AS fecha,
         COALESCE(NULLIF(ct.estado_ui, ''), 'Borrador') AS estado_ui,
         COALESCE(NULLIF(ct.estado_ui, ''), 'Borrador') AS estado,
-        'GTQ' AS moneda,
+        ct.moneda_ui AS moneda,
         m.nombre_modalidad AS tipo_carga,
         '' AS peso,
         '' AS volumen,
@@ -2062,9 +2119,13 @@ router.post("/cotizaciones", async (req, res) => {
         forma_pago_id,
         origen_id,
         destino_id,
-        estado_ui
+        estado_ui,
+        moneda_ui,
+        aplica_iva,
+        tipo_asignacion,
+        fecha_emision
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         codigo,
@@ -2076,6 +2137,10 @@ router.post("/cotizaciones", async (req, res) => {
         origenId,
         destinoId,
         estadoUi,
+        req.body.moneda_ui === "USD" ? "USD" : "GTQ",
+        req.body.aplica_iva === false || req.body.aplica_iva === 0 ? 0 : 1,
+        ["local", "fiduca", "centroamerica", "internacional"].includes(req.body.tipo_asignacion) ? req.body.tipo_asignacion : null,
+        asDate(req.body.fecha_ui) || new Date().toISOString().slice(0,10),
       ]
     );
 
@@ -2172,7 +2237,11 @@ router.put("/cotizaciones/:id", async (req, res) => {
           forma_pago_id = ?,
           origen_id = ?,
           destino_id = ?,
-          estado_ui = ?
+          estado_ui = ?,
+          moneda_ui = ?,
+          aplica_iva = ?,
+          tipo_asignacion = ?,
+          fecha_emision = ?
       WHERE id = ?
       `,
       [
@@ -2184,6 +2253,10 @@ router.put("/cotizaciones/:id", async (req, res) => {
         origenId,
         destinoId,
         estadoUi,
+        req.body.moneda_ui === "USD" ? "USD" : "GTQ",
+        req.body.aplica_iva === false || req.body.aplica_iva === 0 ? 0 : 1,
+        ["local", "fiduca", "centroamerica", "internacional"].includes(req.body.tipo_asignacion) ? req.body.tipo_asignacion : null,
+        asDate(req.body.fecha_ui) || null,
         id,
       ]
     );

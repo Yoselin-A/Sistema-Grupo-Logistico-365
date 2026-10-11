@@ -1,3 +1,4 @@
+import { descargarSolicitudCliente } from "../components/shared/SolicitudCliente";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { DragEvent, KeyboardEvent, ReactNode } from "react";
@@ -34,7 +35,7 @@ import {
 import { generarPDFCotizacion } from "../services/pdfGenerator";
 import jsPDF from "jspdf";
 import * as XLSX from "xlsx";
-import logoEmpresa from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
+import logoEmpresa from "../../assets/logo_gl365_oficial.png";
 
 // ============================================================
 // CRM GL365 - PROTOTIPO FIGMA ALINEADO A LA BD NORMALIZADA
@@ -205,6 +206,8 @@ interface CotizacionRow {
   fecha_ui: string;
   estado_ui: QuoteStatus;
   moneda_ui: "USD" | "GTQ";
+  aplica_iva?: boolean;
+  tipo_asignacion?: "local" | "fiduca" | "centroamerica" | "internacional";
   tipo_carga_ui: string;
   peso_ui: string;
   volumen_ui: string;
@@ -1919,6 +1922,19 @@ async function generarPDFCliente(
 // ============================================================
 
 export function CRM() {
+  const [clientSolicitud, setClientSolicitud] = useState<Record<string,string>>({codigo_documento:'DC-SD-01-03-2022-VR-01'});
+  const [clienteGuardadoModal, setClienteGuardadoModal] = useState(false);
+  const updateSolicitud = (field:string,value:string) => setClientSolicitud(old=>({...old,[field]:value}));
+  const camposSolicitudGeneral:[string,string][] = [
+    ['codigo_documento','Código del documento (manual)'],['fecha_solicitud','Fecha de solicitud'],['registro_inicial','Registro inicial'],
+    ['actividad_economica','Actividad económica'],['telefonos_empresa','Teléfonos de la empresa'],['email_empresarial','E-mail empresarial'],
+    ['contacto_empresa','Nombre del contacto en la empresa'],['puesto_empresa','Puesto dentro de la empresa'],['email_contacto','E-mail del contacto'],
+    ['contacto_comercial','Contacto comercial'],['email_comercial','E-mail comercial'],['telefono_comercial','Teléfonos comercial'],
+    ['contacto_financiero','Contacto financiero'],['email_financiero','E-mail financiero'],['telefono_financiero','Teléfonos financiero'],
+    ['cuentas_pagar','Encargado de cuentas por pagar'],['email_cuentas_pagar','E-mail cuentas por pagar'],['telefono_cuentas_pagar','Teléfonos cuentas por pagar'],
+    ['representante_legal','Representante legal'],['email_representante','E-mail representante legal'],['telefono_representante','Teléfonos representante legal'],
+    ['documentos_solicitados','Documentos solicitados (detalle)']
+  ];
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [activeTab, setActiveTab] = useState<"seguimiento" | "clientes" | "cotizaciones" | "proveedores">("seguimiento");
@@ -2198,9 +2214,11 @@ export function CRM() {
             forma_pago_id: q.forma_pago_id ? Number(q.forma_pago_id) : null,
             origen_id: q.origen_id ? Number(q.origen_id) : null,
             destino_id: q.destino_id ? Number(q.destino_id) : null,
-            fecha_ui: firstNonBlank(q.fecha_ui, meta.fecha_ui, q.fecha, q.created_at, todayISO()).slice(0, 10),
+            fecha_ui: firstNonBlank(q.fecha_emision, q.fecha_ui, meta.fecha_ui, q.fecha, "").slice(0, 10),
             estado_ui: (firstNonBlank(q.estado_ui, meta.estado_ui, q.estado, "Borrador") || "Borrador") as QuoteStatus,
             moneda_ui: firstNonBlank(q.moneda_ui, meta.moneda_ui, q.moneda, "GTQ").toUpperCase() === "USD" ? "USD" : "GTQ",
+            aplica_iva: q.aplica_iva === 0 || q.aplica_iva === false ? false : true,
+            tipo_asignacion: q.tipo_asignacion || "local",
             tipo_carga_ui: firstNonBlank(q.tipo_carga_ui, meta.tipo_carga_ui, q.tipo_carga, q.nombre_modalidad),
             peso_ui: firstNonBlank(q.peso_ui, meta.peso_ui, q.peso),
             volumen_ui: firstNonBlank(q.volumen_ui, meta.volumen_ui, q.volumen),
@@ -2446,7 +2464,7 @@ export function CRM() {
           days: Number(d.dias_ui || 0),
         }));
         const subtotal = services.reduce((s, d) => s + d.subtotal, 0);
-        const iva = subtotal * 0.12;
+        const iva = q.aplica_iva === false ? 0 : subtotal * 0.12;
         const total = subtotal + iva;
         return {
           id: q.id,
@@ -2875,6 +2893,16 @@ export function CRM() {
     client?: ClienteRow
   ) => {
     setClientErrors({});
+    if (mode === "create") {
+      setClientSolicitud({codigo_documento:'DC-SD-01-03-2022-VR-01',fecha_solicitud:new Date().toISOString().slice(0,10)});
+    } else if (client?.id) {
+      const id = client.id;
+      setClientSolicitud({codigo_documento:'DC-SD-01-03-2022-VR-01'});
+      fetch(`/api/clientes/${id}/solicitud`).then(r=>r.json()).then(j=>{
+        if(j.ok===false) throw Error(j.message||'Error al cargar solicitud');
+        setClientSolicitud(Object.fromEntries(Object.entries(j.data||j).map(([k,v])=>[k,String(v??'')])));
+      }).catch(e=>showNotice('error',String(e.message||e)));
+    }
 
     if (mode === "create") {
       // Cada cliente nuevo inicia con su propio conjunto
@@ -3372,6 +3400,15 @@ export function CRM() {
         );
       }
 
+      const idSolicitud = createdClientId || Number(clientModal.value.id||0);
+      if (idSolicitud) {
+        const r=await fetch(`/api/clientes/${idSolicitud}/solicitud`,{
+          method:'PUT',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({...clientSolicitud,...payload})
+        });
+        const j=await r.json();
+        if(!r.ok || j.ok===false) throw new Error(j.message||'No se pudo guardar la solicitud del cliente');
+      }
       await reload();
 
       if (
@@ -3421,6 +3458,7 @@ export function CRM() {
         setNewClientPhones([]);
         setClientReturnTarget(null);
 
+        setClienteGuardadoModal(true);
         showNotice(
           "success",
           clientReturnTarget === "quote"
@@ -3448,6 +3486,7 @@ export function CRM() {
       setNewClientPhones([]);
       setClientReturnTarget(null);
 
+      setClienteGuardadoModal(true);
       showNotice(
         "success",
         clientModal.mode === "create"
@@ -4335,6 +4374,8 @@ export function CRM() {
         fecha_ui: todayISO(),
         estado_ui: "Borrador",
         moneda_ui: "GTQ",
+        aplica_iva: true,
+        tipo_asignacion: "local",
         tipo_carga_ui: fromLead?.opportunityName || "",
         peso_ui: "",
         volumen_ui: "",
@@ -4426,6 +4467,8 @@ export function CRM() {
       fecha_ui: quoteModal.value.fecha_ui,
       estado_ui: quoteModal.value.estado_ui,
       moneda_ui: quoteModal.value.moneda_ui,
+      aplica_iva: quoteModal.value.aplica_iva !== false,
+      tipo_asignacion: quoteModal.value.tipo_asignacion || "local",
       tipo_carga_ui: cleanCommercialText(String(quoteModal.value.tipo_carga_ui || ""), 80),
       peso_ui: quoteModal.value.peso_ui,
       volumen_ui: quoteModal.value.volumen_ui,
@@ -6175,7 +6218,7 @@ export function CRM() {
   const quoteDestination = ubicaciones.find((u) => u.id === Number(quoteModal.value.destino_id));
   const quoteTotalPackages = quoteModal.details.reduce((s, d) => s + Number(d.cantidad || 0), 0);
   const quoteSubtotal = quoteModal.details.reduce((s, d) => s + Number(d.cantidad || 0) * Number(d.precio_unitario || 0), 0);
-  const quoteIva = quoteSubtotal * 0.12;
+  const quoteIva = quoteModal.value.aplica_iva === false ? 0 : quoteSubtotal * 0.12;
   const quoteTotal = quoteSubtotal + quoteIva;
 
   const quoteLegacyForPdf = (q: QuoteView) => ({
@@ -6465,6 +6508,7 @@ export function CRM() {
 
   return (
     <div className="space-y-5 w-full max-w-full px-2 sm:px-3 lg:px-4">
+
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
@@ -6509,6 +6553,28 @@ export function CRM() {
           ))}
         </div>
       </div>
+
+      {activeTab === "seguimiento" && (() => {
+        const stats = clients.map(c => {
+          const cot = quoteViews.filter(q => Number(q.clientId) === Number(c.id));
+          const fechas = cot.map(q => q.date).filter(Boolean).sort().reverse();
+          const dias = fechas.length ? Math.floor((Date.now() - new Date(fechas[0]+"T12:00:00").getTime())/86400000) : null;
+          return {nombre: c.nombre_empresa, total: cot.length, ultima: fechas[0] || "Sin cotizaciones", dias};
+        });
+        const mayor = [...stats].sort((a,b)=>b.total-a.total)[0];
+        const menor = [...stats].filter(x=>x.total>0).sort((a,b)=>a.total-b.total)[0];
+        const inactivos = stats.filter(x => x.dias === null || x.dias >= 30).sort((a,b)=>(b.dias ?? 9999)-(a.dias ?? 9999));
+        return <section className="rounded-2xl border border-orange-200 bg-white p-4 shadow-sm">
+          <h2 className="text-lg font-bold text-[#0C2D6B]">Seguimiento comercial · Clientes para contactar</h2>
+          <p className="mb-3 text-sm text-gray-500">Indicadores calculados con las cotizaciones registradas. Umbral de inactividad: 30 días.</p>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl bg-blue-50 p-3"><b className="text-[#0C2D6B]">Más cotizaciones</b><p>{mayor?.nombre || "Sin datos"}</p><small>{mayor?.total || 0} cotizaciones</small></div>
+            <div className="rounded-xl bg-orange-50 p-3"><b className="text-[#0C2D6B]">Menos cotizaciones</b><p>{menor?.nombre || "Sin datos"}</p><small>{menor?.total || 0} cotizaciones</small></div>
+            <div className="rounded-xl bg-amber-50 p-3"><b className="text-[#0C2D6B]">Para seguimiento telefónico</b><p>{inactivos.length} clientes</p><small>Sin cotizaciones recientes</small></div>
+          </div>
+          {!!inactivos.length && <div className="mt-3 max-h-48 overflow-auto rounded border"><table className="w-full text-sm"><thead><tr className="bg-gray-50 text-left"><th className="p-2">Cliente</th><th className="p-2">Última cotización</th><th className="p-2">Días sin cotizar</th></tr></thead><tbody>{inactivos.slice(0,15).map((x,i)=><tr key={i} className="border-t"><td className="p-2">{x.nombre}</td><td className="p-2">{x.ultima}</td><td className="p-2">{x.dias === null ? "Nunca" : x.dias}</td></tr>)}</tbody></table></div>}
+        </section>;
+      })()}
 
       {/* ==================================================== */}
       {/* OPORTUNIDADES */}
@@ -6721,6 +6787,7 @@ export function CRM() {
                       <td className="px-3 py-3 align-top"><span className={`px-2 py-1 rounded text-[11px] font-bold whitespace-nowrap ${c.estado_cliente_id === 1 ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-700"}`}>{estadoClienteNombre(c.estado_cliente_id)}</span></td>
                       <td className="px-3 py-3 align-top">
                         <div className="flex items-center justify-center gap-1.5">
+
                           <button onClick={() => generarPDFCliente(c, contacts, phones)} className="w-8 h-8 rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 flex items-center justify-center" title="Descargar PDF" aria-label="Descargar PDF"><Download className="w-4 h-4" /></button>
                           <button onClick={() => openClient("view", c)} className="w-8 h-8 rounded-lg text-gray-500 hover:text-[#0C2D6B] hover:bg-blue-50 flex items-center justify-center" title="Ver cliente" aria-label="Ver cliente"><Eye className="w-4 h-4" /></button>
                           <button onClick={() => openClient("edit", c)} className="w-8 h-8 rounded-lg text-gray-500 hover:text-[#FF6A00] hover:bg-orange-50 flex items-center justify-center" title="Editar cliente" aria-label="Editar cliente"><Edit2 className="w-4 h-4" /></button>
@@ -7021,6 +7088,14 @@ export function CRM() {
       {/* ==================================================== */}
       {/* DRAWER CLIENTE */}
       {/* ==================================================== */}
+      {clienteGuardadoModal && <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Cliente guardado">
+        <div className="w-full max-w-md rounded-2xl bg-white p-7 text-center shadow-2xl">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-100 text-green-700"><CheckCircle2 size={34}/></div>
+          <h3 className="mt-4 text-xl font-extrabold text-[#0C2D6B]">Cliente guardado correctamente</h3>
+          <p className="mt-2 text-sm text-slate-600">La solicitud de datos y el expediente del cliente quedaron registrados. Puede consultar o editar la información desde Clientes.</p>
+          <button className="mt-5 w-full rounded-lg bg-[#0C2D6B] px-5 py-3 font-bold text-white" onClick={()=>setClienteGuardadoModal(false)}>Aceptar</button>
+        </div>
+      </div>}
       {clientModal.open && (
         <div className="fixed inset-0 z-[120] bg-black/50 flex justify-end">
           <div className="bg-white w-full max-w-2xl h-full flex flex-col shadow-2xl">
@@ -7854,6 +7929,18 @@ export function CRM() {
                   </div>
                 </div>
               ) : null}
+              <section className="mt-7 rounded-xl border border-[#0C2D6B]/20 bg-white p-4" aria-label="Solicitud de datos del cliente">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                  <h3 className="font-extrabold text-[#0C2D6B]">SOLICITUD DE DATOS DEL CLIENTE</h3>
+                  <button type="button" className="rounded-lg border border-[#0C2D6B] px-3 py-2 text-xs font-bold text-[#0C2D6B]" onClick={()=>descargarSolicitudCliente({...clientSolicitud,...clientModal.value})}>Descargar formulario PDF</button>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">Complete la información adicional en este mismo formulario. El código del documento se escribe manualmente y se conservará al guardar.</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  {camposSolicitudGeneral.map(([key,label])=><label key={key} className="text-xs font-semibold text-[#0C2D6B]">{label}
+                    <input disabled={clientModal.mode==='view'} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 disabled:bg-slate-50" value={clientSolicitud[key]||''} onChange={e=>updateSolicitud(key,e.target.value)} />
+                  </label>)}
+                </div>
+              </section>
             </div>
 
             <div className="p-4 border-t bg-white flex justify-end gap-2">
@@ -8496,6 +8583,23 @@ export function CRM() {
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-1 gap-3 border-y border-blue-200 bg-blue-50/60 px-4 py-3 md:grid-cols-2">
+                    <label className="text-sm font-semibold text-[#0C2D6B]">Tipo de asignación operativa
+                      <select disabled={quoteModal.mode === "view"} value={quoteModal.value.tipo_asignacion || "local"}
+                        onChange={(e) => setQuoteModal(p => ({...p, value: {...p.value, tipo_asignacion: e.target.value as CotizacionRow["tipo_asignacion"] }}))}
+                        className="mt-1 w-full rounded border border-blue-300 bg-white p-2">
+                        <option value="local">Local</option><option value="fiduca">FYDUCA</option>
+                        <option value="centroamerica">Centroamérica</option><option value="internacional">Internacional</option>
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-3 text-sm font-semibold text-[#0C2D6B]">
+                      <input type="checkbox" disabled={quoteModal.mode === "view"}
+                        checked={quoteModal.value.aplica_iva !== false}
+                        onChange={e => setQuoteModal(p => ({...p, value:{...p.value, aplica_iva:e.target.checked}}))}
+                        className="h-5 w-5" /> Calcular IVA (12 %) {quoteModal.value.moneda_ui === "USD" ? "en dólares" : "en quetzales"}
+                    </label>
+                  </div>
+
                   {/* DETALLE */}
                   <table className="w-full border-collapse">
                     <thead className="bg-[#FF6A00] text-white">
@@ -8503,7 +8607,7 @@ export function CRM() {
                         <th className="border border-black p-1">CANT.</th>
                         <th className="border border-black p-1">DESCRIPCIÓN</th>
                         <th className="border border-black p-1">VENTA</th>
-                        <th className="border border-black p-1">TOTAL CON IVA</th>
+                        <th className="border border-black p-1">TOTAL</th>
                         <th className="border border-black p-1">MONEDA</th>
                         <th className="border border-black p-1">DÍAS</th>
                         {quoteModal.mode !== "view" && <th className="border border-black p-1">ACCIONES</th>}
@@ -8564,7 +8668,7 @@ export function CRM() {
                               className="w-full h-8 rounded border border-blue-300 bg-white px-2 text-right font-semibold text-[#0C2D6B] outline-none focus:border-[#FF6A00] focus:ring-2 focus:ring-[#FF6A00]/20"
                             />
                           </td>
-                          <td className="border border-black p-2 text-right font-bold whitespace-nowrap">{moneyQuote(Number(d.cantidad || 0) * Number(d.precio_unitario || 0) * 1.12, (quoteModal.value.moneda_ui || "GTQ") as "USD" | "GTQ")}</td>
+                          <td className="border border-black p-2 text-right font-bold whitespace-nowrap">{moneyQuote(Number(d.cantidad || 0) * Number(d.precio_unitario || 0) * (quoteModal.value.aplica_iva === false ? 1 : 1.12), (quoteModal.value.moneda_ui || "GTQ") as "USD" | "GTQ")}</td>
                           <td className="border border-black p-2 text-center font-bold">{quoteModal.value.moneda_ui || "GTQ"}</td>
                           <td className="border border-black p-1 w-[85px]">
                             <input
@@ -8606,7 +8710,7 @@ export function CRM() {
                   {/* TOTALES */}
                   <div className="grid grid-cols-3 border border-black bg-white">
                     <div className="p-2 text-center"><span className="text-gray-500">SUBTOTAL</span><div className="font-bold text-[#0C2D6B]">{moneyQuote(quoteSubtotal, (quoteModal.value.moneda_ui || "GTQ") as "USD" | "GTQ")}</div></div>
-                    <div className="p-2 text-center border-x border-black"><span className="text-gray-500">IVA 12%</span><div className="font-bold text-[#0C2D6B]">{moneyQuote(quoteIva, (quoteModal.value.moneda_ui || "GTQ") as "USD" | "GTQ")}</div></div>
+                    <div className="p-2 text-center border-x border-black"><span className="text-gray-500">IVA {quoteModal.value.aplica_iva === false ? "No aplicado" : "12%"}</span><div className="font-bold text-[#0C2D6B]">{moneyQuote(quoteIva, (quoteModal.value.moneda_ui || "GTQ") as "USD" | "GTQ")}</div></div>
                     <div className="p-2 text-center"><span className="text-gray-500">TOTAL</span><div className="font-bold text-lg text-[#22C55E]">{moneyQuote(quoteTotal, (quoteModal.value.moneda_ui || "GTQ") as "USD" | "GTQ")}</div></div>
                   </div>
 

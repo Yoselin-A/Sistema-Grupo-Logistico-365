@@ -91,7 +91,8 @@ const TABLE_META = {
   envio: { title: "Envíos", category: "Logística", color: "green", description: "Envíos registrados y sus estados." },
   viaje: { title: "Viajes", category: "Logística", color: "green", description: "Viajes relacionados con cliente, ruta, unidad y piloto." },
   tracking_viaje: { title: "Tracking de viaje", category: "Logística", color: "green", description: "Puntos de seguimiento y avance del viaje." },
-  estado_envio: { title: "Estados de envío", category: "Catálogos", color: "blue", description: "Flujo operativo del envío." },
+  estado_viaje: { title: "Estado viaje", category: "Catálogos", color: "blue", description: "Estados disponibles para seguimiento de viajes." },
+  estado_envio: { title: "Estado servicio", category: "Catálogos", color: "blue", description: "Flujo operativo del envío." },
   piloto: { title: "Pilotos", category: "Flota", color: "orange", description: "Pilotos y licencias registradas." },
   unidad: { title: "Unidades", category: "Flota", color: "orange", description: "Unidades utilizadas en viajes." },
   vehiculo: { title: "Vehículos", category: "Flota", color: "orange", description: "Flota vehicular con estado, eficiencia y kilometraje." },
@@ -140,7 +141,7 @@ const CATEGORY_ORDER = [
 ];
 
 const PREFERRED_ORDER = [
-  "estado_cliente", "estados_cliente", "estado_envio", "estados_envio", "estado_factura", "estados_factura", "estado_mantenimiento", "estados_mantenimiento", "estado_proveedor", "estados_proveedor", "estado_ruta", "estados_ruta", "estado_vehiculo", "estados_vehiculo", "estado_oportunidad", "estados_oportunidad", "estado_asignacion", "estados_asignacion", "forma_pago", "formas_pago", "frecuencia_ruta", "frecuencias_ruta", "modalidade", "modalidades", "tipo_deposito", "tipos_deposito", "tipo_vehiculo", "tipos_vehiculo", "prefijo_telefonico",
+  "estado_cliente", "estados_cliente", "estado_envio", "estados_envio", "estado_viaje", "estados_viaje", "estado_factura", "estados_factura", "estado_mantenimiento", "estados_mantenimiento", "estado_proveedor", "estados_proveedor", "estado_ruta", "estados_ruta", "estado_vehiculo", "estados_vehiculo", "estado_oportunidad", "estados_oportunidad", "estado_asignacion", "estados_asignacion", "forma_pago", "formas_pago", "frecuencia_ruta", "frecuencias_ruta", "modalidade", "modalidades", "tipo_deposito", "tipos_deposito", "tipo_vehiculo", "tipos_vehiculo", "prefijo_telefonico",
   "cliente", "contacto_cliente", "telefono_contacto", "oportunidad", "cotizacion", "cotizacion_detalle",
   "asignacion", "costo_asignacion", "viaje_asignaciones", "unidad_operacion", "proveedor_asignacion", "factura_asignacion", "pago_proveedor",
   "envio", "viaje", "tracking_viaje", "alerta",

@@ -390,7 +390,7 @@ const getComprobantes = async () => {
       COALESCE(c.total, 0) AS total,
       c.estado_id,
       c.forma_pago_id,
-      COALESCE(c.moneda, 'GTQ') AS moneda,
+      COALESCE(c.moneda, 'GTQ') AS moneda, c.aplica_iva, c.cotizacion_id,
       c.observaciones,
       c.created_at,
       c.updated_at,
@@ -537,7 +537,7 @@ const nextComprobanteNumber = async (connection) => {
   return String(max + 1).padStart(6, "0");
 };
 
-const normalizeDetail = (detail) => {
+const normalizeDetail = (detail, aplicaIva = true) => {
   const descripcion = limpiarTexto(detail.descripcion, 180);
   const cantidad = asDecimal(detail.cantidad, 0);
   const unidad = limpiarCodigo(detail.unidad || "UN", 20) || "UN";
@@ -551,7 +551,7 @@ const normalizeDetail = (detail) => {
   const bruto = round2(cantidad * precioUnitario);
   const descuento = round2(bruto * (descuentoPorcentaje / 100));
   const base = round2(bruto - descuento);
-  const impuesto = round2(base * 0.12);
+  const impuesto = round2(aplicaIva ? base * 0.12 : 0);
   const total = round2(base + impuesto);
 
   return {
@@ -567,12 +567,12 @@ const normalizeDetail = (detail) => {
   };
 };
 
-const calcularTotales = (details = []) => {
+const calcularTotales = (details = [], aplicaIva = true) => {
   if (!Array.isArray(details) || details.length === 0) {
     throw new Error("Agrega al menos una línea de servicio al comprobante.");
   }
 
-  const detalles = details.map(normalizeDetail);
+  const detalles = details.map(item => normalizeDetail(item, aplicaIva));
 
   const subtotal = round2(detalles.reduce((sum, item) => sum + item.base, 0));
   const iva = round2(detalles.reduce((sum, item) => sum + item.impuesto, 0));
@@ -643,7 +643,15 @@ const saveComprobante = async (connection, body, id = null) => {
   const observaciones = limpiarTexto(body.observaciones, 255);
   const estadoId = asId(body.estado_id) || (await findEstadoId(connection, ["PEND"], ["pendiente"]));
   const numero = id ? limpiarCodigo(body.numero_comprobante, 20) : (limpiarCodigo(body.numero_comprobante, 20) || (await nextComprobanteNumber(connection)));
-  const totals = calcularTotales(body.detalles || []);
+  const aplicaIva = body.aplica_iva === false || body.aplica_iva === 0 ? 0 : 1;
+  const cotizacionId = asId(body.cotizacion_id);
+  if(cotizacionId){
+    const [[quote]] = await connection.query(`SELECT ct.id,ct.cliente_id,ct.estado_ui FROM cotizacion ct JOIN asignacion a ON a.cotizacion_id=ct.id WHERE ct.id=? LIMIT 1`,[cotizacionId]);
+    if(!quote || String(quote.estado_ui).toLowerCase()!=="aprobada" || Number(quote.cliente_id)!==Number(clienteId)) throw new Error("Selecciona una cotización aprobada con asignación del mismo cliente.");
+    const [[other]] = await connection.query(`SELECT id FROM comprobante WHERE cotizacion_id=? ${id ? "AND id<>?" : ""} LIMIT 1`,id?[cotizacionId,id]:[cotizacionId]);
+    if(other) throw new Error("Esta cotización ya tiene comprobante. Puedes consultarlo en el historial.");
+  }
+  const totals = calcularTotales(body.detalles || [], Boolean(aplicaIva));
 
   if (!clienteId) throw new Error("Selecciona un cliente.");
   if (!usuarioId) throw new Error("Selecciona un emisor.");
@@ -691,6 +699,8 @@ const saveComprobante = async (connection, body, id = null) => {
           estado_id = ?,
           forma_pago_id = ?,
           moneda = ?,
+          aplica_iva = ?,
+          cotizacion_id = ?,
           observaciones = ?
       WHERE id = ?
       `,
@@ -707,6 +717,8 @@ const saveComprobante = async (connection, body, id = null) => {
         estadoId,
         formaPagoId,
         moneda,
+        aplicaIva,
+        cotizacionId,
         observaciones,
         id,
       ]
@@ -730,9 +742,11 @@ const saveComprobante = async (connection, body, id = null) => {
         estado_id,
         forma_pago_id,
         moneda,
+        aplica_iva,
+        cotizacion_id,
         observaciones
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         numero,
@@ -747,6 +761,8 @@ const saveComprobante = async (connection, body, id = null) => {
         estadoId,
         formaPagoId,
         moneda,
+        aplicaIva,
+        cotizacionId,
         observaciones,
       ]
     );
@@ -784,6 +800,26 @@ const saveComprobante = async (connection, body, id = null) => {
     ...totals,
   };
 };
+
+router.get("/comprobantes/cotizaciones-pendientes", async (req,res)=>{
+  try {
+    const [rows]=await pool.query(`SELECT ct.id,ct.codigo_cotizacion,ct.cliente_id,ct.moneda_ui,ct.aplica_iva,ct.tipo_asignacion, ct.fecha_emision,
+     a.id AS asignacion_id,
+     COALESCE(SUM(d.cantidad*d.precio_unitario),0) AS subtotal,
+     COALESCE(SUM(d.cantidad*d.precio_unitario),0)*IF(ct.aplica_iva=1,1.12,1) AS total
+     FROM cotizacion ct JOIN asignacion a ON a.cotizacion_id=ct.id
+     LEFT JOIN comprobante cm ON cm.cotizacion_id=ct.id
+     LEFT JOIN cotizacion_detalle d ON d.cotizacion_id=ct.id
+     WHERE LOWER(ct.estado_ui)='aprobada' AND cm.id IS NULL
+     GROUP BY ct.id,a.id ORDER BY ct.id DESC`);
+    const ids=rows.map(r=>r.id);
+    if(ids.length){
+      const [detalles]=await pool.query('SELECT cotizacion_id,descripcion,cantidad,precio_unitario FROM cotizacion_detalle WHERE cotizacion_id IN (?) ORDER BY id',[ids]);
+      rows.forEach(r=>{r.detalles=detalles.filter(d=>Number(d.cotizacion_id)===Number(r.id));});
+    }
+    return ok(res,rows);
+  }catch(e){return fail(res,500,"No se pudieron cargar las cotizaciones aprobadas.",e)}
+});
 
 router.get("/comprobantes/bootstrap", async (req, res) => {
   try {

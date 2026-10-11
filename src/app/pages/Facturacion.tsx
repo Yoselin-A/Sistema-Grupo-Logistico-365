@@ -83,6 +83,8 @@ interface ComprobanteRow {
   forma_pago_id: Id | null;
   observaciones: string | null;
   moneda?: CurrencyCode | string | null;
+  aplica_iva?: number | boolean;
+  cotizacion_id?: number | null;
   cliente?: string | null;
   codigo_cliente?: string | null;
   cliente_nit?: string | null;
@@ -144,6 +146,8 @@ interface ComprobanteForm {
   forma_pago_id: number | "";
   estado_id: number | "";
   moneda: CurrencyCode;
+  aplica_iva: boolean;
+  cotizacion_id: number | "";
   observaciones: string;
   detalles: DetailDraft[];
 }
@@ -331,14 +335,14 @@ function detalleFromRow(row: DetalleComprobanteRow): DetailDraft {
   };
 }
 
-function calcLine(detail: DetailDraft) {
+function calcLine(detail: DetailDraft, aplicaIva=true) {
   const cantidad = numeric(detail.cantidad);
   const precio = numeric(detail.precio_unitario);
   const descuentoPct = numeric(detail.descuento_porcentaje);
   const bruto = cantidad * precio;
   const descuento = bruto * (descuentoPct / 100);
   const base = bruto - descuento;
-  const iva = base * 0.12;
+  const iva = aplicaIva ? base * 0.12 : 0;
   const total = base + iva;
 
   return {
@@ -350,10 +354,10 @@ function calcLine(detail: DetailDraft) {
   };
 }
 
-function calcTotals(details: DetailDraft[]) {
+function calcTotals(details: DetailDraft[], aplicaIva=true) {
   return details.reduce(
     (acc, detail) => {
-      const line = calcLine(detail);
+      const line = calcLine(detail, aplicaIva);
       acc.bruto += line.bruto;
       acc.descuento += line.descuento;
       acc.subtotal += line.base;
@@ -808,6 +812,7 @@ export function Facturacion() {
   const [estadosFactura, setEstadosFactura] = useState<EstadoFacturaRow[]>([]);
   const [formasPago, setFormasPago] = useState<FormaPagoRow[]>([]);
   const [comprobantes, setComprobantes] = useState<ComprobanteRow[]>([]);
+  const [cotizacionesPendientes, setCotizacionesPendientes] = useState<any[]>([]);
   const [detalles, setDetalles] = useState<DetalleComprobanteRow[]>([]);
   const [pagos, setPagos] = useState<PagoRow[]>([]);
 
@@ -841,7 +846,11 @@ export function Facturacion() {
     setApiError("");
 
     try {
-      const data = await apiRequest("/comprobantes/bootstrap");
+      const [data, pendientes] = await Promise.all([
+        apiRequest("/comprobantes/bootstrap"),
+        apiRequest("/comprobantes/cotizaciones-pendientes").catch(() => []),
+      ]);
+      setCotizacionesPendientes(asArray<any>(pendientes));
       setClientes(asArray<ClienteRow>(data.clientes));
       setUsuarios(asArray<UsuarioRow>(data.usuarios));
       setEstadosFactura(asArray<EstadoFacturaRow>(data.estadosFactura));
@@ -1029,6 +1038,8 @@ export function Facturacion() {
       forma_pago_id: getFormaDefaultId(),
       estado_id: getEstadoId("pendiente"),
       moneda: "GTQ",
+      aplica_iva: true,
+      cotizacion_id: "",
       observaciones: "",
       detalles: [createDraft()],
     });
@@ -1048,6 +1059,8 @@ export function Facturacion() {
       forma_pago_id: comprobante.forma_pago_id || "",
       estado_id: comprobante.estado_id || "",
       moneda: normalizeCurrency(comprobante.moneda),
+      aplica_iva: comprobante.aplica_iva !== 0 && comprobante.aplica_iva !== false,
+      cotizacion_id: comprobante.cotizacion_id || "",
       observaciones: comprobante.observaciones || "",
       detalles: detallesByComprobante(comprobante.id).map(detalleFromRow),
     });
@@ -1508,7 +1521,7 @@ export function Facturacion() {
     doc.text("Cantidad", centers[0], headerY + 5.7, { align: "center" });
     doc.text("Unidad M.", centers[1], headerY + 5.7, { align: "center" });
     doc.text("Descripcion", centers[2], headerY + 5.7, { align: "center" });
-    doc.text("P. Unitario\ncon IVA", centers[3], headerY + 4.4, { align: "center" });
+    doc.text(comprobante.aplica_iva===0?"P. Unitario\nsin IVA":"P. Unitario\ncon IVA", centers[3], headerY + 4.4, { align: "center" });
     doc.text("Impuestos", centers[4], headerY + 5.7, { align: "center" });
     doc.text("Descuento", centers[5], headerY + 5.7, { align: "center" });
     doc.text("Total", centers[6], headerY + 5.7, { align: "center" });
@@ -1540,7 +1553,7 @@ export function Facturacion() {
         line.unidad || "UN",
         upperPdf(line.descripcion),
         moneyFacturaPdf(unitarioConIva, monedaFactura),
-        `IVA = GTQ ${numeric(line.impuesto).toLocaleString("en-US", {
+        `IVA = ${monedaFactura} ${numeric(line.impuesto).toLocaleString("en-US", {
           minimumFractionDigits: 4,
           maximumFractionDigits: 4,
         })}`,
@@ -1933,6 +1946,7 @@ export function Facturacion() {
           errors={formErrors}
           setErrors={setFormErrors}
           clientes={clientes}
+          cotizacionesPendientes={cotizacionesPendientes}
           usuarios={usuarios}
           estadosFactura={estadosFactura}
           formasPago={formasPago}
@@ -1997,6 +2011,7 @@ function ComprobanteModal({
   errors,
   setErrors,
   clientes,
+  cotizacionesPendientes,
   usuarios,
   estadosFactura,
   formasPago,
@@ -2010,6 +2025,7 @@ function ComprobanteModal({
   errors: FormErrors;
   setErrors: Dispatch<SetStateAction<FormErrors>>;
   clientes: ClienteRow[];
+  cotizacionesPendientes: any[];
   usuarios: UsuarioRow[];
   estadosFactura: EstadoFacturaRow[];
   formasPago: FormaPagoRow[];
@@ -2017,7 +2033,7 @@ function ComprobanteModal({
   onClose: () => void;
   onSave: () => void;
 }) {
-  const totals = calcTotals(form.detalles);
+  const totals = calcTotals(form.detalles, form.aplica_iva);
 
   const updateForm = (patch: Partial<ComprobanteForm>) => setForm((current) => (current ? { ...current, ...patch } : current));
   const clearError = (field: string) => setErrors((prev) => ({ ...prev, [field]: "" }));
@@ -2054,6 +2070,29 @@ function ComprobanteModal({
             <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
               <p className="text-sm font-bold text-[#0C2D6B]">Serie y número</p>
               <p className="mt-1 text-xs text-gray-600">Puedes escribir la serie y el número del comprobante. Si dejas el número vacío, el sistema asignará el correlativo al guardar.</p>
+            </div>
+          )}
+
+          {mode === "create" && (
+            <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-3">
+              <label className="text-sm font-bold text-[#0C2D6B]">Cotización aprobada con asignación (opcional)
+                <select className={`${inputClass} mt-2`} value={form.cotizacion_id}
+                  onChange={e=>{
+                    const selected=cotizacionesPendientes.find(q=>String(q.id)===e.target.value);
+                    if(!selected){updateForm({cotizacion_id:""});return;}
+                    const quoteDetails=(Array.isArray(selected.detalles)?selected.detalles:[]).map((d:any)=>({
+                      local_id:`q-${selected.id}-${Math.random()}`,descripcion:String(d.descripcion||""),
+                      cantidad:Number(d.cantidad||1),unidad:"SERV",precio_unitario:Number(d.precio_unitario||0),descuento_porcentaje:0
+                    }));
+                    updateForm({cotizacion_id:Number(selected.id),cliente_id:Number(selected.cliente_id),
+                      moneda:selected.moneda_ui==='USD'?'USD':'GTQ',aplica_iva:Boolean(selected.aplica_iva),
+                      detalles:quoteDetails.length?quoteDetails:form.detalles});
+                  }}>
+                  <option value="">Crear comprobante sin cotización</option>
+                  {cotizacionesPendientes.map(q=><option key={q.id} value={q.id}>{q.codigo_cotizacion} · {formatMoney(q.total,q.moneda_ui)}</option>)}
+                </select>
+              </label>
+              <p className="mt-1 text-xs text-orange-900">Al seleccionar se trasladan cliente, moneda, IVA y detalle. Revisa y completa antes de guardar.</p>
             </div>
           )}
 
@@ -2119,6 +2158,13 @@ function ComprobanteModal({
               </select>
             </Field>
 
+            <Field label="Aplicar IVA 12 %">
+              <label className="flex h-10 items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold text-[#0C2D6B]">
+                <input type="checkbox" checked={form.aplica_iva} onChange={e=>updateForm({aplica_iva:e.target.checked})} />
+                {form.aplica_iva ? "Sí, calcular IVA" : "No aplicar IVA"}
+              </label>
+            </Field>
+
             <Field label="Forma de pago *" error={errors.forma_pago_id}>
               <select value={form.forma_pago_id} onChange={(event) => { updateForm({ forma_pago_id: event.target.value ? Number(event.target.value) : "" }); clearError("forma_pago_id"); }} className={`${inputClass} ${errors.forma_pago_id ? errorInput : ""}`}>
                 <option value="">Seleccionar forma</option>
@@ -2140,7 +2186,7 @@ function ComprobanteModal({
 
             <div className="space-y-3">
               {form.detalles.map((line, index) => {
-                const calc = calcLine(line);
+                const calc = calcLine(line, form.aplica_iva);
                 return (
                   <div key={line.local_id} className="rounded-2xl border border-gray-100 bg-white p-3">
                     <div className="grid grid-cols-1 gap-2 md:grid-cols-12">
@@ -2205,7 +2251,7 @@ function ComprobanteModal({
                 <SummaryLine label="Subtotal bruto" value={formatMoney(totals.bruto, form.moneda)} />
                 <SummaryLine label="Descuento" value={formatMoney(totals.descuento, form.moneda)} />
                 <SummaryLine label="Base" value={formatMoney(totals.subtotal, form.moneda)} />
-                <SummaryLine label="IVA 12%" value={formatMoney(totals.iva, form.moneda)} />
+                <SummaryLine label={form.aplica_iva ? "IVA 12%" : "IVA no aplicado"} value={formatMoney(totals.iva, form.moneda)} />
                 <div className="border-t border-white/20 pt-3">
                   <SummaryLine label="Total" value={formatMoney(totals.total, form.moneda)} strong />
                 </div>

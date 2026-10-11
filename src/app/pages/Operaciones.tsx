@@ -576,6 +576,8 @@ export function Operaciones() {
   const [notice, setNotice] = useState("");
 
   const [asignaciones, setAsignaciones] = useState<AnyRow[]>([]);
+  const [cotizacionesAprobadas, setCotizacionesAprobadas] = useState<AnyRow[]>([]);
+  const [verCotizacion, setVerCotizacion] = useState<AnyRow | null>(null);
   const [proveedores, setProveedores] = useState<AnyRow[]>([]);
   const [clientes, setClientes] = useState<AnyRow[]>([]);
   const [rutas, setRutas] = useState<AnyRow[]>([]);
@@ -722,6 +724,8 @@ export function Operaciones() {
       );
 
       setAsignaciones(assignmentRows);
+      const pendientes = await apiRequest<AnyRow[]>("/operaciones/cotizaciones-aprobadas").catch(() => []);
+      setCotizacionesAprobadas(rows<AnyRow>(pendientes));
       setProveedores(rows<AnyRow>(op.proveedores));
       setRutas(rows<AnyRow>(op.rutas));
       setVehiculos(rows<AnyRow>(op.vehiculos));
@@ -1126,6 +1130,7 @@ export function Operaciones() {
   const baseForm = (type: AssignmentType): AnyRow => ({
     codigo_asignacion: nextCode("ASG"),
     tipo_asignacion: type,
+    cotizacion_id: "",
     cliente_id: "",
     ruta_id: "",
     vehiculo_id: "",
@@ -1218,6 +1223,22 @@ export function Operaciones() {
       estatus_seguimiento: statuses,
       estatus_operativo: latest?.estatus || detail.estatus_operativo || row.estatus_operativo || "",
     };
+  };
+
+  const crearDesdeCotizacion = (q: AnyRow) => {
+    const type = (["local","fiduca","centroamerica","internacional"].includes(q.tipo_asignacion)
+      ? q.tipo_asignacion : "local") as AssignmentType;
+    const ruta = rutas.find((r: AnyRow) => Number(r.origen_id) === Number(q.origen_id) && Number(r.destino_id) === Number(q.destino_id));
+    const draft = {
+      ...baseForm(type), cotizacion_id: q.id,
+      cliente_id: q.cliente_id, ruta_id: ruta?.id || "",
+      origen: q.origen || "", destino: q.destino || "",
+    };
+    setTab(type);
+    setErrors({});
+    setForm(draft);
+    setLocalBatchRows(type === "local" ? [{...newLocalBatchRow(0),...draft}] : []);
+    setModal({open:true,mode:"create",type});
   };
 
   const openAssignment = (mode: Mode, type: AssignmentType, item?: AnyRow) => {
@@ -2801,6 +2822,33 @@ export function Operaciones() {
         </button>
       </div>
 
+      {cotizacionesAprobadas.length > 0 && <section className="rounded-2xl border border-orange-300 bg-orange-50 p-4 shadow-sm">
+        <h2 className="flex items-center gap-2 text-lg font-extrabold text-[#0C2D6B]">🔔 {cotizacionesAprobadas.length} nueva(s) cotización(es) aprobada(s)</h2>
+        <p className="mb-3 text-sm text-gray-600">Requieren seguimiento en Operaciones. Crea la asignación desde la cotización para trasladar cliente, ruta y tipo.</p>
+        <div className="flex flex-wrap gap-2">
+          {cotizacionesAprobadas.map(q=><div key={q.id} className="rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm shadow-sm">
+            <b className="text-[#0C2D6B]">{q.codigo_cotizacion} · {q.nombre_empresa}</b>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <button type="button" onClick={()=>setVerCotizacion(q)} className="rounded bg-blue-50 px-3 py-1 font-bold text-blue-800">Ver cotización</button>
+              <button type="button" onClick={()=>crearDesdeCotizacion(q)} className="rounded bg-orange-50 px-3 py-1 font-bold text-orange-700">Crear asignación {q.tipo_asignacion||''} →</button>
+            </div>
+          </div>)}
+        </div>
+      </section>}
+
+      {verCotizacion && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+        <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-xl">
+          <div className="flex items-start justify-between gap-3"><h3 className="text-xl font-bold text-[#0C2D6B]">Cotización aprobada · {verCotizacion.codigo_cotizacion}</h3><button type="button" aria-label="Cerrar" onClick={()=>setVerCotizacion(null)}><X/></button></div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 text-sm">
+            {[["Cliente",verCotizacion.nombre_empresa],["Tipo de asignación",verCotizacion.tipo_asignacion],
+              ["Origen",verCotizacion.origen],["Destino",verCotizacion.destino],
+              ["Moneda",verCotizacion.moneda_ui],["IVA",Number(verCotizacion.aplica_iva)===1?'Sí':'No'],
+              ["Subtotal",verCotizacion.subtotal],["Total",verCotizacion.total],
+              ["Fecha de emisión",date10(verCotizacion.fecha_emision)]].map(([k,v])=><div key={k} className="rounded-lg bg-gray-50 p-3"><div className="font-bold text-[#0C2D6B]">{k}</div><div className="mt-1 break-words">{String(v??'Sin registrar')}</div></div>)}
+          </div>
+          <div className="mt-5 flex justify-end gap-2"><button className="rounded-lg border px-4 py-2" onClick={()=>setVerCotizacion(null)}>Cerrar</button><button className="rounded-lg bg-[#FF6A00] px-4 py-2 font-bold text-white" onClick={()=>{const q=verCotizacion;setVerCotizacion(null);crearDesdeCotizacion(q)}}>Crear asignación</button></div>
+        </div>
+      </div>}
       {apiError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{apiError}</div>}
       {notice && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-700 flex items-center gap-2"><CheckCircle2 className="h-4 w-4" />{notice}</div>}
 
@@ -3228,6 +3276,7 @@ export function Operaciones() {
         <Pagination page={page} totalPages={totalPages} rowsPerPage={rowsPerPage} setRowsPerPage={setRowsPerPage} setPage={setPage} />
       </div>
 
+      {modal.open && form.cotizacion_id && <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm font-semibold text-green-800">Asignación vinculada a cotización aprobada #{form.cotizacion_id}. Este vínculo se guardará en MySQL.</div>}
       {modal.open && (
         <AssignmentModal
           mode={modal.mode}
@@ -3243,6 +3292,7 @@ export function Operaciones() {
           pilotos={pilotos}
           proveedores={proveedores}
           estadosAsignacion={estadosAsignacion}
+          cotizacionesAprobadas={cotizacionesAprobadas}
           getPiloto={getPiloto}
           getProveedor={getProveedor}
           getVehiculo={getVehiculo}
@@ -3575,6 +3625,7 @@ function AssignmentModal({
   pilotos,
   proveedores,
   estadosAsignacion,
+  cotizacionesAprobadas,
   getPiloto,
   getProveedor,
   getVehiculo,
@@ -3586,11 +3637,22 @@ function AssignmentModal({
   newLocalBatchRow,
 }: AnyRow) {
   const readonly = mode === "view";
+  const [detalleCotizacionVisible,setDetalleCotizacionVisible]=useState(false);
   const meta = TYPE_META[type as AssignmentType];
   const pilot = getPiloto(form.pilotos_id);
   const vehicle = getVehiculo(form.vehiculo_id);
   const selectedRoute = getRuta(form.ruta_id);
   const timeline = Array.isArray(form.estatus_seguimiento) ? form.estatus_seguimiento : [];
+  const quoteSelected=cotizacionesAprobadas.find((q:AnyRow)=>String(q.id)===String(form.cotizacion_id));
+  const aplicarQuote=(idValue:string)=>{
+    const q=cotizacionesAprobadas.find((row:AnyRow)=>String(row.id)===idValue);
+    if(!q){setForm({...form,cotizacion_id:''});return;}
+    const ruta=rutas.find((r:AnyRow)=>Number(r.origen_id)===Number(q.origen_id)&&Number(r.destino_id)===Number(q.destino_id));
+    const datos={cotizacion_id:q.id,cliente_id:q.cliente_id,ruta_id:ruta?.id||'',
+      origen:q.origen||'',destino:q.destino||'',ruta_codigo:ruta?.codigo_ruta||''};
+    setForm({...form,...datos});
+    if(type==='local')setLocalBatchRows((rows:AnyRow[])=>rows.map((row:AnyRow,i:number)=>i===0?{...row,...datos}:row));
+  };
 
   const selectPilot = (id: any, item?: AnyRow) => {
     const selected = item || getPiloto(id);
@@ -3733,6 +3795,30 @@ function AssignmentModal({
               <Field label={type === "local" ? "Código del documento Local" : "Código del registro"}><input readOnly value={form.codigo_asignacion || ""} className={`${input} mt-1 bg-gray-100`} /></Field>
               <Field label="Estado del registro"><select disabled={readonly} value={form.estado_asignacion_id || ""} onChange={(e) => setForm({ ...form, estado_asignacion_id: e.target.value })} className={`${input} mt-1`}>{estadosAsignacion.map((x: AnyRow) => <option key={x.id} value={x.id}>{x.nombre_estado_asignacion}</option>)}</select></Field>
             </div>
+          </section>
+
+          <section className="rounded-xl border border-orange-200 bg-orange-50 p-4">
+            <h3 className="font-bold text-[#0C2D6B]">Cotización aprobada y ruta · {meta.label}</h3>
+            <p className="mt-1 text-xs text-gray-600">Puedes seleccionar una cotización aprobada pendiente, ver su información y completar los campos del formulario operativo correspondiente.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-[2fr_1fr]">
+              <label className="text-sm font-semibold">Cotización
+                <select className={`${input} mt-1`} disabled={readonly} value={form.cotizacion_id||''} onChange={e=>aplicarQuote(e.target.value)}>
+                  <option value="">Sin vincular</option>
+                  {form.cotizacion_id&&!cotizacionesAprobadas.some((q:AnyRow)=>String(q.id)===String(form.cotizacion_id))&&<option value={form.cotizacion_id}>Cotización #{form.cotizacion_id} (asignada)</option>}
+                  {cotizacionesAprobadas.filter((q:AnyRow)=>!q.tipo_asignacion||q.tipo_asignacion===type).map((q:AnyRow)=><option key={q.id} value={q.id}>{q.codigo_cotizacion} · {q.nombre_empresa}</option>)}
+                </select>
+              </label>
+              <button type="button" disabled={!quoteSelected} onClick={()=>setDetalleCotizacionVisible(v=>!v)} className="mt-5 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-bold text-[#0C2D6B] disabled:opacity-40">{detalleCotizacionVisible?'Ocultar información':'Ver información'}</button>
+            </div>
+            {quoteSelected&&detalleCotizacionVisible&&<div className="mt-3 grid gap-2 rounded-lg bg-white p-3 text-xs sm:grid-cols-2">
+              {[["Código",quoteSelected.codigo_cotizacion],["Cliente",quoteSelected.nombre_empresa],
+                ["Origen",quoteSelected.origen],["Destino",quoteSelected.destino],
+                ["Moneda",quoteSelected.moneda_ui],["IVA",Number(quoteSelected.aplica_iva)===1?'Sí':'No'],
+                ["Total",quoteSelected.total]].map(([key,val])=><div key={key}><b className="text-[#0C2D6B]">{key}:</b> {String(val??'Sin registrar')}</div>)}
+              <div className="col-span-full text-slate-500">Selecciona «Nueva ruta» si no existe el recorrido. Los demás datos se completan según la modalidad.</div>
+            </div>}
+            {form.cotizacion_id&&<div className="mt-3 grid gap-2 text-sm sm:grid-cols-2"><div><b>Origen:</b> {form.origen||'Sin registrar'}</div><div><b>Destino:</b> {form.destino||'Sin registrar'}</div></div>}
+            {type==='fiduca'&&<div className="mt-3"><Field label="Ruta / origen y destino (FYDUCA)">{routePicker}</Field></div>}
           </section>
 
           {type === "local" && (

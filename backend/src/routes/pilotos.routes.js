@@ -32,7 +32,7 @@ async function nextCode(c){
 router.get('/pilotos', async(req,res)=>{
  try{
   const [rows]=await pool.query(`SELECT p.id,p.codigo_piloto,p.primer_nombre,p.segundo_nombre,p.primer_apellido,p.segundo_apellido,
-   p.licencia,p.dpi,p.nit,DATE_FORMAT(p.fecha_nacimiento,'%Y-%m-%d') fecha_nacimiento,
+   p.licencia,p.dpi,p.nit,p.direccion,p.telefono,DATE_FORMAT(p.fecha_nacimiento,'%Y-%m-%d') fecha_nacimiento,
    DATE_FORMAT(p.fecha_emision_licencia,'%Y-%m-%d') fecha_emision_licencia,
    DATE_FORMAT(p.fecha_vencimiento_licencia,'%Y-%m-%d') fecha_vencimiento_licencia,
    DATE_FORMAT(p.fecha_emision_dpi,'%Y-%m-%d') fecha_emision_dpi,
@@ -62,8 +62,8 @@ router.post('/pilotos', async(req,res)=>{
   const [dup]=await c.query('SELECT id FROM piloto WHERE licencia=? OR (?<>\'\' AND dpi=?) LIMIT 1',[licencia,dpi,dpi]);
   if(dup.length){await c.rollback(); return fail(res,409,'Ya existe un piloto con esa licencia o DPI.');}
   const codigo=await nextCode(c);
-  const vals=[codigo,txt(b.primer_nombre,30),txt(b.segundo_nombre,30)||null,txt(b.primer_apellido,35),txt(b.segundo_apellido,35)||null,licencia,dpi||null,nit||null,date(b.fecha_nacimiento),date(b.fecha_emision_licencia),date(b.fecha_vencimiento_licencia),date(b.fecha_emision_dpi),date(b.fecha_vencimiento_dpi)];
-  const [r]=await c.query(`INSERT INTO piloto (codigo_piloto,primer_nombre,segundo_nombre,primer_apellido,segundo_apellido,licencia,dpi,nit,fecha_nacimiento,fecha_emision_licencia,fecha_vencimiento_licencia,fecha_emision_dpi,fecha_vencimiento_dpi) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,vals);
+  const vals=[codigo,txt(b.primer_nombre,30),txt(b.segundo_nombre,30)||null,txt(b.primer_apellido,35),txt(b.segundo_apellido,35)||null,licencia,dpi||null,nit||null,date(b.fecha_nacimiento),date(b.fecha_emision_licencia),date(b.fecha_vencimiento_licencia),date(b.fecha_emision_dpi),date(b.fecha_vencimiento_dpi),txt(b.direccion,255)||null,txt(b.telefono,25)||null];
+  const [r]=await c.query(`INSERT INTO piloto (codigo_piloto,primer_nombre,segundo_nombre,primer_apellido,segundo_apellido,licencia,dpi,nit,fecha_nacimiento,fecha_emision_licencia,fecha_vencimiento_licencia,fecha_emision_dpi,fecha_vencimiento_dpi,direccion,telefono) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,vals);
   await c.commit(); return ok(res,{id:r.insertId,codigo_piloto:codigo},'Piloto registrado correctamente.');
  }catch(e){await c.rollback(); return fail(res,500,'No se pudo registrar el piloto.',e)} finally{c.release()}
 });
@@ -75,8 +75,8 @@ router.put('/pilotos/:id', async(req,res)=>{
   if(!txt(b.primer_nombre,30)||!txt(b.primer_apellido,35)||!txt(b.licencia,25))return fail(res,400,'Primer nombre, primer apellido y licencia son obligatorios.');
   const [dup]=await pool.query("SELECT id FROM piloto WHERE id<>? AND (licencia=? OR (?<>'' AND dpi=?)) LIMIT 1",[pid,txt(b.licencia,25).toUpperCase(),txt(b.dpi,20),txt(b.dpi,20)]);
   if(dup.length)return fail(res,409,'Ya existe un piloto con esa licencia o DPI.');
-  await pool.query(`UPDATE piloto SET primer_nombre=?,segundo_nombre=?,primer_apellido=?,segundo_apellido=?,licencia=?,dpi=?,nit=?,fecha_nacimiento=?,fecha_emision_licencia=?,fecha_vencimiento_licencia=?,fecha_emision_dpi=?,fecha_vencimiento_dpi=? WHERE id=?`,[
-   txt(b.primer_nombre,30),txt(b.segundo_nombre,30)||null,txt(b.primer_apellido,35),txt(b.segundo_apellido,35)||null,txt(b.licencia,25).toUpperCase(),txt(b.dpi,20)||null,txt(b.nit,20)||null,date(b.fecha_nacimiento),date(b.fecha_emision_licencia),date(b.fecha_vencimiento_licencia),date(b.fecha_emision_dpi),date(b.fecha_vencimiento_dpi),pid]);
+  await pool.query(`UPDATE piloto SET primer_nombre=?,segundo_nombre=?,primer_apellido=?,segundo_apellido=?,licencia=?,dpi=?,nit=?,fecha_nacimiento=?,fecha_emision_licencia=?,fecha_vencimiento_licencia=?,fecha_emision_dpi=?,fecha_vencimiento_dpi=?,direccion=?,telefono=? WHERE id=?`,[
+   txt(b.primer_nombre,30),txt(b.segundo_nombre,30)||null,txt(b.primer_apellido,35),txt(b.segundo_apellido,35)||null,txt(b.licencia,25).toUpperCase(),txt(b.dpi,20)||null,txt(b.nit,20)||null,date(b.fecha_nacimiento),date(b.fecha_emision_licencia),date(b.fecha_vencimiento_licencia),date(b.fecha_emision_dpi),date(b.fecha_vencimiento_dpi),txt(b.direccion,255)||null,txt(b.telefono,25)||null,pid]);
   return ok(res,null,'Piloto actualizado correctamente.');
  }catch(e){return fail(res,500,'No se pudo actualizar el piloto.',e)}
 });

@@ -6,6 +6,7 @@ export type ModuleKey =
   | "operaciones"
   | "logistica"
   | "facturacion"
+  | "recibos"
   | "proveedores"
   | "pilotos"
   | "flota"
@@ -21,6 +22,7 @@ const todosLosModulos: ModuleKey[] = [
   "operaciones",
   "logistica",
   "facturacion",
+  "recibos",
   "proveedores",
   "pilotos",
   "flota",
@@ -36,11 +38,11 @@ const todosLosModulos: ModuleKey[] = [
 export const permisosPorRol: Record<string, ModuleKey[]> = {
   administrador: todosLosModulos,
   gerencia: todosLosModulos,
-  finanzas: ["dashboard", "facturacion", "reportes", "ia"],
+  finanzas: ["dashboard", "facturacion", "recibos", "reportes", "ia"],
   ventas: ["dashboard", "crm", "reportes", "ia"],
   operaciones: ["dashboard", "operaciones", "reportes", "ia"],
   logistica: ["dashboard", "logistica", "flota", "rutas", "reportes", "ia"],
-  facturacion: ["dashboard", "facturacion", "reportes", "ia"],
+  facturacion: ["dashboard", "facturacion", "recibos", "reportes", "ia"],
   compras: ["dashboard", "operaciones", "reportes", "ia"],
   mensajeria: ["dashboard"],
 };
@@ -71,9 +73,11 @@ export function canAccessModule(
       return allowed.has("mantenimiento") || allowed.has("seguridad");
     }
 
+    if (module === "recibos") return allowed.has("recibos") || allowed.has("facturacion");
     return allowed.has(module);
   }
 
   // Fallback únicamente para sesiones previas a la migración.
+  if (module === "recibos") return Boolean(permisosPorRol[normalizedRole]?.includes("facturacion") || permisosPorRol[normalizedRole]?.includes("recibos"));
   return Boolean(permisosPorRol[normalizedRole]?.includes(module));
 }

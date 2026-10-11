@@ -358,33 +358,19 @@ const getEstadosEnvio = async (connection = pool) => {
 
 const estadoIdDesdeVisual = async (connection, estadoVisual) => {
   const estados = await getEstadosEnvio(connection);
-  const text = limpiar(estadoVisual).toLowerCase();
-
-  const findByName = (...terms) =>
-    estados.find((e) =>
-      terms.some((term) => String(e.nombre_estado_envio || "").toLowerCase().includes(term))
-    )?.id;
-
-  if (text.includes("entregado")) return findByName("entregado") || estados[0]?.id || 1;
-  if (text.includes("destino")) return findByName("destino") || estados[0]?.id || 1;
-  if (
-    text.includes("ruta") ||
-    text.includes("tránsito") ||
-    text.includes("transito") ||
-    text.includes("retraso") ||
-    text.includes("crítico") ||
-    text.includes("critico")
-  ) {
-    return findByName("ruta") || estados[0]?.id || 1;
-  }
-
-  return findByName("recolección", "recoleccion", "pendiente") || estados[0]?.id || 1;
+  const texto = limpiar(estadoVisual).toLowerCase();
+  const alias = {"pendiente": "recolección", "en tránsito": "en ruta", "retraso": "retrasado"};
+  const nombre = alias[texto] || texto;
+  const exacto = estados.find(e => limpiar(e.nombre_estado_envio).toLowerCase() === nombre);
+  if (exacto) return exacto.id;
+  const fallback = estados.find(e => /recolecci/i.test(e.nombre_estado_envio));
+  return fallback?.id || estados[0]?.id || 1;
 };
 
 const normalizarEstadoEnvio = (nombre) => {
   const value = limpiar(nombre);
   if (!value) return "Pendiente";
-  if (value.toLowerCase().includes("recole")) return "Pendiente";
+  if (value.toLowerCase().includes("recole")) return "Recolección";
   return value;
 };
 
@@ -397,12 +383,11 @@ const normalizarEstadoViaje = (row) => {
       return "Crítico";
     }
     if (alertaTipo.includes("retraso") || alertaNivel.includes("medio") || alertaNivel.includes("alto")) {
-      return "Retraso";
+      return "Retrasado";
     }
   }
 
   const base = normalizarEstadoEnvio(row.nombre_estado_envio);
-  if (base === "En ruta") return "En tránsito";
   return base;
 };
 
@@ -634,7 +619,7 @@ const syncAlertaOperativa = async (connection, viajeId, codigo, estadoVisual) =>
 
   const estado = limpiar(estadoVisual);
 
-  if (estado !== "Retraso" && estado !== "Crítico") return;
+  if (estado !== "Retraso" && estado !== "Retrasado" && estado !== "Crítico") return;
 
   const tipo = estado === "Crítico" ? "Situación crítica" : "Retraso de viaje";
   const nivel = estado === "Crítico" ? "Crítico" : "Medio";

@@ -32,6 +32,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
   const params = new URLSearchParams(location.search);
   const tabActual = String(params.get("tab") || "").toLowerCase();
 
+  const [openFinanzas,setOpenFinanzas]=useState(location.pathname==='/facturacion'||location.pathname==='/recibos');
   const [openCRM, setOpenCRM] = useState(
     location.pathname === "/crm"
   );
@@ -352,7 +353,7 @@ export function Sidebar({ isOpen = false, onClose }: any) {
               <div className="flex items-center gap-3 min-w-0">
                 <Truck className="w-5 h-5 text-blue-200 shrink-0" />
                 <span className="truncate">
-                  Logística
+                  Tracking
                 </span>
               </div>
 
@@ -394,18 +395,17 @@ export function Sidebar({ isOpen = false, onClose }: any) {
         )}
 
         {/* COMPROBANTES */}
-        {puedeModulo("facturacion") && (
-          <Link
-            to="/facturacion"
-            onClick={cerrarEnMovil}
-            className={menuClass("/facturacion")}
-          >
-            <FileText className="w-5 h-5 text-blue-200 shrink-0" />
-            <span className="truncate">
-              Comprobantes
-            </span>
-          </Link>
-        )}
+        {/* FINANZAS: conserva internamente los permisos previos por compatibilidad */}
+        {(puedeModulo("facturacion") || puedeModulo("recibos")) && <>
+          <button type="button" onClick={()=>setOpenFinanzas(!openFinanzas)} className={parentButtonClass(location.pathname==='/facturacion'||location.pathname==='/recibos')}>
+            <span className="flex items-center gap-3"><FileText className="h-5 w-5 text-blue-200"/> Finanzas</span>
+            <ChevronDown className={cn('h-4 w-4 text-blue-200 transition-transform',openFinanzas&&'rotate-180')}/>
+          </button>
+          {openFinanzas && <div className="flex flex-col">
+            {puedeModulo("facturacion") && <Link to="/facturacion" onClick={cerrarEnMovil} className={submenuClass('/facturacion')}><FileText className="h-4 w-4"/> Comprobantes</Link>}
+            {puedeModulo("recibos") && <Link to="/recibos" onClick={cerrarEnMovil} className={submenuClass('/recibos')}><FileText className="h-4 w-4"/> Recibos de caja</Link>}
+          </div>}
+        </>}
 
         {/* REPORTES */}
         {puedeModulo("reportes") && (

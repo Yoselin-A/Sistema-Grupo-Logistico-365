@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -38,7 +39,7 @@ import autoTable from "jspdf-autotable";
 
 import * as XLSX from "xlsx";
 
-import logoGl365 from "../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png";
+import logoGl365 from "../../assets/logo_gl365_oficial.png";
 
 
 
@@ -518,6 +519,16 @@ export function Proveedores() {
   const [modalMode, setModalMode] = useState<"create" | "edit" | "view">("create");
 
   const [selected, setSelected] = useState<Proveedor | null>(null);
+  const [datosPricing,setDatosPricing]=useState<Record<string,string>>({});
+  const pricingFields:[string,string][]=[
+   ['contacto_principal','Nombre del contacto principal'],['nombre_propietario','Nombre del propietario'],
+   ['dpi_propietario','Número de DPI'],['direccion_predio','Dirección predio'],
+   ['tipo_contribuyente','Tipo de contribuyente'],['direccion_fisica','Dirección fiscal'],
+   ['cuenta_bancaria','Número de cuenta bancaria'],['banco','Nombre del banco'],
+   ['dueno_cuenta','Dueño de la cuenta bancaria'],['tipo_cuenta','Tipo de cuenta'],
+   ['contacto_telefono','Número telefónico principal'],['investigacion_sat','Investigación SAT'],
+   ['investigacion_clinton','Investigación Clinton'],['referencias','Referencias 1, 2 y 3 (separadas por coma)']
+  ];
 
   const [form, setForm] = useState<ProviderForm>(EMPTY_FORM);
 
@@ -883,6 +894,7 @@ export function Proveedores() {
   const openCreate = () => {
 
     setSelected(null);
+    setDatosPricing({});
 
     setModalMode("create");
 
@@ -907,6 +919,11 @@ export function Proveedores() {
   const openProvider = (provider: Proveedor, mode: "edit" | "view") => {
 
     setSelected(provider);
+    setDatosPricing({});
+    fetch(`/api/proveedores/${provider.id}/ficha`).then(r=>r.json()).then(j=>{
+      if(j.ok===false) throw Error(j.message||'Error al cargar datos');
+      setDatosPricing(Object.fromEntries(Object.entries(j.data||j).map(([k,v])=>[k,String(v??'')])));
+    }).catch(e=>setError(String(e.message||e)));
 
     setModalMode(mode);
 
@@ -1150,12 +1167,14 @@ export function Proveedores() {
 
       const wasEditing = Boolean(selected);
 
-      await api(selected ? `/proveedores/${selected.id}` : "/proveedores", {
-
+      const saved=await api(selected ? `/proveedores/${selected.id}` : "/proveedores", {
         method: selected ? "PUT" : "POST",
-
         body: JSON.stringify(payload),
-
+      });
+      const savedId=Number(selected?.id||saved?.id||0);
+      if(!savedId) throw new Error('El proveedor se guardó, pero no se recuperó su ID para guardar los datos de Pricing.');
+      await api(`/proveedores/${savedId}/ficha`,{
+        method:'PUT',body:JSON.stringify(datosPricing)
       });
 
       setModalOpen(false);
@@ -1516,17 +1535,50 @@ export function Proveedores() {
 
 
 
-    if (y > 215) {
 
+
+
+    // PÁGINA 2: DATOS PRICING · FORMATO DEL PROVEEDOR.
+    // Debe salir antes del cumplimiento documental y desempeño.
+    try {
+      const detallePricing = (await api(`/proveedores/${provider.id}/ficha`)) as Record<string, any>;
       doc.addPage();
-
-      await drawPdfHeader(doc, "EXPEDIENTE DE PROVEEDOR", `${provider.codigo_proveedor} · Continuación`);
-
-      y = 47;
-
+      await drawPdfHeader(doc, "DATOS PRICING · FORMATO DEL PROVEEDOR", provider.codigo_proveedor);
+      const fields:[string,string][] = [
+        ["NIT",provider.nit||""],["Razón comercial",provider.nombre_comercial||""],
+        ["Razón social",provider.razon_social||""],["Código proveedor",provider.codigo_proveedor||""],
+        ["Nombre del contacto principal",String(detallePricing.contacto_principal||"")],
+        ["Nombre del propietario",String(detallePricing.nombre_propietario||"")],
+        ["Número de DPI",String(detallePricing.dpi_propietario||"")],
+        ["Dirección predio",String(detallePricing.direccion_predio||"")],
+        ["Tipo de contribuyente",String(detallePricing.tipo_contribuyente||"")],
+        ["Dirección fiscal",String(detallePricing.direccion_fisica||"")],
+        ["Número de cuenta bancaria",String(detallePricing.cuenta_bancaria||"")],
+        ["Nombre del banco",String(detallePricing.banco||"")],
+        ["Nombre del dueño de la cuenta",String(detallePricing.dueno_cuenta||"")],
+        ["Tipo de cuenta",String(detallePricing.tipo_cuenta||"")],
+        ["Correo electrónico",String(provider.correo||"")],
+        ["Número telefónico principal",String(detallePricing.contacto_telefono||"")],
+        ["Referencias",String(detallePricing.referencias||"")],
+        ["Investigación SAT",String(detallePricing.investigacion_sat||"")],
+        ["Investigación Clinton",String(detallePricing.investigacion_clinton||"")]
+      ];
+      autoTable(doc,{
+        startY:48,margin:{left:10,right:10},theme:"grid",showHead:"never",
+        body:fields.map(([label,value])=>[label,value]),
+        styles:{fontSize:8.4,cellPadding:2.4,lineWidth:.15,lineColor:[189,195,205],valign:"middle",minCellHeight:9},
+        columnStyles:{0:{cellWidth:64,fillColor:[231,112,63],textColor:[255,255,255],fontStyle:"bold"},1:{cellWidth:126,textColor:[23,38,59]}},
+      });
+    } catch (error) {
+      console.error("Error consultando datos Pricing para el PDF:",error);
+      throw new Error("No se pudo consultar el formato Pricing. Verifica la conexión antes de descargar el PDF.");
     }
 
 
+    // PÁGINA 3: Cumplimiento documental y desempeño.
+    doc.addPage();
+    await drawPdfHeader(doc, "CUMPLIMIENTO DOCUMENTAL Y DESEMPEÑO", provider.codigo_proveedor);
+    y = 47;
 
     section("Cumplimiento documental", "Estado de las validaciones utilizadas para el expediente del proveedor.");
 
@@ -1642,7 +1694,7 @@ export function Proveedores() {
 
 
 
-    doc.save(`Expediente-${provider.codigo_proveedor}.pdf`);
+doc.save(`Expediente-${provider.codigo_proveedor}.pdf`);
 
   };
 
@@ -2085,6 +2137,7 @@ export function Proveedores() {
 
                       <div className="flex flex-nowrap items-center justify-center gap-1 whitespace-nowrap">
 
+
                         <ActionButton title="Descargar PDF" className="bg-gray-50 text-gray-500" onClick={() => downloadProviderPdf(provider)}><Download size={15} /></ActionButton>
 
                         <ActionButton title="Ver" className="bg-blue-50 text-[#0C2D6B]" onClick={() => openProvider(provider, "view")}><Eye size={15} /></ActionButton>
@@ -2134,6 +2187,8 @@ export function Proveedores() {
         </div>
 
       </section>
+
+
 
 
 
@@ -2262,6 +2317,15 @@ export function Proveedores() {
                 </FormSection>
 
 
+
+                <FormSection title="DATOS PRICING · FORMATO DEL PROVEEDOR" subtitle="Complete los datos del documento original. Los campos adicionales pueden quedar vacíos.">
+                  <div className="grid gap-2 lg:grid-cols-2">
+                   {pricingFields.map(([k,label])=><label key={k} className="grid min-w-0 grid-cols-[145px_1fr] overflow-hidden border border-orange-200 text-xs sm:grid-cols-[175px_1fr]">
+                    <span className="flex items-center bg-[#E88965] px-3 py-2 font-semibold text-white">{label}</span>
+                    <input disabled={modalMode==='view'} className="min-w-0 bg-white px-3 py-2 outline-none focus:bg-orange-50 disabled:text-gray-500" value={datosPricing[k]||''} onChange={e=>setDatosPricing(p=>({...p,[k]:e.target.value}))}/>
+                   </label>)}
+                  </div>
+                </FormSection>
 
                 <FormSection
 

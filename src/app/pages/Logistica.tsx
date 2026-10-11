@@ -675,6 +675,8 @@ function PaginationControls({
   );
 }
 
+const ESTADOS_TRACKING = ["Recolección", "Cargado", "Pendiente de carga", "En ruta", "En destino", "Entregado", "Descargado", "Pendiente de descarga", "Retrasado", "Cancelado"];
+
 export function Logistica() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
@@ -685,6 +687,7 @@ export function Logistica() {
 
   const [envios, setEnvios] = useState<Envio[]>([]);
   const [viajes, setViajes] = useState<Viaje[]>([]);
+  const [cambioEstado, setCambioEstado] = useState<{viaje: Viaje; estado: string} | null>(null);
 
   const [activeTab, setActiveTab] = useState<"envios">("envios");
   const [loading, setLoading] = useState(false);
@@ -1277,30 +1280,23 @@ export function Logistica() {
     });
   };
 
-  const changeStatus = async (viaje: Viaje) => {
-    const estados = ["Pendiente", "En tránsito", "Retraso", "Crítico", "En destino", "Entregado"];
-    const actual = estados.indexOf(viaje.estado);
-    const next = estados[(actual + 1 + estados.length) % estados.length];
+  const changeStatus = (viaje: Viaje) => setCambioEstado({viaje, estado: viaje.estado || "Recolección"});
 
-    const progreso =
-      next === "Pendiente"
-        ? 0
-        : next === "En tránsito" || next === "Retraso" || next === "Crítico"
-        ? Math.max(Number(viaje.progreso || 0), 35)
-        : next === "En destino"
-        ? Math.max(Number(viaje.progreso || 0), 90)
-        : 100;
-
+  const guardarEstadoViaje = async () => {
+    if (!cambioEstado) return;
+    const {viaje,estado} = cambioEstado;
+    const actual = Number(viaje.progreso || 0);
+    const avance: Record<string,number> = {"Recolección":0,"Pendiente de carga":10,"Cargado":25,"En ruta":50,"En destino":80,"Pendiente de descarga":90,"Descargado":95,"Entregado":100,"Retrasado":actual,"Cancelado":actual};
+    const progreso = avance[estado] ?? actual;
     try {
       await apiRequest(`/logistica/viajes/${viaje.id}/estado`, {
-        method: "PUT",
-        body: JSON.stringify({ estado: next, progreso }),
+        method: "PUT", body: JSON.stringify({estado,progreso})
       });
-
+      setCambioEstado(null);
       await load();
-      showNotice(`Estado actualizado a ${next}.`);
-    } catch (error: any) {
-      setApiError(error.message || "No se pudo cambiar el estado.");
+      showNotice(`Estado actualizado a ${estado}.`);
+    } catch(error:any) {
+      setApiError(error.message || "No se pudo cambiar el estado del viaje.");
     }
   };
 
@@ -1448,7 +1444,7 @@ export function Logistica() {
 
   const exportEnviosPDF = async () => {
     const doc = new jsPDF();
-    await addCorporatePdfHeader(doc, "Servicios de Transporte", "Logística · Solicitudes de transporte registradas");
+    await addCorporatePdfHeader(doc, "Servicios de Transporte", "Tracking · Solicitudes de transporte registradas");
 
     autoTable(doc, {
       startY: 44,
@@ -1465,7 +1461,7 @@ export function Logistica() {
 
   const exportViajesPDF = async () => {
     const doc = new jsPDF();
-    await addCorporatePdfHeader(doc, "Reporte de Viajes", "Logística · Monitoreo y seguimiento operativo");
+    await addCorporatePdfHeader(doc, "Reporte de Viajes", "Tracking · Monitoreo y seguimiento operativo");
 
     autoTable(doc, {
       startY: 44,
@@ -1542,7 +1538,7 @@ export function Logistica() {
     <div id="logistica-top" className="space-y-5 pb-12 w-full max-w-full overflow-hidden px-3 sm:px-4 scroll-mt-[166px]">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-[#0C2D6B]">Logística</h1>
+          <h1 className="text-3xl font-bold text-[#0C2D6B]">Tracking</h1>
           <p className="text-gray-500 mt-1">Gestión de servicios de transporte, viajes, rutas y monitoreo operativo</p>
         </div>
 
@@ -1857,6 +1853,22 @@ export function Logistica() {
           </div>
         </section>
       </div>
+
+      {cambioEstado && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+          <h2 className="text-xl font-bold text-[#0C2D6B]">Cambiar estado del viaje</h2>
+          <p className="mt-2 text-sm text-gray-500">{cambioEstado.viaje.codigo} · {cambioEstado.viaje.cliente}</p>
+          <label className="mt-4 block text-sm font-semibold">Estado operativo</label>
+          <select className="mt-2 w-full rounded-lg border p-3" value={cambioEstado.estado}
+            onChange={e=>setCambioEstado({...cambioEstado,estado:e.target.value})}>
+            {ESTADOS_TRACKING.map(estado=><option key={estado} value={estado}>{estado}</option>)}
+          </select>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={()=>setCambioEstado(null)} className="rounded-lg border px-4 py-2">Cancelar</button>
+            <button onClick={guardarEstadoViaje} className="rounded-lg bg-[#0C2D6B] px-4 py-2 font-semibold text-white">Guardar estado</button>
+          </div>
+        </div>
+      </div>}
 
       <section id="logistica-viajes" className="scroll-mt-[166px]">
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
@@ -2491,14 +2503,14 @@ export function Logistica() {
 
                 <Field label="Estado">
                   <select
-                    value={viajeForm.estado || "Pendiente"}
+                    value={viajeForm.estado || "Recolección"}
                     onChange={(event) => {
                       const estado = event.target.value;
                       const current = Number(viajeForm.progreso || 0);
                       const progreso =
-                        estado === "Pendiente"
+                        estado === "Recolección" || estado === "Pendiente de carga"
                           ? 0
-                          : estado === "En tránsito" || estado === "Retraso" || estado === "Crítico"
+                          : estado === "En ruta" || estado === "Retrasado" || estado === "Cargado"
                           ? Math.max(current, 35)
                           : estado === "En destino"
                           ? Math.max(current, 90)
@@ -2507,12 +2519,7 @@ export function Logistica() {
                     }}
                     className={inputClass}
                   >
-                    <option value="Pendiente">Recolección / Pendiente</option>
-                    <option value="En tránsito">En ruta</option>
-                    <option value="Retraso">Retraso</option>
-                    <option value="Crítico">Crítico</option>
-                    <option value="En destino">En destino</option>
-                    <option value="Entregado">Entregado</option>
+                    {ESTADOS_TRACKING.map(estado => <option key={estado} value={estado}>{estado}</option>)}
                   </select>
                 </Field>
 

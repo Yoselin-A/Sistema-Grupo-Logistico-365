@@ -10,6 +10,7 @@ import { CRM } from "./pages/CRM";
 import { Operaciones } from "./pages/Operaciones";
 import { Logistica } from "./pages/Logistica";
 import { Facturacion } from "./pages/Facturacion";
+import { Recibos } from "./pages/Recibos";
 import { Flota } from "./pages/Flota";
 import { Pilotos } from "./pages/Pilotos";
 import { Proveedores } from "./pages/Proveedores";
@@ -142,8 +143,8 @@ export const router = createBrowserRouter([
     element: (
       <PrivateRoute module="logistica">
         <MainLayout
-          title="Logística"
-          breadcrumbs={["Inicio", "Logística"]}
+          title="Tracking"
+          breadcrumbs={["Inicio", "Tracking"]}
         />
       </PrivateRoute>
     ),
@@ -161,6 +162,16 @@ export const router = createBrowserRouter([
       </PrivateRoute>
     ),
     children: [{ index: true, element: <Facturacion /> }],
+  },
+
+  {
+    path: "/recibos",
+    element: (
+      <PrivateRoute module="recibos">
+        <MainLayout title="Recibos de caja" breadcrumbs={["Inicio", "Recibos de caja"]} />
+      </PrivateRoute>
+    ),
+    children: [{ index: true, element: <Recibos /> }],
   },
 
   {

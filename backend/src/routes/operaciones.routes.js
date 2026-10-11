@@ -1252,6 +1252,25 @@ const saveAssignment = async (connection, body, id = null) => {
     }
   }
 
+  const cotizacionId = asId(body.cotizacion_id);
+  if (cotizacionId) {
+    const [[cotizacion]] = await connection.query(
+      `SELECT id, cliente_id, tipo_asignacion, estado_ui FROM cotizacion WHERE id = ? FOR UPDATE`, [cotizacionId]
+    );
+    if (!cotizacion || String(cotizacion.estado_ui).toLowerCase() !== "aprobada") {
+      throw new Error("Solo se puede asignar una cotización aprobada.");
+    }
+    if (cotizacion.tipo_asignacion && cotizacion.tipo_asignacion !== tipoAsignacion) {
+      throw new Error("La asignación debe ser del tipo aprobado en la cotización.");
+    }
+    const [[previa]] = await connection.query(
+      `SELECT id FROM asignacion WHERE cotizacion_id = ? LIMIT 1`, [cotizacionId]
+    );
+    if (previa && previa.id !== asignacionIdEdit) {
+      throw new Error("Esta cotización ya tiene asignación y no debe duplicarse.");
+    }
+  }
+
   const clienteId = await findOrCreateCliente(connection, body);
   const rutaId = await findOrCreateRuta(connection, body);
   const vehiculoId = await findOrCreateVehiculo(connection, body);
@@ -1269,7 +1288,7 @@ const saveAssignment = async (connection, body, id = null) => {
 
   if (asignacionId) {
     const [[actual]] = await connection.query(
-      `SELECT codigo_asignacion, proveedor_id FROM \`${T.asignacion}\` WHERE id = ?`,
+      `SELECT codigo_asignacion, proveedor_id, cotizacion_id FROM \`${T.asignacion}\` WHERE id = ?`,
       [asignacionId]
     );
 
@@ -1293,7 +1312,8 @@ const saveAssignment = async (connection, body, id = null) => {
           proveedor_id = ?,
           fecha_carga = ?,
           fecha_descarga = ?,
-          estado_asignacion_id = ?
+          estado_asignacion_id = ?,
+          cotizacion_id = ?
       WHERE id = ?
       `,
       [
@@ -1308,6 +1328,7 @@ const saveAssignment = async (connection, body, id = null) => {
         fechaCarga,
         fechaDescarga,
         estadoId,
+        cotizacionId || actual.cotizacion_id || null,
         asignacionId,
       ]
     );
@@ -1328,9 +1349,10 @@ const saveAssignment = async (connection, body, id = null) => {
         proveedor_id,
         fecha_carga,
         fecha_descarga,
-        estado_asignacion_id
+        estado_asignacion_id,
+        cotizacion_id
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         codigo,
@@ -1344,6 +1366,7 @@ const saveAssignment = async (connection, body, id = null) => {
         fechaCarga,
         fechaDescarga,
         estadoId,
+        cotizacionId,
       ]
     );
 
@@ -1532,6 +1555,7 @@ const queryAsignaciones = `
   SELECT
     a.id,
     a.codigo_asignacion,
+    a.cotizacion_id,
     a.tipo_asignacion,
     a.detalle_operativo_json,
     a.cliente_id,
@@ -1848,6 +1872,32 @@ router.post("/operaciones/catalogos/rutas", async (req, res) => {
     return fail(res, 500, "No se pudo crear la ruta.", error);
   } finally {
     connection.release();
+  }
+});
+
+// Alerta operativa calculada en tiempo real: no depende de marcar notificaciones leídas.
+router.get("/operaciones/cotizaciones-aprobadas", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT ct.id, ct.codigo_cotizacion, ct.cliente_id, c.nombre_empresa,
+        ct.tipo_asignacion, ct.moneda_ui, ct.aplica_iva, ct.origen_id, ct.destino_id,
+        uo.nombre_ubicacion AS origen, ud.nombre_ubicacion AS destino,
+        ct.fecha_emision,ct.estado_ui, ct.forma_pago_id,
+        COALESCE(SUM(cd.cantidad * cd.precio_unitario),0) AS subtotal,
+        ROUND(COALESCE(SUM(cd.cantidad * cd.precio_unitario),0) * IF(ct.aplica_iva=1,1.12,1),2) AS total
+      FROM cotizacion ct
+      JOIN cliente c ON c.id=ct.cliente_id
+      LEFT JOIN ubicacion uo ON uo.id=ct.origen_id
+      LEFT JOIN ubicacion ud ON ud.id=ct.destino_id
+      LEFT JOIN cotizacion_detalle cd ON cd.cotizacion_id=ct.id
+      WHERE LOWER(ct.estado_ui)='aprobada'
+        AND NOT EXISTS (SELECT 1 FROM asignacion a WHERE a.cotizacion_id = ct.id)
+      GROUP BY ct.id, c.nombre_empresa, uo.nombre_ubicacion, ud.nombre_ubicacion
+      ORDER BY ct.id DESC
+    `);
+    return ok(res, rows);
+  } catch (error) {
+    return fail(res, 500, "No se pudo consultar las cotizaciones aprobadas.", error);
   }
 });
 

@@ -65,6 +65,8 @@ type Piloto = {
   dpi?: string;
 
   nit?: string;
+  direccion?: string;
+  telefono?: string;
 
   fecha_nacimiento?: string;
 
@@ -100,6 +102,8 @@ type FormPiloto = {
   dpi: string;
 
   nit: string;
+  direccion: string;
+  telefono: string;
 
   fecha_nacimiento: string;
 
@@ -144,6 +148,8 @@ const EMPTY_FORM: FormPiloto = {
   dpi: "",
 
   nit: "",
+  direccion: "",
+  telefono: "",
 
   fecha_nacimiento: "",
 
@@ -1263,6 +1269,8 @@ export function Pilotos() {
             dpi: pilot.dpi || "",
 
             nit: pilot.nit || "",
+            direccion: pilot.direccion || "",
+            telefono: pilot.telefono || "",
 
             fecha_nacimiento: pilot.fecha_nacimiento?.slice(0, 10) || "",
 
@@ -1517,6 +1525,8 @@ export function Pilotos() {
         ["Edad", age != null ? `${age} años` : "Sin registrar"],
 
         ["NIT", pilot.nit || "Sin registrar"],
+        ["Dirección", pilot.direccion || "Sin registrar"],
+        ["Teléfono", pilot.telefono || "Sin registrar"],
 
       ],
 
@@ -2854,6 +2864,11 @@ export function Pilotos() {
 
 
 
+              <InputField label="Dirección del piloto (opcional)" value={form.direccion}
+                onChange={(value) => setForm(current => ({...current, direccion:value}))} />
+              <InputField label="Teléfono del piloto (opcional)" value={form.telefono}
+                onChange={(value) => setForm(current => ({...current, telefono:value}))} />
+
               <label>
 
                 <span className="mb-1 block text-xs font-bold text-gray-600">
@@ -3615,6 +3630,8 @@ function PilotViewModal({
                 ["Edad", age != null ? `${age} años` : "Sin registrar"],
 
                 ["NIT", pilot.nit || "Sin registrar"],
+                ["Dirección", pilot.direccion || "Sin registrar"],
+                ["Teléfono", pilot.telefono || "Sin registrar"],
 
               ]}
 
@@ -3668,14 +3685,7 @@ function PilotViewModal({
 
             />
 
-            {(pilot.expedientes || []).map((exp, index) => (
-              <ViewBox key={`${exp.codigo}-${index}`} title={`Documentos en ${exp.codigo} · ${exp.tipo === "fiduca" ? "FYDUCA" : exp.tipo}`}
-                className="md:col-span-2" items={[
-                  ["Licencia", exp.licencia || "Sin registrar"], ["DPI", exp.dpi || "Sin registrar"],
-                  ["NIT", exp.nit || "Sin registrar"], ["Nacimiento", formatoFecha(exp.fecha_nacimiento)],
-                  ["Pasaporte", exp.pasaporte || "Sin registrar"], ["País", exp.pais || "Sin registrar"],
-                ]} />
-            ))}
+
           </div>
 
         </div>

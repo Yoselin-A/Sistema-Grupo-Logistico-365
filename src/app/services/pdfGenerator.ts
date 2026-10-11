@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Client, Quote, Assignment, Provider } from './storage';
-import logoEmpresa from '../../assets/614cb11181e5d72cb3a39a09d833f4775b7fc7ce.png';
+import logoEmpresa from '../../assets/logo_gl365_oficial.png';
 
 async function imageUrlToDataUrl(url: string): Promise<string | null> {
   try {
@@ -422,14 +422,14 @@ export const generarPDFCotizacion = async (quote: Quote) => {
   };
 
   const obtenerTotalServicio = (servicio: any) => {
-    const totalGuardado = limpiarNumero(servicio.total ?? servicio.subtotal_con_iva ?? q.total);
+    const totalGuardado = limpiarNumero(servicio.total ?? servicio.subtotal_con_iva ?? 0);
 
     if (totalGuardado > 0) return totalGuardado;
 
     const cantidad = obtenerCantidadServicio(servicio);
     const venta = obtenerVentaServicio(servicio);
 
-    return venta * cantidad * 1.12;
+    return venta * cantidad * (limpiarNumero(q.iva) > 0 ? 1.12 : 1);
   };
 
   // === HEADER: FECHA ===
@@ -602,7 +602,7 @@ export const generarPDFCotizacion = async (quote: Quote) => {
 
   autoTable(doc, {
     startY: yPos,
-    head: [['CANT.', 'DESCRIPCIÓN', 'VENTA', 'TOTAL CON IVA', 'MONEDA', 'DÍAS']],
+    head: [['CANT.', 'DESCRIPCIÓN', 'VENTA', 'TOTAL', 'MONEDA', 'DÍAS']],
     body: serviciosData,
     theme: 'grid',
     tableWidth,

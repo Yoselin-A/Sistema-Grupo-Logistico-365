@@ -1401,10 +1401,10 @@ export function Mantenimiento() {
       { key: "proveedores", title: "Pricing · Proveedores", description: "Directorio y documentación de proveedores.", codes: onlyExisting(["proveedores"]), icon: Building2 },
       { key: "flota", title: "Pricing · Flota", description: "Vehículos y mantenimiento de unidades.", codes: onlyExisting(["flota"]), icon: Truck },
       { key: "pilotos", title: "Pricing · Pilotos", description: "Ficha personal y documentos de pilotos.", codes: onlyExisting(["pilotos"]), icon: Users },
-      { key: "rutas", title: "Logística · Rutas", description: "Administración de rutas.", codes: onlyExisting(["rutas"]), icon: Truck },
+      { key: "rutas", title: "Tracking · Rutas", description: "Administración de rutas.", codes: onlyExisting(["rutas"]), icon: Truck },
       {
         key: "logistica",
-        title: "Logística",
+        title: "Tracking",
         description: "Seguimiento de viajes y administración de rutas.",
         codes: onlyExisting(["logistica"]),
         items: ["Gestión"],
@@ -1414,7 +1414,8 @@ export function Mantenimiento() {
         key: "facturacion",
         title: "Comprobantes",
         description: "Comprobantes, detalles y pagos.",
-        codes: onlyExisting(["facturacion", "comprobantes"]),
+        codes: onlyExisting(["facturacion", "comprobantes", "recibos"]),
+        items: ["Comprobantes", "Recibos de caja"],
         icon: FileText,
       },
       {
