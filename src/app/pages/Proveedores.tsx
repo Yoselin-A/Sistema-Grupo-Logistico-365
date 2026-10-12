@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -951,7 +950,11 @@ export function Proveedores() {
 
     setPerformanceDraft({ ...performanceFor(provider) });
 
-    setError("");
+    // Nunca inventar el símbolo @ en un dato histórico incompleto.
+    // Avisar al abrir la edición para que la persona corrija el correo real.
+    setError(provider.correo && !correoValido(provider.correo)
+      ? "El correo guardado de este proveedor está incompleto (falta @ o dominio). Corrígelo antes de guardar."
+      : "");
 
     setModalOpen(true);
 
@@ -2295,6 +2298,7 @@ doc.save(`Expediente-${provider.codigo_proveedor}.pdf`);
                         className={inputClass}
                         value={form.correo}
                         placeholder="nombre@empresa.com"
+                        autoComplete="off"
                         onChange={(event) => {
                           event.currentTarget.setCustomValidity("");
                           setForm((current) => ({ ...current, correo: event.target.value }));

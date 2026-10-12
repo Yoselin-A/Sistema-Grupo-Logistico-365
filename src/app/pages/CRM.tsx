@@ -2385,7 +2385,7 @@ export function CRM() {
 
   useEffect(() => {
     setSearchQuery("");
-    setStatusFilter("Todos");
+    setStatusFilter(activeTab === "clientes" ? "Activo" : "Todos");
     setLeadStageFilter("Todos");
     setProviderStatusFilter("Todos");
     setProviderLevelFilter("Todos");
@@ -6262,7 +6262,7 @@ export function CRM() {
 
   const clearCrmFilters = () => {
     setSearchQuery("");
-    setStatusFilter("Todos");
+    setStatusFilter(activeTab === "clientes" ? "Activo" : "Todos");
     setLeadStageFilter("Todos");
     setProviderStatusFilter("Todos");
     setProviderLevelFilter("Todos");
@@ -6751,6 +6751,7 @@ export function CRM() {
 
           <div className="px-4 pt-3 flex flex-wrap items-center gap-2 text-sm">
             <span className="font-bold text-gray-400">{sortedClients.length} de {clients.length} registros visibles</span>
+            {statusFilter === "Activo" && <span className="rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700">Solo clientes activos; selecciona «Todos» para consultar el historial</span>}
 
           </div>
 

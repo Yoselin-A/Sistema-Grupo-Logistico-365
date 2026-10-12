@@ -28,7 +28,7 @@ type NotificationItem = {
   id: string;
   title: string;
   description: string;
-  type: "route" | "maintenance" | "document" | "warning" | "success";
+  type: "route" | "maintenance" | "document" | "warning" | "delay" | "success";
   category: NotificationCategory;
   path: string;
 };
@@ -348,13 +348,17 @@ export function Header({ onMenuClick }: HeaderProps) {
           alertDescription,
         ].filter(Boolean);
 
+        const esCritico = [state, normalizeText(alertTitle), embeddedAlertText,
+          normalizeText(relatedAlert?.nivel), normalizeText(relatedAlert?.tipo)]
+          .some((valor) => valor.includes("critic"));
+
         next.push({
           id: `trip-${tripId || code}`,
-          title: `${code} · ${alertTitle}`,
+          title: `${code} · ${esCritico ? "Situación crítica" : "Viaje retrasado"}`,
           description:
             descriptionParts.join(" · ") ||
             "Viaje con alerta operativa.",
-          type: "warning",
+          type: esCritico ? "warning" : "delay",
           category: "viajes",
           path: "/logistica?tab=viajes",
         });
@@ -378,7 +382,8 @@ export function Header({ onMenuClick }: HeaderProps) {
           description:
             alert?.descripcion ||
             "El viaje tiene una alerta operativa pendiente.",
-          type: "warning",
+          type: normalizeText(`${alert?.nivel || ""} ${alert?.tipo || ""}`).includes("critic")
+            ? "warning" : "delay",
           category: "viajes",
           path: "/logistica?tab=viajes",
         });
@@ -634,8 +639,13 @@ export function Header({ onMenuClick }: HeaderProps) {
       loadNotifications,
       60000
     );
+    // Un cambio de estado en Tracking dispara la actualización inmediata.
+    window.addEventListener("gl365:tracking-estado-actualizado", loadNotifications);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("gl365:tracking-estado-actualizado", loadNotifications);
+    };
   }, [role]);
 
   const notificationCounts = useMemo(() => {
@@ -692,6 +702,7 @@ export function Header({ onMenuClick }: HeaderProps) {
       maintenance: <Wrench className="w-4 h-4" />,
       document: <FileWarning className="w-4 h-4" />,
       warning: <AlertTriangle className="w-4 h-4" />,
+      delay: <AlertTriangle className="w-4 h-4" />,
       success: <CheckCircle2 className="w-4 h-4" />,
     }),
     []
@@ -913,6 +924,8 @@ export function Header({ onMenuClick }: HeaderProps) {
                               className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
                                 notification.type === "warning"
                                   ? "bg-red-50 text-red-600"
+                                  : notification.type === "delay"
+                                  ? "bg-orange-50 text-orange-600"
                                   : notification.type ===
                                     "maintenance"
                                   ? "bg-orange-50 text-[#FF6A00]"
@@ -936,7 +949,9 @@ export function Header({ onMenuClick }: HeaderProps) {
                                 <span
                                   className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wide ${
                                     notification.category === "viajes"
-                                      ? "bg-blue-50 text-[#0C2D6B]"
+                                      ? notification.type === "warning"
+                                        ? "bg-red-50 text-red-700"
+                                        : "bg-orange-50 text-orange-700"
                                       : notification.category === "flota"
                                       ? "bg-orange-50 text-[#FF6A00]"
                                       : notification.category === "pilotos"
@@ -988,6 +1003,8 @@ export function Header({ onMenuClick }: HeaderProps) {
                           className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
                             notification.type === "warning"
                               ? "bg-red-50 text-red-600"
+                              : notification.type === "delay"
+                              ? "bg-orange-50 text-orange-600"
                               : notification.type === "maintenance"
                               ? "bg-orange-50 text-[#FF6A00]"
                               : notification.type === "document"

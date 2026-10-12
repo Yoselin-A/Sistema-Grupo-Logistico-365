@@ -356,13 +356,18 @@ const getEstadosEnvio = async (connection = pool) => {
   return rows;
 };
 
-const estadoIdDesdeVisual = async (connection, estadoVisual) => {
+const estadoIdDesdeVisual = async (connection, estadoVisual, estricto = false) => {
   const estados = await getEstadosEnvio(connection);
   const texto = limpiar(estadoVisual).toLowerCase();
   const alias = {"pendiente": "recolección", "en tránsito": "en ruta", "retraso": "retrasado"};
   const nombre = alias[texto] || texto;
   const exacto = estados.find(e => limpiar(e.nombre_estado_envio).toLowerCase() === nombre);
   if (exacto) return exacto.id;
+  if (estricto) {
+    const error = new Error(`El estado «${estadoVisual}» no está configurado en el catálogo estado_envio.`);
+    error.statusCode = 400;
+    throw error;
+  }
   const fallback = estados.find(e => /recolecci/i.test(e.nombre_estado_envio));
   return fallback?.id || estados[0]?.id || 1;
 };
@@ -464,6 +469,27 @@ const queryCatalogos = async () => {
   };
 };
 
+
+// Cotizaciones aprobadas todavía no convertidas en servicios.
+// La restricción UNIQUE de envio.cotizacion_id protege contra duplicados concurrentes.
+const getCotizacionesParaServicios = async () => {
+  const [rows] = await pool.query(`
+    SELECT ct.id, ct.codigo_cotizacion, ct.cliente_id,
+      c.nombre_empresa AS cliente, ct.origen_id, ct.destino_id,
+      uo.nombre_ubicacion AS origen, ud.nombre_ubicacion AS destino,
+      DATE_FORMAT(ct.fecha_emision, '%Y-%m-%d') AS fecha_emision,
+      ct.tipo_asignacion, ct.estado_ui
+    FROM cotizacion ct
+    JOIN cliente c ON c.id = ct.cliente_id
+    LEFT JOIN ubicacion uo ON uo.id = ct.origen_id
+    LEFT JOIN ubicacion ud ON ud.id = ct.destino_id
+    WHERE LOWER(TRIM(ct.estado_ui)) = 'aprobada'
+      AND NOT EXISTS (SELECT 1 FROM envio e WHERE e.cotizacion_id = ct.id)
+    ORDER BY ct.id DESC
+  `);
+  return rows;
+};
+
 const getEnviosRows = async () => {
   const [rows] = await pool.query(`
     SELECT
@@ -481,6 +507,8 @@ const getEnviosRows = async () => {
       DATE_FORMAT(e.fecha, '%Y-%m-%d %H:%i') AS fecha,
       e.estado_id,
       e.observaciones,
+      e.cotizacion_id,
+      ct.codigo_cotizacion,
       e.created_at,
       c.codigo_cliente,
       c.nombre_empresa AS cliente,
@@ -490,6 +518,7 @@ const getEnviosRows = async () => {
       ud.pais AS destino_pais,
       ee.nombre_estado_envio
     FROM \`${T.envio}\` e
+    LEFT JOIN cotizacion ct ON ct.id = e.cotizacion_id
     LEFT JOIN \`${T.cliente}\` c ON c.id = e.cliente_id
     LEFT JOIN \`${T.ubicacion}\` uo ON uo.id = e.origen_id
     LEFT JOIN \`${T.ubicacion}\` ud ON ud.id = e.destino_id
@@ -532,6 +561,8 @@ const getViajesRows = async () => {
       c.nombre_empresa AS cliente,
 
       e.codigo AS envio_codigo,
+      e.direccion AS envio_direccion,
+      ct.codigo_cotizacion,
 
       r.codigo_ruta,
       r.nombre_ruta,
@@ -561,6 +592,7 @@ const getViajesRows = async () => {
     FROM \`${T.viaje}\` v
     LEFT JOIN \`${T.cliente}\` c ON c.id = v.cliente_id
     LEFT JOIN \`${T.envio}\` e ON e.id = v.envio_id
+    LEFT JOIN cotizacion ct ON ct.id = e.cotizacion_id
     LEFT JOIN \`${T.ruta}\` r ON r.id = v.ruta_id
     LEFT JOIN \`${T.ubicacion}\` uo ON uo.id = r.origen_id
     LEFT JOIN \`${T.ubicacion}\` ud ON ud.id = r.destino_id
@@ -622,6 +654,7 @@ const syncAlertaOperativa = async (connection, viajeId, codigo, estadoVisual) =>
   if (estado !== "Retraso" && estado !== "Retrasado" && estado !== "Crítico") return;
 
   const tipo = estado === "Crítico" ? "Situación crítica" : "Retraso de viaje";
+  // Crítico => rojo/atención inmediata, Retrasado => naranja/seguimiento.
   const nivel = estado === "Crítico" ? "Crítico" : "Medio";
   const descripcion =
     estado === "Crítico"
@@ -650,82 +683,78 @@ const registrarTracking = async (connection, viajeId, estadoId, porcentaje) => {
 };
 
 const saveEnvio = async (connection, body, id = null) => {
-  const clienteId = asId(body.cliente_id);
-  const origenId = asId(body.origen_id);
-  const destinoId = asId(body.destino_id);
-
-  if (!clienteId) throw new Error("Selecciona un cliente.");
-  if (!origenId) throw new Error("Selecciona el origen.");
-  if (!destinoId) throw new Error("Selecciona el destino.");
-  if (origenId === destinoId) throw new Error("El destino debe ser diferente del origen.");
-
-  const fecha = asDateTime(body.fecha);
-  if (!fecha) throw new Error("Selecciona la fecha y hora del servicio.");
-
-  // El origen + destino del envío son la fuente de verdad de la ruta.
-  // Si la ruta ya existe se reutiliza; si no existe se crea aquí mismo.
-  const ruta = await getOrCreateRouteByLocations(
-    connection,
-    origenId,
-    destinoId
-  );
-
-  const estadoId = asId(body.estado_id) || (await estadoIdDesdeVisual(connection, body.estado || "Pendiente"));
-
-  const payload = [
-    clienteId,
-    origenId,
-    destinoId,
-    textoComercial(body.direccion, 180),
-    fecha,
-    estadoId,
-    textoComercial(body.observaciones, 250) || null,
-  ];
+  let cotizacionId = asId(body.cotizacion_id);
+  let clienteId = asId(body.cliente_id);
+  let origenId = asId(body.origen_id);
+  let destinoId = asId(body.destino_id);
 
   if (id) {
-    await connection.query(
-      `
-      UPDATE \`${T.envio}\`
-      SET cliente_id = ?,
-          origen_id = ?,
-          destino_id = ?,
-          direccion = ?,
-          fecha = ?,
-          estado_id = ?,
-          observaciones = ?
-      WHERE id = ?
-      `,
-      [...payload, id]
+    const [[actual]] = await connection.query(
+      `SELECT cotizacion_id, cliente_id, origen_id, destino_id, estado_id FROM envio WHERE id = ? FOR UPDATE`, [id]
     );
-
-    return {
-      id,
-      ruta_id: ruta.id,
-      codigo_ruta: ruta.codigo_ruta,
-      ruta_texto: ruta.ruta_texto,
-      ruta_creada: Boolean(ruta.created),
-    };
+    if (!actual) { const e = new Error('El servicio no existe.'); e.statusCode = 404; throw e; }
+    // La cotización original no puede sustituirse al editar un servicio ya creado.
+    cotizacionId = asId(actual.cotizacion_id);
+    if (cotizacionId) {
+      clienteId = actual.cliente_id;
+      origenId = actual.origen_id;
+      destinoId = actual.destino_id;
+    }
+  } else {
+    if (!cotizacionId) {
+      const error = new Error('Seleccioná una cotización aprobada para crear el servicio.');
+      error.statusCode = 400; throw error;
+    }
+    const [[cotizacion]] = await connection.query(`
+      SELECT id, cliente_id, origen_id, destino_id, estado_ui
+      FROM cotizacion WHERE id = ? FOR UPDATE
+    `, [cotizacionId]);
+    if (!cotizacion || limpiar(cotizacion.estado_ui).toLowerCase() !== 'aprobada') {
+      const error = new Error('La cotización debe estar aprobada para generar un servicio.');
+      error.statusCode = 400; throw error;
+    }
+    const [[repetida]] = await connection.query(
+      'SELECT id FROM envio WHERE cotizacion_id = ? LIMIT 1', [cotizacionId]
+    );
+    if (repetida) { const e = new Error('Esta cotización ya tiene un servicio asociado.'); e.statusCode = 409; throw e; }
+    clienteId = asId(cotizacion.cliente_id);
+    origenId = asId(cotizacion.origen_id);
+    destinoId = asId(cotizacion.destino_id);
   }
 
-  const codigo = limpiar(body.codigo) || (await nextCode(connection, T.envio, "codigo", "ENV", 4));
+  if (!clienteId || !origenId || !destinoId) {
+    const e = new Error('La cotización necesita cliente, origen y destino. Completá esos datos en Cotizaciones.');
+    e.statusCode = 400; throw e;
+  }
+  if (origenId === destinoId) { const e = new Error('El origen y destino deben ser diferentes.'); e.statusCode = 400; throw e; }
+  const fecha = asDateTime(body.fecha);
+  if (!fecha) { const e = new Error('Seleccioná la fecha del servicio.'); e.statusCode = 400; throw e; }
+  const direccion = limpiar(body.direccion);
+  if (!direccion) { const e = new Error('Ingresá la dirección exacta del servicio.'); e.statusCode = 400; throw e; }
+  if (direccion.length > 180) { const e = new Error('La dirección exacta admite hasta 180 caracteres.'); e.statusCode = 400; throw e; }
 
-  const [result] = await connection.query(
-    `
-    INSERT INTO \`${T.envio}\`
-    (codigo, cliente_id, origen_id, destino_id, direccion, fecha, estado_id, observaciones)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [codigo, ...payload]
-  );
+  const ruta = await getOrCreateRouteByLocations(connection, origenId, destinoId);
+  let estadoId = asId(body.estado_id) || (await estadoIdDesdeVisual(connection, body.estado || 'Recolección'));
+  if (id) {
+    const [[existeViaje]] = await connection.query('SELECT id FROM viaje WHERE envio_id = ? LIMIT 1', [id]);
+    if (existeViaje) {
+      // El estado de un servicio con viaje lo controla Tracking, no la edición manual.
+      const [[actual]] = await connection.query('SELECT estado_id FROM envio WHERE id = ?', [id]);
+      estadoId = actual.estado_id;
+    }
+    await connection.query(`
+      UPDATE envio SET cliente_id=?, origen_id=?, destino_id=?, direccion=?, fecha=?, estado_id=?, observaciones=?
+      WHERE id=?
+    `, [clienteId, origenId, destinoId, direccion, fecha, estadoId, textoComercial(body.observaciones, 180) || null, id]);
+    return { id, cotizacion_id: cotizacionId, ruta_id: ruta.id, codigo_ruta: ruta.codigo_ruta, ruta_texto: ruta.ruta_texto };
+  }
 
-  return {
-    id: result.insertId,
-    codigo,
-    ruta_id: ruta.id,
-    codigo_ruta: ruta.codigo_ruta,
-    ruta_texto: ruta.ruta_texto,
-    ruta_creada: Boolean(ruta.created),
-  };
+  const codigo = limpiar(body.codigo) || (await nextCode(connection, T.envio, 'codigo', 'ENV', 4));
+  const [result] = await connection.query(`
+    INSERT INTO envio (codigo, cliente_id, origen_id, destino_id, direccion, fecha, estado_id, observaciones, cotizacion_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [codigo, clienteId, origenId, destinoId, direccion, fecha, estadoId, textoComercial(body.observaciones, 180) || null, cotizacionId]);
+  return { id: result.insertId, codigo, cotizacion_id: cotizacionId, ruta_id: ruta.id, codigo_ruta: ruta.codigo_ruta, ruta_texto: ruta.ruta_texto };
 };
 
 const saveViaje = async (connection, body, id = null) => {
@@ -749,17 +778,29 @@ const saveViaje = async (connection, body, id = null) => {
     SELECT
       cliente_id,
       origen_id,
-      destino_id
+      destino_id,
+      estado_id
     FROM \`${T.envio}\`
     WHERE id = ?
     LIMIT 1
+    FOR UPDATE
     `,
     [envioId]
   );
 
   if (!envio) throw new Error("El envío relacionado no existe.");
   if (Number(envio.cliente_id) !== Number(clienteId)) {
-    throw new Error("El envío seleccionado pertenece a otro cliente.");
+    throw new Error("El servicio seleccionado pertenece a otro cliente.");
+  }
+  const [[uso]] = await connection.query(
+    'SELECT id FROM viaje WHERE envio_id = ? AND id <> ? LIMIT 1', [envioId, id || 0]
+  );
+  if (uso) { const e = new Error('Este servicio ya tiene un viaje. Revisá su historial.'); e.statusCode = 409; throw e; }
+  const [[estadoServicio]] = await connection.query(
+    'SELECT nombre_estado_envio FROM estado_envio WHERE id=?', [envio.estado_id]
+  );
+  if (!id && ['entregado','descargado','cancelado'].includes(limpiar(estadoServicio?.nombre_estado_envio).toLowerCase())) {
+    const e = new Error('Este servicio está finalizado y no puede generar otro viaje.'); e.statusCode = 409; throw e;
   }
 
   // Garantía de consistencia:
@@ -776,7 +817,8 @@ const saveViaje = async (connection, body, id = null) => {
 
   const progreso = Math.max(0, Math.min(100, numeroDecimal(body.progreso, 0)));
   const estadoVisual = limpiar(body.estado || "Pendiente");
-  const estadoId = await estadoIdDesdeVisual(connection, estadoVisual);
+  // Un estado solicitado debe existir: nunca sustituir "Crítico" por "Recolección".
+  const estadoId = await estadoIdDesdeVisual(connection, estadoVisual, true);
 
   if (id) {
     const [[actual]] = await connection.query(
@@ -803,6 +845,7 @@ const saveViaje = async (connection, body, id = null) => {
     );
 
     await registrarTracking(connection, id, estadoId, progreso);
+    await connection.query('UPDATE envio SET estado_id=? WHERE id=?', [estadoId, envioId]);
     await syncAlertaOperativa(connection, id, actual.codigo, estadoVisual);
 
     return { id, codigo: actual.codigo };
@@ -822,6 +865,7 @@ const saveViaje = async (connection, body, id = null) => {
   const viajeId = result.insertId;
 
   await registrarTracking(connection, viajeId, estadoId, progreso);
+  await connection.query('UPDATE envio SET estado_id=? WHERE id=?', [estadoId, envioId]);
   await syncAlertaOperativa(connection, viajeId, codigo, estadoVisual);
 
   return { id: viajeId, codigo };
@@ -852,21 +896,28 @@ const safeDelete = async (connection, sql, params = []) => {
 
 router.get("/logistica/bootstrap", async (req, res) => {
   try {
-    const [catalogos, envios, viajes] = await Promise.all([
+    const [catalogos, envios, viajes, cotizacionesDisponibles] = await Promise.all([
       queryCatalogos(),
       getEnviosRows(),
       getViajesRows(),
+      getCotizacionesParaServicios(),
     ]);
 
     return ok(res, {
       ...catalogos,
       envios,
       viajes,
+      cotizacionesDisponibles,
     });
   } catch (error) {
     console.error("Error /logistica/bootstrap:", error);
     return fail(res, 500, "No se pudo cargar Logística.", error);
   }
+});
+
+router.get('/logistica/cotizaciones-disponibles', async (req, res) => {
+  try { return ok(res, await getCotizacionesParaServicios()); }
+  catch (error) { return fail(res, 500, 'No se pudieron consultar las cotizaciones aprobadas.', error); }
 });
 
 router.get("/logistica/catalogos", async (req, res) => {
@@ -898,7 +949,8 @@ router.post("/logistica/envios", async (req, res) => {
   } catch (error) {
     await connection.rollback();
     console.error("Error POST envio:", error);
-    return fail(res, 500, "No se pudo guardar el envío.", error);
+    return fail(res, error.statusCode || (error.code === 'ER_DUP_ENTRY' ? 409 : 500),
+      error.statusCode || error.code === 'ER_DUP_ENTRY' ? error.message || 'Esta cotización ya tiene un servicio.' : 'No se pudo guardar el servicio.', error);
   } finally {
     connection.release();
   }
@@ -918,7 +970,7 @@ router.put("/logistica/envios/:id", async (req, res) => {
   } catch (error) {
     await connection.rollback();
     console.error("Error PUT envio:", error);
-    return fail(res, 500, "No se pudo actualizar el envío.", error);
+    return fail(res, error.statusCode || 500, error.statusCode ? error.message : 'No se pudo actualizar el servicio.', error);
   } finally {
     connection.release();
   }
@@ -980,7 +1032,7 @@ router.post("/logistica/viajes", async (req, res) => {
   } catch (error) {
     await connection.rollback();
     console.error("Error POST viaje:", error);
-    return fail(res, 500, "No se pudo guardar el viaje.", error);
+    return fail(res, error.statusCode || 500, error.statusCode ? error.message : 'No se pudo guardar el viaje.', error);
   } finally {
     connection.release();
   }
@@ -1014,7 +1066,7 @@ router.put("/logistica/viajes/:id/estado", async (req, res) => {
     if (!id) return fail(res, 400, "ID de viaje inválido.");
 
     const [[viaje]] = await connection.query(
-      `SELECT id, codigo, progreso FROM \`${T.viaje}\` WHERE id = ? LIMIT 1`,
+      `SELECT id, codigo, progreso, envio_id FROM \`${T.viaje}\` WHERE id = ? LIMIT 1`,
       [id]
     );
 
@@ -1024,7 +1076,7 @@ router.put("/logistica/viajes/:id/estado", async (req, res) => {
 
     const estado = limpiar(req.body.estado || "En tránsito");
     const progreso = Math.max(0, Math.min(100, numeroDecimal(req.body.progreso, 0)));
-    const estadoId = await estadoIdDesdeVisual(connection, estado);
+    const estadoId = await estadoIdDesdeVisual(connection, estado, true);
 
     await connection.query(
       `UPDATE \`${T.viaje}\` SET progreso = ? WHERE id = ?`,
@@ -1032,6 +1084,8 @@ router.put("/logistica/viajes/:id/estado", async (req, res) => {
     );
 
     await registrarTracking(connection, id, estadoId, progreso);
+    // Estado del servicio acompaña al viaje. Finalizados no estarán disponibles para otro viaje.
+    await connection.query('UPDATE envio SET estado_id=? WHERE id=?', [estadoId, viaje.envio_id]);
     await syncAlertaOperativa(connection, id, viaje.codigo, estado);
 
     await connection.commit();
@@ -1040,7 +1094,7 @@ router.put("/logistica/viajes/:id/estado", async (req, res) => {
   } catch (error) {
     await connection.rollback();
     console.error("Error estado viaje:", error);
-    return fail(res, 500, "No se pudo actualizar el estado del viaje.", error);
+    return fail(res, error.statusCode || 500, error.statusCode ? error.message : "No se pudo actualizar el estado del viaje.", error);
   } finally {
     connection.release();
   }

@@ -237,7 +237,14 @@ const guardarProveedor = async (connection, body, proveedorId = null) => {
   );
 
   const nit = limpiar(body.nit);
+  // Validación en servidor: un correo no debe guardarse incompleto.
+  // No se completa automáticamente el @ para evitar inventar direcciones.
   const correo = limpiar(body.correo).toLowerCase() || null;
+  if (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
+    const error = new Error("El correo del proveedor debe incluir @ y un dominio válido.");
+    error.statusCode = 400;
+    throw error;
+  }
   const telefono = soloNumeros(body.telefono, 15) || null;
 
   const estadoId =

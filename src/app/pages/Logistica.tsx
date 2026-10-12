@@ -81,7 +81,22 @@ type EstadoEnvio = {
 };
 
 
+type CotizacionAprobada = {
+  id: number;
+  codigo_cotizacion: string;
+  cliente_id: number;
+  cliente: string;
+  origen_id: number | null;
+  destino_id: number | null;
+  origen: string | null;
+  destino: string | null;
+  fecha_emision?: string | null;
+  tipo_asignacion?: string | null;
+};
+
 type Envio = {
+  cotizacion_id?: number | null;
+  codigo_cotizacion?: string | null;
   id: number;
   codigo: string;
   cliente_id: number;
@@ -122,6 +137,8 @@ type Viaje = {
   licencia?: string;
   estado: string;
   envio_codigo?: string;
+  codigo_cotizacion?: string | null;
+  envio_direccion?: string | null;
 };
 
 
@@ -275,37 +292,50 @@ const rutaLabel = (ruta?: Partial<Ruta> | AnyRow) => {
   return String(ruta.nombre_ruta || "");
 };
 
-const getEstadoColor = (estado: string) => {
-  switch (estado) {
-    case "Pendiente":
-      return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-slate-400/10 dark:text-slate-300 dark:border-slate-400/30";
-    case "En ruta":
-    case "En tránsito":
-      return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-400/30";
-    case "En destino":
-      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-400/30";
-    case "Entregado":
-      return "bg-green-100 text-green-700 border-green-200 dark:bg-green-500/10 dark:text-green-300 dark:border-green-400/30";
-    case "Retraso":
-      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-400/30";
-    case "Crítico":
-      return "bg-red-100 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-400/30";
-    case "Activo":
-      return "bg-green-100 text-green-700 border-green-200 dark:bg-green-500/10 dark:text-green-300 dark:border-green-400/30";
-    case "Inactivo":
-      return "bg-gray-100 text-gray-600 border-gray-200 dark:bg-slate-400/10 dark:text-slate-300 dark:border-slate-400/30";
-    default:
-      return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-slate-400/10 dark:text-slate-300 dark:border-slate-400/30";
-  }
+// Una paleta única para todos los estados en tarjetas, barras y marcadores.
+// Nunca deducir el estado del porcentaje ni de las alertas anteriores.
+const ESTADO_VISUAL: Record<string, { chip: string; barra: string; punto: string; anillo: string }> = {
+  "Recolección": { chip: "bg-cyan-100 text-cyan-900 border-cyan-300", barra: "bg-cyan-500", punto: "bg-cyan-500", anillo: "ring-cyan-100" },
+  "Cargado": { chip: "bg-violet-100 text-violet-900 border-violet-300", barra: "bg-violet-500", punto: "bg-violet-500", anillo: "ring-violet-100" },
+  "Pendiente de carga": { chip: "bg-amber-100 text-amber-900 border-amber-300", barra: "bg-amber-500", punto: "bg-amber-500", anillo: "ring-amber-100" },
+  "En ruta": { chip: "bg-blue-100 text-blue-900 border-blue-300", barra: "bg-blue-500", punto: "bg-blue-500", anillo: "ring-blue-100" },
+  "En destino": { chip: "bg-lime-100 text-lime-900 border-lime-300", barra: "bg-lime-500", punto: "bg-lime-500", anillo: "ring-lime-100" },
+  "Entregado": { chip: "bg-emerald-100 text-emerald-900 border-emerald-300", barra: "bg-emerald-500", punto: "bg-emerald-500", anillo: "ring-emerald-100" },
+  "Descargado": { chip: "bg-fuchsia-100 text-fuchsia-900 border-fuchsia-300", barra: "bg-fuchsia-500", punto: "bg-fuchsia-500", anillo: "ring-fuchsia-100" },
+  "Pendiente de descarga": { chip: "bg-yellow-100 text-yellow-900 border-yellow-300", barra: "bg-yellow-500", punto: "bg-yellow-500", anillo: "ring-yellow-100" },
+  "Retrasado": { chip: "bg-orange-100 text-orange-900 border-orange-300", barra: "bg-orange-500", punto: "bg-orange-500", anillo: "ring-orange-100" },
+  "Crítico": { chip: "bg-red-100 text-red-900 border-red-300", barra: "bg-red-500", punto: "bg-red-500", anillo: "ring-red-100" },
+  "Cancelado": { chip: "bg-slate-200 text-slate-900 border-slate-400", barra: "bg-slate-500", punto: "bg-slate-500", anillo: "ring-slate-200" },
 };
 
-const getProgressColor = (estado: string) => {
-  if (estado === "Crítico") return "bg-red-500";
-  if (estado === "Retraso" || estado === "En destino") return "bg-orange-500";
-  if (estado === "Entregado") return "bg-green-500";
-  if (estado === "En ruta" || estado === "En tránsito") return "bg-blue-500";
-  return "bg-gray-400";
+const normalizarNombreEstado = (nombre: string) => {
+  const valor = String(nombre || "").trim();
+  const alias: Record<string, string> = { "en tránsito": "En ruta", "retraso": "Retrasado", "critico": "Crítico" };
+  return Object.keys(ESTADO_VISUAL).find(
+    (n) => n.toLocaleLowerCase("es") === valor.toLocaleLowerCase("es")
+  ) || alias[valor.toLocaleLowerCase("es")] || valor;
 };
+const getEstadoColor = (estado: string) => ESTADO_VISUAL[normalizarNombreEstado(estado)]?.chip || "bg-gray-100 text-gray-700 border-gray-200";
+const getProgressColor = (estado: string) => ESTADO_VISUAL[normalizarNombreEstado(estado)]?.barra || "bg-gray-400";
+const getMapMarkerClasses = (estado: string) => ({
+  marker: ESTADO_VISUAL[normalizarNombreEstado(estado)]?.punto || "bg-slate-500",
+  ring: ESTADO_VISUAL[normalizarNombreEstado(estado)]?.anillo || "ring-slate-100",
+});
+
+// El porcentaje es consecuencia del estado, no una forma de reemplazar el estado.
+const progresoPorEstado = (estado: string, actual: number): number => {
+  const valor: Record<string, number> = {
+    "Recolección": 5, "Pendiente de carga": 10, "Cargado": 25,
+    "En ruta": 50, "En destino": 75, "Pendiente de descarga": 85,
+    "Descargado": 100, "Entregado": 100,
+  };
+  return valor[normalizarNombreEstado(estado)] ?? Math.max(0, Math.min(100, actual));
+};
+
+const estadoFinal = (estado: string) =>
+  ['entregado', 'descargado', 'cancelado'].includes(String(estado || '').trim().toLowerCase());
+
+const viajeEnSeguimiento = (estado: string) => !estadoFinal(estado) && estado !== 'Pendiente';
 
 const getMapParts = (ruta: string) => {
   const text = String(ruta || "").trim();
@@ -675,7 +705,7 @@ function PaginationControls({
   );
 }
 
-const ESTADOS_TRACKING = ["Recolección", "Cargado", "Pendiente de carga", "En ruta", "En destino", "Entregado", "Descargado", "Pendiente de descarga", "Retrasado", "Cancelado"];
+const ESTADOS_TRACKING = ["Recolección", "Cargado", "Pendiente de carga", "En ruta", "En destino", "Entregado", "Descargado", "Pendiente de descarga", "Retrasado", "Crítico", "Cancelado"];
 
 export function Logistica() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -685,6 +715,7 @@ export function Logistica() {
   const [pilotos, setPilotos] = useState<Piloto[]>([]);
   const [estadosEnvio, setEstadosEnvio] = useState<EstadoEnvio[]>([]);
 
+  const [cotizacionesDisponibles, setCotizacionesDisponibles] = useState<CotizacionAprobada[]>([]);
   const [envios, setEnvios] = useState<Envio[]>([]);
   const [viajes, setViajes] = useState<Viaje[]>([]);
   const [cambioEstado, setCambioEstado] = useState<{viaje: Viaje; estado: string} | null>(null);
@@ -695,12 +726,12 @@ export function Logistica() {
   const [notice, setNotice] = useState("");
 
   const [searchViajes, setSearchViajes] = useState("");
-  const [filterEstadoViaje, setFilterEstadoViaje] = useState("Todos");
+  const [filterEstadoViaje, setFilterEstadoViaje] = useState("En curso");
   const [sortViajeField, setSortViajeField] = useState("");
   const [sortViajeDirection, setSortViajeDirection] = useState<SortDirection>("asc");
 
   const [searchEnvios, setSearchEnvios] = useState("");
-  const [filterEstadoEnvio, setFilterEstadoEnvio] = useState("Todos");
+  const [filterEstadoEnvio, setFilterEstadoEnvio] = useState("Pendientes");
   const [filterClienteEnvio, setFilterClienteEnvio] = useState("Todos");
   const [sortEnvioField, setSortEnvioField] = useState("");
   const [sortEnvioDirection, setSortEnvioDirection] = useState<SortDirection>("asc");
@@ -762,6 +793,7 @@ export function Logistica() {
       setUnidades(asArray<Unidad>(data.unidades));
       setPilotos(asArray<Piloto>(data.pilotos));
       setEstadosEnvio(asArray<EstadoEnvio>(data.estadosEnvio));
+      setCotizacionesDisponibles(asArray<CotizacionAprobada>(data.cotizacionesDisponibles));
       setEnvios(asArray<Envio>(data.envios));
       setViajes(asArray<Viaje>(data.viajes));
     } catch (error: any) {
@@ -866,14 +898,14 @@ export function Logistica() {
 
   const resetViajeFilters = () => {
     setSearchViajes("");
-    setFilterEstadoViaje("Todos");
+    setFilterEstadoViaje("En curso");
     setSortViajeField("");
     setSortViajeDirection("asc");
   };
 
   const resetEnvioFilters = () => {
     setSearchEnvios("");
-    setFilterEstadoEnvio("Todos");
+    setFilterEstadoEnvio("Pendientes");
     setFilterClienteEnvio("Todos");
     setSortEnvioField("");
     setSortEnvioDirection("asc");
@@ -894,11 +926,11 @@ export function Logistica() {
   }, [envios]);
 
   const estadosFiltro = useMemo(() => {
-    return ["Todos", ...Array.from(new Set(envios.map((item) => item.estado).filter(Boolean)))];
+    return ["Pendientes", "Finalizados", "Todos", ...Array.from(new Set(envios.map((item) => item.estado).filter(Boolean)))];
   }, [envios]);
 
   const estadosViajeFiltro = useMemo(() => {
-    return ["Todos", ...Array.from(new Set(viajes.map((item) => item.estado).filter(Boolean)))];
+    return ["En curso", "Finalizados", "Todos", ...Array.from(new Set(viajes.map((item) => item.estado).filter(Boolean)))];
   }, [viajes]);
 
   const filteredViajes = useMemo(() => {
@@ -907,10 +939,25 @@ export function Logistica() {
     return viajes.filter((viaje) => {
       const text = `${viaje.codigo} ${viaje.cliente} ${viaje.ruta} ${viaje.unidad} ${viaje.piloto} ${viaje.estado}`.toLowerCase();
       const matchesSearch = !term || text.includes(term);
-      const matchesEstado = filterEstadoViaje === "Todos" || viaje.estado === filterEstadoViaje;
+      const matchesEstado = filterEstadoViaje === "Todos" ||
+        (filterEstadoViaje === "En curso" && !estadoFinal(viaje.estado)) ||
+        (filterEstadoViaje === "Finalizados" && estadoFinal(viaje.estado)) ||
+        viaje.estado === filterEstadoViaje;
       return matchesSearch && matchesEstado;
     });
   }, [viajes, searchViajes, filterEstadoViaje]);
+
+  // Panel de seguimiento: priorizar los cambios de estado más recientes.
+  // Los puntos son esquemáticos: este módulo no recibe coordenadas GPS.
+  const viajesMapa = useMemo(() => {
+    return viajes
+      .filter((v) => viajeEnSeguimiento(v.estado))
+      .sort((a, b) => {
+        const fa = new Date(String((a as AnyRow).tracking_fecha || "")).getTime() || 0;
+        const fb = new Date(String((b as AnyRow).tracking_fecha || "")).getTime() || 0;
+        return fb - fa || Number(b.id) - Number(a.id);
+      });
+  }, [viajes]);
 
   const sortedViajes = useMemo(() => {
     const rows = [...filteredViajes];
@@ -950,7 +997,10 @@ export function Logistica() {
     return envios.filter((envio) => {
       const text = `${envio.codigo} ${envio.cliente} ${envio.origen} ${envio.destino} ${envio.direccion}`.toLowerCase();
       const matchesSearch = !term || text.includes(term);
-      const matchesEstado = filterEstadoEnvio === "Todos" || envio.estado === filterEstadoEnvio;
+      const matchesEstado = filterEstadoEnvio === "Todos" ||
+        (filterEstadoEnvio === "Pendientes" && !estadoFinal(envio.estado)) ||
+        (filterEstadoEnvio === "Finalizados" && estadoFinal(envio.estado)) ||
+        envio.estado === filterEstadoEnvio;
       const matchesCliente = filterClienteEnvio === "Todos" || envio.cliente === filterClienteEnvio;
       return matchesSearch && matchesEstado && matchesCliente;
     });
@@ -1020,7 +1070,7 @@ export function Logistica() {
 
   const alerts = useMemo(() => {
     return viajes
-      .filter((v) => v.estado === "Retraso" || v.estado === "Crítico")
+      .filter((v) => ["retraso", "retrasado", "crítico", "critico"].includes(String(v.estado || "").trim().toLowerCase()))
       .map((v) => ({
         id: v.id,
         title: v.estado === "Crítico" ? "Situación crítica" : "Retraso detectado",
@@ -1167,13 +1217,13 @@ export function Logistica() {
     }
   };
 
-  const openCreateViaje = () => {
+  const openCreateViaje = (envioSeleccionado?: Envio) => {
     setViajeErrors({});
     setCurrentViaje(null);
     setViajeForm({
-      cliente_id: "",
-      envio_id: "",
-      ruta_id: "",
+      cliente_id: envioSeleccionado?.cliente_id || "",
+      envio_id: envioSeleccionado?.id || "",
+      ruta_id: envioSeleccionado?.ruta_id || "",
       unidad_id: "",
       piloto_id: "",
       fecha_salida: "",
@@ -1208,7 +1258,9 @@ export function Logistica() {
     if (!viajeForm.cliente_id) errors.cliente_id = "Seleccioná un cliente.";
     if (!viajeForm.envio_id) {
       const enviosDelCliente = envios.filter((envio) =>
-        !viajeForm.cliente_id || Number(envio.cliente_id) === Number(viajeForm.cliente_id)
+        (!viajeForm.cliente_id || Number(envio.cliente_id) === Number(viajeForm.cliente_id)) &&
+        !estadoFinal(envio.estado) &&
+        !viajes.some((v) => Number(v.envio_id) === Number(envio.id))
       );
 
       errors.envio_id =
@@ -1232,6 +1284,14 @@ export function Logistica() {
       errors.progreso = "Debe estar entre 0 y 100.";
     }
 
+    if (viajeForm.envio_id && (
+      envios.find(e => Number(e.id) === Number(viajeForm.envio_id))?.estado &&
+      estadoFinal(envios.find(e => Number(e.id) === Number(viajeForm.envio_id))!.estado)
+    ) && viajeModal.mode === 'create') errors.envio_id = 'Este servicio ya está finalizado.';
+    if (viajeForm.envio_id && viajes.some(v => Number(v.envio_id) === Number(viajeForm.envio_id) &&
+      (viajeModal.mode === 'create' || Number(v.id) !== Number(currentViaje?.id)))) {
+      errors.envio_id = 'El servicio ya tiene un viaje. Consultá el historial.';
+    }
     setViajeErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -1262,6 +1322,7 @@ export function Logistica() {
 
       setViajeModal({ open: false, mode: "create" });
       await load();
+      window.dispatchEvent(new Event("gl365:tracking-estado-actualizado"));
       showNotice("Viaje guardado correctamente en MySQL.");
     } catch (error: any) {
       setViajeErrors({ general: error.message || "No se pudo guardar el viaje." });
@@ -1284,18 +1345,35 @@ export function Logistica() {
 
   const guardarEstadoViaje = async () => {
     if (!cambioEstado) return;
-    const {viaje,estado} = cambioEstado;
-    const actual = Number(viaje.progreso || 0);
-    const avance: Record<string,number> = {"Recolección":0,"Pendiente de carga":10,"Cargado":25,"En ruta":50,"En destino":80,"Pendiente de descarga":90,"Descargado":95,"Entregado":100,"Retrasado":actual,"Cancelado":actual};
-    const progreso = avance[estado] ?? actual;
+    const { viaje } = cambioEstado;
+    const estado = normalizarNombreEstado(cambioEstado.estado);
+    const progreso = progresoPorEstado(estado, Number(viaje.progreso || 0));
     try {
-      await apiRequest(`/logistica/viajes/${viaje.id}/estado`, {
-        method: "PUT", body: JSON.stringify({estado,progreso})
+      const respuesta = await apiRequest(`/logistica/viajes/${viaje.id}/estado`, {
+        method: "PUT", body: JSON.stringify({ estado, progreso }),
       });
+      const estadoGuardado = normalizarNombreEstado(String(respuesta?.estado || estado));
+      const progresoGuardado = Number(respuesta?.progreso ?? progreso);
       setCambioEstado(null);
+      setViajes((anteriores) => anteriores.map((item) =>
+        Number(item.id) === Number(viaje.id)
+          ? { ...item, estado: estadoGuardado, progreso: progresoGuardado }
+          : item
+      ));
+
+      // Los estados finales desaparecen de «En curso» por diseño.
+      // Mostrar su tarjeta automáticamente en «Finalizados» y evitar confundir
+      // el viaje editado con otro código que permanezca en curso.
+      const finalizado = estadoFinal(estadoGuardado);
+      setFilterEstadoViaje(finalizado ? "Finalizados" : "En curso");
+      setViajePage(1);
+      setSearchViajes("");
       await load();
-      showNotice(`Estado actualizado a ${estado}.`);
-    } catch(error:any) {
+      window.dispatchEvent(new Event("gl365:tracking-estado-actualizado"));
+      showNotice(finalizado
+        ? `${viaje.codigo}: ${estadoGuardado}. Ahora aparece en Finalizados.`
+        : `${viaje.codigo}: estado actualizado a ${estadoGuardado}.`);
+    } catch (error: any) {
       setApiError(error.message || "No se pudo cambiar el estado del viaje.");
     }
   };
@@ -1306,6 +1384,7 @@ export function Logistica() {
     setEnvioErrors({});
     setCurrentEnvio(null);
     setEnvioForm({
+      cotizacion_id: "",
       cliente_id: clienteId,
       origen_id: "",
       destino_id: "",
@@ -1322,6 +1401,7 @@ export function Logistica() {
     setEnvioErrors({});
     setCurrentEnvio(null);
     setEnvioForm({
+      cotizacion_id: "",
       cliente_id: "",
       origen_id: "",
       destino_id: "",
@@ -1350,6 +1430,7 @@ export function Logistica() {
 
   const validateEnvio = () => {
     const errors: FormErrors = {};
+    if (envioModal.mode === 'create' && !envioForm.cotizacion_id) errors.cotizacion_id = 'Seleccioná una cotización aprobada.';
     if (!envioForm.cliente_id) errors.cliente_id = "Seleccioná un cliente.";
     if (!envioForm.origen_id) errors.origen_id = "Seleccioná origen.";
     if (!envioForm.destino_id) errors.destino_id = "Seleccioná destino.";
@@ -1373,6 +1454,7 @@ export function Logistica() {
         {
           method: envioModal.mode === "edit" ? "PUT" : "POST",
           body: JSON.stringify({
+            cotizacion_id: envioForm.cotizacion_id,
             cliente_id: envioForm.cliente_id,
             origen_id: envioForm.origen_id,
             destino_id: envioForm.destino_id,
@@ -1554,7 +1636,7 @@ export function Logistica() {
           </button>
           <button
             type="button"
-            onClick={openCreateViaje}
+            onClick={() => openCreateViaje()}
             className="h-12 px-7 rounded-xl bg-[#0C2D6B] text-white font-bold text-base inline-flex items-center gap-2.5 shadow-md hover:bg-[#143C8C] transition-colors"
           >
             <Plus className="w-5 h-5" />
@@ -1627,33 +1709,25 @@ export function Logistica() {
             <div>
               <h2 className="text-xl sm:text-2xl font-bold text-[#0C2D6B] dark:text-[#F8FAFC] flex items-center gap-2">
                 <MapPin className="w-5 h-5 text-[#FF6A00]" />
-                Rastreo en Tiempo Real
+                Seguimiento de estados de viajes
               </h2>
               <p className="mt-1 text-[11px] text-gray-400 dark:text-[#9FB0C6]">
-                Identificá cada viaje por su código sin abrir el detalle.
+                Los marcadores muestran el estado actualizado, no una ubicación GPS en tiempo real.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
               <span className="inline-flex h-7 items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 text-[10px] font-extrabold text-[#0C2D6B] dark:border-blue-400/25 dark:bg-blue-500/10 dark:text-blue-200">
-                {
-                  viajes.filter(
-                    (v) => v.estado !== "Entregado" && v.estado !== "Pendiente"
-                  ).length
-                }{" "}
-                activos
+                {viajesMapa.length} en seguimiento (mostrando {Math.min(viajesMapa.length, 8)})
               </span>
 
-              <div className="flex gap-3 text-xs font-semibold text-gray-500 dark:text-[#C7D2E3]">
-                <span className="inline-flex items-center gap-1">
-                  <i className="w-2.5 h-2.5 rounded-full bg-green-500" /> En tiempo
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <i className="w-2.5 h-2.5 rounded-full bg-orange-500" /> Retraso
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <i className="w-2.5 h-2.5 rounded-full bg-red-500" /> Crítico
-                </span>
+              <div className="flex max-w-[780px] flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold text-gray-500 dark:text-[#C7D2E3]">
+                {ESTADOS_TRACKING.map((nombre) => (
+                  <span key={nombre} className="inline-flex items-center gap-1 whitespace-nowrap">
+                    <i className={`h-2.5 w-2.5 rounded-full ${getMapMarkerClasses(nombre).marker}`} />
+                    {nombre}
+                  </span>
+                ))}
               </div>
             </div>
           </div>
@@ -1695,8 +1769,7 @@ export function Logistica() {
               />
             </svg>
 
-            {viajes
-              .filter((v) => v.estado !== "Entregado" && v.estado !== "Pendiente")
+            {viajesMapa
               .slice(0, 8)
               .map((viaje, index) => {
                 const positions = [
@@ -1714,19 +1787,7 @@ export function Logistica() {
                 const alignLeft = pos.left >= 74;
                 const popupAbove = pos.top >= 63;
 
-                const marker =
-                  viaje.estado === "Crítico"
-                    ? "bg-red-500"
-                    : viaje.estado === "Retraso"
-                    ? "bg-orange-500"
-                    : "bg-green-500";
-
-                const markerRing =
-                  viaje.estado === "Crítico"
-                    ? "ring-red-100"
-                    : viaje.estado === "Retraso"
-                    ? "ring-orange-100"
-                    : "ring-green-100";
+                const { marker, ring: markerRing } = getMapMarkerClasses(viaje.estado);
 
                 return (
                   <button
@@ -1748,7 +1809,7 @@ export function Logistica() {
                     <span className="relative flex items-center">
                       <span
                         className={`block h-5 w-5 rounded-full border-2 border-white shadow-md ring-4 ${markerRing} ${marker} ${
-                          viaje.estado === "En tránsito" ? "animate-pulse" : ""
+                          viaje.estado === "En ruta" || viaje.estado === "En tránsito" ? "animate-pulse" : ""
                         }`}
                       />
 
@@ -1863,6 +1924,12 @@ export function Logistica() {
             onChange={e=>setCambioEstado({...cambioEstado,estado:e.target.value})}>
             {ESTADOS_TRACKING.map(estado=><option key={estado} value={estado}>{estado}</option>)}
           </select>
+          <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
+            <span className={`rounded-full border px-3 py-1 font-bold ${getEstadoColor(cambioEstado.estado)}`}>
+              {cambioEstado.estado}
+            </span>
+            <span>Se guardará este estado para {cambioEstado.viaje.codigo}.</span>
+          </div>
           <div className="mt-5 flex justify-end gap-2">
             <button onClick={()=>setCambioEstado(null)} className="rounded-lg border px-4 py-2">Cancelar</button>
             <button onClick={guardarEstadoViaje} className="rounded-lg bg-[#0C2D6B] px-4 py-2 font-semibold text-white">Guardar estado</button>
@@ -1875,13 +1942,13 @@ export function Logistica() {
           <div className="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-3 mb-3">
             <h2 className="text-2xl font-bold text-[#0C2D6B] flex items-center gap-2">
               <Truck className="w-5 h-5 text-[#FF6A00]" />
-              Viajes Activos
+              Viajes · pendientes e historial
             </h2>
 
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={openCreateViaje}
+                onClick={() => openCreateViaje()}
                 className="h-12 px-6 rounded-xl bg-[#0C2D6B] text-white text-base font-bold inline-flex items-center gap-2 shadow-md hover:bg-[#143C8C] transition-colors"
               >
                 <Plus className="w-5 h-5" /> Nuevo Viaje
@@ -1992,6 +2059,7 @@ export function Logistica() {
                   <div>
                     <p className="text-gray-400 font-semibold">Cliente</p>
                     <p className="font-bold text-gray-700 dark:text-[#DCE5F1] mt-0.5 line-clamp-2">{viaje.cliente}</p>
+                    {viaje.codigo_cotizacion && <p className="text-[10px] text-[#0C2D6B] mt-1">{viaje.codigo_cotizacion}</p>}
                   </div>
                   <div>
                     <p className="text-gray-400 font-semibold">Fecha / hora llegada</p>
@@ -2054,7 +2122,7 @@ export function Logistica() {
               Servicios de Transporte
             </button>
             <p className="mt-2 px-2 text-xs text-gray-500">
-              Solicitudes del cliente: origen, destino y fecha. Después se asignan a un viaje con unidad y piloto.
+              Cotización aprobada → servicio con origen, destino y dirección exacta → viaje. Los finalizados permanecen en Historial.
             </p>
           </div>
           </div>
@@ -2093,7 +2161,7 @@ export function Logistica() {
                   >
                     {estadosFiltro.map((estado) => (
                       <option key={estado} value={estado}>
-                        {estado === "Todos" ? "Todos los estados" : estado}
+                        {estado === "Todos" ? "Todos los estados" : estado === 'Pendientes' ? 'Pendientes (sin finalizar)' : estado === 'Finalizados' ? 'Historial finalizado' : estado}
                       </option>
                     ))}
                   </select>
@@ -2245,6 +2313,7 @@ export function Logistica() {
                       <div className="min-w-0">
                         <p className="text-xs text-gray-500">Dirección del servicio</p>
                         <p className="text-sm text-gray-800 line-clamp-2">{envio.direccion || "-"}</p>
+                        {envio.codigo_cotizacion && <p className="mt-1 text-xs font-semibold text-[#0C2D6B]">Cotización: {envio.codigo_cotizacion}</p>}
                       </div>
                     </div>
 
@@ -2269,6 +2338,12 @@ export function Logistica() {
                   </div>
 
                   <div className="border-t border-gray-100 bg-gray-50 px-3 py-2 flex justify-end gap-2">
+                    {!estadoFinal(envio.estado) && !viajes.some(v => Number(v.envio_id) === Number(envio.id)) && (
+                      <button type="button" onClick={() => { openCreateViaje(envio); goToViajes(); }}
+                        className="rounded-lg bg-[#0C2D6B] px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1">
+                        <Truck className="h-3.5 w-3.5"/> Crear viaje
+                      </button>
+                    )}
                     <ActionButton title="Ver" icon={Eye} tone="blue" onClick={() => openViewEnvio(envio)} />
                     <ActionButton title="Editar" icon={Edit2} tone="orange" onClick={() => openEditEnvio(envio)} />
                     <ActionButton title="Eliminar" icon={Trash2} tone="red" onClick={() => deleteEnvio(envio)} />
@@ -2341,7 +2416,9 @@ export function Logistica() {
                 <Field label="Servicio relacionado *" error={viajeErrors.envio_id} actionLabel="Nuevo servicio" onAction={openCreateEnvioFromViaje}>
                   {(() => {
                     const enviosDelCliente = envios.filter((envio) =>
-                      !viajeForm.cliente_id || Number(envio.cliente_id) === Number(viajeForm.cliente_id)
+                      (!viajeForm.cliente_id || Number(envio.cliente_id) === Number(viajeForm.cliente_id)) &&
+                      (!estadoFinal(envio.estado) || (viajeModal.mode === 'edit' && Number(envio.id) === Number(currentViaje?.envio_id))) &&
+                      (!viajes.some(v => Number(v.envio_id) === Number(envio.id)) || (viajeModal.mode === 'edit' && Number(envio.id) === Number(currentViaje?.envio_id)))
                     );
 
                     if (viajeForm.cliente_id && enviosDelCliente.length === 0) {
@@ -2382,8 +2459,8 @@ export function Logistica() {
                         value={viajeForm.envio_id}
                         options={enviosDelCliente}
                         placeholder={viajeForm.cliente_id ? "Buscar servicio del cliente..." : "Primero seleccioná un cliente"}
-                        getLabel={(item) => `${item.codigo} · ${item.origen} → ${item.destino}`}
-                        getSubLabel={(item) => item.cliente}
+                        getLabel={(item) => `${item.codigo} · ${item.codigo_cotizacion || 'Histórico'} · ${item.origen} → ${item.destino}`}
+                        getSubLabel={(item) => `${item.cliente} · ${item.direccion || 'Sin dirección'}`}
                         onSelect={(item) => {
                           const rutaCoincidente =
                             rutas.find(
@@ -2459,6 +2536,12 @@ export function Logistica() {
                   })()}
                 </Field>
 
+                {viajeForm.envio_id && (() => {
+                  const servicio = envios.find(e => Number(e.id) === Number(viajeForm.envio_id));
+                  return servicio ? <div className="md:col-span-2 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-[#0C2D6B]">
+                    <b>Cotización:</b> {servicio.codigo_cotizacion || 'Servicio histórico'} · <b>Dirección:</b> {servicio.direccion || '-'}
+                  </div> : null;
+                })()}
                 <Field label="Unidad *" error={viajeErrors.unidad_id} actionLabel="Nueva unidad" onAction={() => openQuick("unidad", "viaje_unidad")}>
                   <SearchableSelect
                     value={viajeForm.unidad_id}
@@ -2506,15 +2589,7 @@ export function Logistica() {
                     value={viajeForm.estado || "Recolección"}
                     onChange={(event) => {
                       const estado = event.target.value;
-                      const current = Number(viajeForm.progreso || 0);
-                      const progreso =
-                        estado === "Recolección" || estado === "Pendiente de carga"
-                          ? 0
-                          : estado === "En ruta" || estado === "Retrasado" || estado === "Cargado"
-                          ? Math.max(current, 35)
-                          : estado === "En destino"
-                          ? Math.max(current, 90)
-                          : 100;
+                      const progreso = progresoPorEstado(estado, Number(viajeForm.progreso || 0));
                       setViajeForm({ ...viajeForm, estado, progreso });
                     }}
                     className={inputClass}
@@ -2564,37 +2639,71 @@ export function Logistica() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
                 {envioErrors.general && <div className="md:col-span-2 rounded-xl bg-red-50 text-red-700 p-3 text-sm font-semibold">{envioErrors.general}</div>}
 
-                <Field label="Cliente *" error={envioErrors.cliente_id} className="md:col-span-2" actionLabel="Nuevo cliente" onAction={() => openQuick("cliente", "envio_cliente")}>
-                  <SearchableSelect
-                    value={envioForm.cliente_id}
-                    options={clientes}
-                    placeholder="Buscar cliente..."
-                    getLabel={(item) => `${item.codigo_cliente} · ${item.nombre_empresa}`}
-                    onSelect={(item) => setEnvioForm({ ...envioForm, cliente_id: item.id })}
-                    error={envioErrors.cliente_id}
-                  />
+                <div className="md:col-span-2 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-[#0C2D6B]">
+                  El servicio se genera desde una cotización aprobada. El cliente y la ruta se toman de ella; completa la dirección exacta y la fecha.
+                </div>
+                <Field label="Cotización aprobada *" error={envioErrors.cotizacion_id} className="md:col-span-2">
+                  {envioModal.mode === 'edit' ? (
+                    <div className="rounded-xl bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-700">
+                      {currentEnvio?.codigo_cotizacion || 'Servicio anterior sin cotización vinculada'}
+                    </div>
+                  ) : (
+                    <>
+                      <SearchableSelect
+                        value={envioForm.cotizacion_id}
+                        options={cotizacionesDisponibles.filter(c => !envioFromViaje || !viajeForm.cliente_id || Number(c.cliente_id) === Number(viajeForm.cliente_id))}
+                        placeholder="Buscar una cotización aprobada..."
+                        getLabel={(item) => `${item.codigo_cotizacion} · ${item.cliente}`}
+                        getSubLabel={(item) => `${item.origen || 'Origen pendiente'} → ${item.destino || 'Destino pendiente'}`}
+                        onSelect={(item) => {
+                          if (!item.origen_id || !item.destino_id || Number(item.origen_id) === Number(item.destino_id)) {
+                            setEnvioErrors({ cotizacion_id: 'Esta cotización necesita origen y destino distintos. Completalos en CRM y Ventas.' });
+                            return;
+                          }
+                          setEnvioErrors({});
+                          setEnvioForm(current => ({ ...current, cotizacion_id: item.id, cliente_id: item.cliente_id,
+                            origen_id: item.origen_id, destino_id: item.destino_id,
+                            fecha: current.fecha || item.fecha_emision || new Date().toISOString().slice(0, 10) }));
+                        }}
+                      />
+                      {!cotizacionesDisponibles.length && (
+                        <p className="mt-2 text-xs text-orange-700">No hay cotizaciones aprobadas disponibles. Primero aprueba una en CRM y Ventas, o revisa si ya se convirtió en servicio.</p>
+                      )}
+                    </>
+                  )}
                 </Field>
-
-                <Field label="Origen *" error={envioErrors.origen_id} actionLabel="Nuevo origen" onAction={() => openQuick("ubicacion", "envio_origen")}>
-                  <SearchableSelect
-                    value={envioForm.origen_id}
-                    options={ubicaciones}
-                    placeholder="Buscar origen..."
-                    getLabel={(item) => `${item.nombre_ubicacion}, ${item.pais}`}
-                    onSelect={(item) => setEnvioForm({ ...envioForm, origen_id: item.id })}
-                    error={envioErrors.origen_id}
-                  />
+                <Field label="Cliente *" error={envioErrors.cliente_id} className="md:col-span-2">
+                  {envioModal.mode === 'create' || currentEnvio?.cotizacion_id ? (
+                    <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-[#0C2D6B]">
+                      {clientes.find(c => Number(c.id) === Number(envioForm.cliente_id))?.nombre_empresa || 'Seleccioná primero una cotización'}
+                    </div>
+                  ) : (
+                    <SearchableSelect value={envioForm.cliente_id} options={clientes} placeholder="Buscar cliente"
+                      getLabel={c => `${c.codigo_cliente} · ${c.nombre_empresa}`}
+                      onSelect={c => setEnvioForm({ ...envioForm, cliente_id: c.id })}/>
+                  )}
                 </Field>
-
-                <Field label="Destino *" error={envioErrors.destino_id} actionLabel="Nuevo destino" onAction={() => openQuick("ubicacion", "envio_destino")}>
-                  <SearchableSelect
-                    value={envioForm.destino_id}
-                    options={ubicaciones}
-                    placeholder="Buscar destino..."
-                    getLabel={(item) => `${item.nombre_ubicacion}, ${item.pais}`}
-                    onSelect={(item) => setEnvioForm({ ...envioForm, destino_id: item.id })}
-                    error={envioErrors.destino_id}
-                  />
+                <Field label="Origen *" error={envioErrors.origen_id}>
+                  {envioModal.mode === 'create' || currentEnvio?.cotizacion_id ? (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-800">
+                      {ubicaciones.find(u => Number(u.id) === Number(envioForm.origen_id))?.nombre_ubicacion || 'Origen de la cotización'}
+                    </div>
+                  ) : (
+                    <SearchableSelect value={envioForm.origen_id} options={ubicaciones} placeholder="Buscar origen"
+                      getLabel={u => `${u.nombre_ubicacion}, ${u.pais}`}
+                      onSelect={u => setEnvioForm({ ...envioForm, origen_id: u.id })}/>
+                  )}
+                </Field>
+                <Field label="Destino *" error={envioErrors.destino_id}>
+                  {envioModal.mode === 'create' || currentEnvio?.cotizacion_id ? (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-800">
+                      {ubicaciones.find(u => Number(u.id) === Number(envioForm.destino_id))?.nombre_ubicacion || 'Destino de la cotización'}
+                    </div>
+                  ) : (
+                    <SearchableSelect value={envioForm.destino_id} options={ubicaciones} placeholder="Buscar destino"
+                      getLabel={u => `${u.nombre_ubicacion}, ${u.pais}`}
+                      onSelect={u => setEnvioForm({ ...envioForm, destino_id: u.id })}/>
+                  )}
                 </Field>
 
                 <div className="md:col-span-2 -mt-1">
@@ -2912,6 +3021,8 @@ function ViewViaje({ viaje }: { viaje: Viaje }) {
 
       <div className="rounded-xl bg-gray-50 p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Info label="Ruta" value={viaje.ruta} />
+        <Info label="Dirección del servicio" value={viaje.envio_direccion || '-'} />
+        <Info label="Cotización" value={viaje.codigo_cotizacion || 'Histórico: sin cotización'} />
         <Info label="Unidad" value={`${viaje.unidad} ${viaje.unidad_tipo ? `· ${viaje.unidad_tipo}` : ""}`} />
         <Info label="Piloto" value={viaje.piloto} />
         <Info label="Licencia" value={viaje.licencia || "-"} />
@@ -2992,6 +3103,7 @@ function ViewEnvio({ envio }: { envio: Envio }) {
             : `${envio.origen} → ${envio.destino}`
         } />
         <Info label="Dirección" value={envio.direccion} />
+        <Info label="Cotización" value={envio.codigo_cotizacion || 'Histórico: sin cotización'} />
         <Info label="Fecha" value={formatDate(envio.fecha)} />
       </div>
 
